@@ -1,0 +1,6 @@
+interface:
+  display_name: "Birdtrack Algebra"
+  short_description: "Build exact birdtrack projector multiplication"
+  default_prompt: "Use $birdtrack-algebra to design and verify this birdtrack projector multiplication change."
+policy:
+  allow_implicit_invocation: true
