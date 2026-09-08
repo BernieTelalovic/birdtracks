@@ -7,13 +7,54 @@ projection operators.
 The calculator can run inside a Jupyter notebook or as a local browser app. Its
 coefficients use exact integer and rational arithmetic.
 
-## Download the standalone app
+## Install the complete coding environment
 
-No Python installation is required. Download the file for your computer from
-the project's GitHub Releases page:
+No existing Python installation is required. The online installer downloads a
+private, managed Python runtime, Birdtracks, JupyterLab, and all required
+dependencies. It does not modify the computer's system Python or require Git
+or a compiler.
 
-- **Windows:** download `Birdtracks.exe` and double-click it.
-- **Linux:** download `Birdtracks`, make it executable, and open it:
+- **Windows:** download
+  [`install-birdtracks.cmd`](https://github.com/BernieTelalovic/birdtracks/releases/latest/download/install-birdtracks.cmd)
+  and double-click it. When it finishes, open the **Birdtracks Lab** desktop
+  shortcut.
+- **Linux:** download
+  [`install-birdtracks.sh`](https://github.com/BernieTelalovic/birdtracks/releases/latest/download/install-birdtracks.sh),
+  then run:
+
+  ```console
+  chmod +x install-birdtracks.sh
+  ./install-birdtracks.sh
+  ```
+
+  Open **Birdtracks Lab** from the applications menu when installation
+  finishes.
+
+Birdtracks Lab opens JupyterLab in the browser. Notebooks have the complete
+Python API available, including `birdtracks.create()` for the canvas. An
+internet connection is required during installation, but not for normal use.
+Running a newer release's installer upgrades the isolated environment.
+
+In Birdtracks Lab, create a Python notebook and start with:
+
+```python
+import birdtracks as bt
+
+canvas = bt.create()
+canvas
+```
+
+## Download the canvas-only app
+
+If only the visual canvas is needed, download the self-contained app from the
+project's GitHub Releases page:
+
+- **Windows:** download
+  [`Birdtracks.exe`](https://github.com/BernieTelalovic/birdtracks/releases/latest/download/Birdtracks.exe)
+  and double-click it.
+- **Linux:** download
+  [`Birdtracks`](https://github.com/BernieTelalovic/birdtracks/releases/latest/download/Birdtracks),
+  make it executable, and open it:
 
   ```console
   chmod +x Birdtracks
@@ -31,13 +72,20 @@ official Releases page, and then choose **Run anyway**.
 
 ## Installation
 
-This section is only for Python users and developers; users of the standalone
-download can skip it.
+This section is only for users who already maintain their own Python
+environment and for developers. Users of either installer above can skip it.
 
 Install the notebook support with:
 
 ```console
 python -m pip install -e '.[notebook]'
+```
+
+Install the complete JupyterLab coding environment with:
+
+```console
+python -m pip install -e '.[coding]'
+birdtracks-lab
 ```
 
 To launch the calculator as a browser app from the command line, install the

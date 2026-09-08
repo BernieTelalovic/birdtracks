@@ -12,11 +12,16 @@ def test_application_extras_install_kernel_runtime() -> None:
         (Path(__file__).parents[2] / "pyproject.toml").read_text(encoding="utf-8")
     )["project"]
 
-    for extra in ("app", "standalone"):
+    for extra in ("app", "coding", "standalone"):
         assert any(
             dependency.startswith("ipykernel")
             for dependency in project["optional-dependencies"][extra]
         )
+
+    assert any(
+        dependency.startswith("jupyterlab")
+        for dependency in project["optional-dependencies"]["coding"]
+    )
 
 
 def test_runtime_kernelspec_restarts_bundled_executable(tmp_path: Path) -> None:

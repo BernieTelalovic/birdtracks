@@ -1,0 +1,31 @@
+$ErrorActionPreference = "Stop"
+
+$BirdtracksVersion = "__BIRDTRACKS_VERSION__"
+$BirdtracksRoot = Join-Path $env:LOCALAPPDATA "Birdtracks"
+$BirdtracksBin = Join-Path $BirdtracksRoot "bin"
+$env:UV_INSTALL_DIR = $BirdtracksBin
+$env:UV_TOOL_DIR = Join-Path $BirdtracksRoot "tools"
+$env:UV_TOOL_BIN_DIR = $BirdtracksBin
+$env:UV_PYTHON_INSTALL_DIR = Join-Path $BirdtracksRoot "python"
+
+Invoke-RestMethod https://astral.sh/uv/install.ps1 | Invoke-Expression
+
+$Uv = Join-Path $BirdtracksBin "uv.exe"
+$Package = "birdtracks[coding] @ https://github.com/BernieTelalovic/birdtracks/archive/refs/tags/$BirdtracksVersion.tar.gz"
+& $Uv tool install --force --python 3.12 $Package
+if ($LASTEXITCODE -ne 0) {
+    throw "Birdtracks installation failed."
+}
+
+$Launcher = Join-Path $BirdtracksBin "birdtracks-lab.exe"
+$Shell = New-Object -ComObject WScript.Shell
+$Desktop = [Environment]::GetFolderPath("Desktop")
+$Shortcut = $Shell.CreateShortcut((Join-Path $Desktop "Birdtracks Lab.lnk"))
+$Shortcut.TargetPath = $Launcher
+$Shortcut.WorkingDirectory = [Environment]::GetFolderPath("MyDocuments")
+$Shortcut.Description = "Birdtrack algebra coding environment"
+$Shortcut.Save()
+
+Write-Host ""
+Write-Host "Birdtracks Lab $BirdtracksVersion is installed."
+Write-Host "Open it using the Birdtracks Lab desktop shortcut."

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "birdtracks"
-version = "0.1.2"
+version = "0.1.3"
 description = "Exact and extensible birdtrack algebra computations"
 readme = "README.md"
 license = "PolyForm-Noncommercial-1.0.0"
@@ -13,11 +13,18 @@ dependencies = ["igraph>=0.11,<2"]
 
 [project.scripts]
 birdtracks = "birdtracks.projectors.standalone:main"
+birdtracks-lab = "birdtracks.lab:main"
 
 [project.optional-dependencies]
 compiled = ["Cython>=3,<4"]
 notebook = ["anywidget>=0.9,<1"]
 app = ["anywidget>=0.9,<1", "ipykernel>=6,<8", "voila>=0.5,<1"]
+coding = [
+    "anywidget>=0.9,<1",
+    "ipykernel>=6,<8",
+    "jupyterlab>=4,<5",
+    "voila>=0.5,<1",
+]
 standalone = [
     "anywidget>=0.9,<1",
     "ipykernel>=6,<8",

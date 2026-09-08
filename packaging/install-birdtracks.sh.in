@@ -1,0 +1,41 @@
+#!/bin/sh
+set -eu
+
+BIRDTRACKS_VERSION="__BIRDTRACKS_VERSION__"
+BIRDTRACKS_DATA_ROOT="${XDG_DATA_HOME:-${HOME}/.local/share}/birdtracks"
+BIRDTRACKS_BIN_ROOT="${BIRDTRACKS_DATA_ROOT}/bin"
+BIRDTRACKS_TOOL_ROOT="${BIRDTRACKS_DATA_ROOT}/tools"
+BIRDTRACKS_PYTHON_ROOT="${BIRDTRACKS_DATA_ROOT}/python"
+
+if command -v curl >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="${BIRDTRACKS_BIN_ROOT}" sh
+elif command -v wget >/dev/null 2>&1; then
+    wget -qO- https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="${BIRDTRACKS_BIN_ROOT}" sh
+else
+    echo "Birdtracks needs either curl or wget to download its installer." >&2
+    exit 1
+fi
+
+UV_TOOL_DIR="${BIRDTRACKS_TOOL_ROOT}" \
+UV_TOOL_BIN_DIR="${BIRDTRACKS_BIN_ROOT}" \
+UV_PYTHON_INSTALL_DIR="${BIRDTRACKS_PYTHON_ROOT}" \
+    "${BIRDTRACKS_BIN_ROOT}/uv" tool install --force --python 3.12 \
+    "birdtracks[coding] @ https://github.com/BernieTelalovic/birdtracks/archive/refs/tags/${BIRDTRACKS_VERSION}.tar.gz"
+
+APPLICATIONS_ROOT="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
+mkdir -p "${APPLICATIONS_ROOT}"
+cat > "${APPLICATIONS_ROOT}/birdtracks-lab.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Birdtracks Lab
+Comment=Birdtrack algebra coding environment
+Exec="${BIRDTRACKS_BIN_ROOT}/birdtracks-lab"
+Terminal=true
+Categories=Education;Science;Development;
+EOF
+chmod +x "${APPLICATIONS_ROOT}/birdtracks-lab.desktop"
+
+echo
+echo "Birdtracks Lab ${BIRDTRACKS_VERSION} is installed."
+echo "Open 'Birdtracks Lab' from your applications menu, or run:"
+echo "  ${BIRDTRACKS_BIN_ROOT}/birdtracks-lab"

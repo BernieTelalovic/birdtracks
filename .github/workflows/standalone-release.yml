@@ -53,3 +53,23 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.executable }}
+
+  publish-installers:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create versioned online installers
+        shell: bash
+        run: |
+          sed "s/__BIRDTRACKS_VERSION__/${GITHUB_REF_NAME}/g" packaging/install-birdtracks.sh.in > install-birdtracks.sh
+          sed "s/__BIRDTRACKS_VERSION__/${GITHUB_REF_NAME}/g" packaging/install-birdtracks.ps1.in > install-birdtracks.ps1
+          sed "s/__BIRDTRACKS_VERSION__/${GITHUB_REF_NAME}/g" packaging/install-birdtracks.cmd.in > install-birdtracks.cmd
+          chmod +x install-birdtracks.sh
+      - name: Attach installers to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            install-birdtracks.sh
+            install-birdtracks.ps1
+            install-birdtracks.cmd

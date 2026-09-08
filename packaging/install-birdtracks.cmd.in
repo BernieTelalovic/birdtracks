@@ -1,0 +1,9 @@
+@echo off
+setlocal
+set "BIRDTRACKS_VERSION=__BIRDTRACKS_VERSION__"
+set "INSTALLER=%TEMP%\install-birdtracks-%BIRDTRACKS_VERSION%.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -UseBasicParsing 'https://github.com/BernieTelalovic/birdtracks/releases/download/%BIRDTRACKS_VERSION%/install-birdtracks.ps1' -OutFile '%INSTALLER%'"
+if errorlevel 1 exit /b 1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%INSTALLER%"
+if errorlevel 1 exit /b 1
+pause
