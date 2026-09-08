@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "birdtracks"
-version = "0.1.0"
+version = "0.1.1"
 description = "Exact and extensible birdtrack algebra computations"
 readme = "README.md"
 license = "PolyForm-Noncommercial-1.0.0"
