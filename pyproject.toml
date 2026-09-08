@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "birdtracks"
+version = "0.1.0"
+description = "Exact and extensible birdtrack algebra computations"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["igraph>=0.11,<2"]
+
+[project.scripts]
+birdtracks = "birdtracks.projectors.standalone:main"
+
+[project.optional-dependencies]
+compiled = ["Cython>=3,<4"]
+notebook = ["anywidget>=0.9,<1"]
+app = ["anywidget>=0.9,<1", "voila>=0.5,<1"]
+standalone = ["anywidget>=0.9,<1", "voila>=0.5,<1", "pyinstaller>=6,<7"]
+test = ["pytest>=8,<9"]
+training = ["torch>=2.4"]
+
+[tool.setuptools.package-data]
+"birdtracks.projectors" = [
+    "canvas_app.py",
+    "projector-widget.yaml",
+    "static/*.css",
+    "static/*.js",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-markers", "--strict-config", "-ra"]

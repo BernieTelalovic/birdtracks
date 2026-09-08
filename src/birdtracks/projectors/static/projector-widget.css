@@ -1,0 +1,724 @@
+.birdtracks-projector-widget svg {
+  display: block;
+  width: min(100%, 640px);
+  height: auto;
+  background: var(--birdtracks-background);
+  border: 1px solid var(--birdtracks-border);
+  touch-action: none;
+  user-select: none;
+}
+
+.birdtracks-projector-sum .birdtracks-projector-widget svg {
+  border: 0;
+  background: transparent;
+}
+
+.birdtracks-projector-sum .birdtracks-projector-widget {
+  max-width: none;
+}
+
+.birdtracks-projector-widget.birdtracks-term-dimmed {
+  opacity: 0.55;
+}
+
+.birdtracks-projector-sum .birdtracks-projector-widget > .birdtracks-save-button {
+  display: none;
+}
+
+.birdtracks-projector-sum {
+  --birdtracks-app-surface: #ffffff;
+  --birdtracks-app-surface-muted: #f8fafc;
+  --birdtracks-app-border: #e2e8f0;
+  --birdtracks-app-radius: 0.75rem;
+  --birdtracks-app-control-size: 2.25rem;
+  gap: 0;
+  align-items: flex-start;
+}
+
+.birdtracks-calculator-app {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--birdtracks-app-border);
+  border-radius: var(--birdtracks-app-radius);
+  background: var(--birdtracks-app-surface);
+  overflow-x: auto;
+}
+
+.birdtracks-calculator-app .birdtracks-creator-toolbar {
+  box-sizing: border-box;
+  padding: 0.5rem;
+  border: 1px solid var(--birdtracks-app-border);
+  border-radius: calc(var(--birdtracks-app-radius) * 0.75);
+  background: var(--birdtracks-app-surface-muted);
+}
+
+.birdtracks-calculator-app .birdtracks-creator-toolbar button {
+  min-width: var(--birdtracks-app-control-size);
+  min-height: var(--birdtracks-app-control-size);
+}
+
+.birdtracks-calculator-app .birdtracks-equation-row {
+  min-width: 0;
+}
+
+.birdtracks-equation-row {
+  margin: 0;
+  justify-content: flex-start;
+  overflow: visible !important;
+}
+
+.birdtracks-equation-equals {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.birdtracks-equation-equals line {
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.birdtracks-zero {
+  display: block;
+  font-family: serif;
+  font-size: 1.875rem;
+  line-height: 1;
+}
+
+.birdtracks-zero-cell {
+  margin: 0;
+}
+
+.birdtracks-term-sign {
+  stroke: var(--birdtracks-line);
+  stroke-width: var(--birdtracks-line-width);
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.birdtracks-save-button {
+  margin-top: 0.5rem;
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+}
+
+.birdtracks-creator-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(4rem, 20rem) auto;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  margin-bottom: 0.5rem;
+}
+
+.birdtracks-canvas-status {
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  text-align: right;
+  font-size: 0.85rem;
+}
+
+.birdtracks-toolbar-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.birdtracks-toolbar-tools[hidden] {
+  display: none;
+}
+
+.birdtracks-toolbar-right {
+  grid-column: 3;
+  grid-row: 1;
+  justify-content: flex-end;
+}
+
+.birdtracks-toolbar-left {
+  grid-column: 1;
+  grid-row: 1;
+  justify-content: flex-start;
+}
+
+.birdtracks-canvas-status {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.birdtracks-creator-toolbar button {
+  padding: 0.25rem;
+  cursor: pointer;
+}
+
+.birdtracks-icon-button {
+  box-sizing: border-box;
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0.25rem;
+}
+
+.birdtracks-trace-button svg text {
+  fill: #4f4f4f;
+  stroke: none;
+  font-family: sans-serif;
+  font-style: normal;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 2px;
+}
+
+.birdtracks-multiply-button {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.birdtracks-add-term-button {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.birdtracks-multiplier {
+  display: inline-grid;
+  grid-template-rows: 1fr auto 1fr;
+  width: 2.75rem;
+  height: 3.4rem;
+  align-items: center;
+}
+
+.birdtracks-multiplier[hidden] {
+  display: none;
+}
+
+.birdtracks-multiplier input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 1.35rem;
+  padding: 0 0.15rem;
+  border: 1px solid var(--birdtracks-app-border);
+  text-align: center;
+  font-family: serif;
+}
+
+.birdtracks-multiplier-bar {
+  display: block;
+  width: 100%;
+  border-top: 1.5px solid currentColor;
+}
+
+.birdtracks-trace-delimiter,
+.birdtracks-trace-polynomial {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.birdtracks-trace-delimiter {
+  align-self: stretch;
+  overflow: visible;
+}
+
+.birdtracks-trace-notation {
+  display: inline-flex;
+  align-items: stretch;
+  height: 100%;
+}
+
+.birdtracks-trace-symbol,
+.birdtracks-polynomial {
+  display: inline-flex;
+  align-items: center;
+  font-family: serif;
+  font-size: 1.875rem;
+  line-height: 1;
+}
+
+.birdtracks-trace-symbol {
+  padding-right: 0.08em;
+}
+
+.birdtracks-trace-bracket {
+  display: block;
+  width: 0.55rem;
+  height: 100%;
+  min-height: 1.875rem;
+  overflow: visible;
+}
+
+.birdtracks-trace-bracket path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.birdtracks-polynomial sup {
+  align-self: flex-start;
+  font-size: 0.6em;
+  line-height: 1;
+}
+
+.birdtracks-polynomial-fraction {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  margin: 0 0.12em;
+  font-size: 0.58em;
+  line-height: 0.9;
+  vertical-align: middle;
+}
+
+.birdtracks-polynomial-fraction > span:first-child {
+  border-bottom: 1px solid currentColor;
+  padding: 0 0.12em 0.08em;
+}
+
+.birdtracks-polynomial-fraction > span:last-child {
+  padding-top: 0.08em;
+}
+
+.birdtracks-creator-workspace {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  position: relative;
+  box-sizing: border-box;
+  transition: padding-bottom 120ms ease;
+}
+
+.birdtracks-creator-workspace.fraction-open {
+  padding-bottom: 5.25rem;
+}
+
+.birdtracks-local-undo,
+.birdtracks-local-prefactor {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  appearance: none;
+  box-shadow: none;
+}
+
+.birdtracks-local-prefactor {
+  background: #6b7280;
+  color: #ffffff;
+  font-family: serif;
+  font-size: 1.8rem;
+  font-weight: 600;
+  line-height: 1;
+  text-align: center;
+}
+
+.birdtracks-local-undo .birdtracks-undo-icon {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  background: transparent;
+  border: 0;
+}
+
+.birdtracks-local-undo.visible,
+.birdtracks-local-prefactor.visible {
+  opacity: 1;
+}
+
+.birdtracks-local-undo.visible:not(:disabled) {
+  pointer-events: auto;
+}
+
+.birdtracks-local-prefactor.visible {
+  pointer-events: auto;
+}
+
+.birdtracks-local-fraction {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 2.25rem);
+  transform: translateX(-50%);
+  display: inline-grid;
+  grid-template-rows: 1fr auto 1fr;
+  gap: 0.18rem;
+  width: 4.5rem;
+  padding: 0.55rem 0.65rem;
+  background: var(--birdtracks-app-surface);
+  border: 1px solid #9ca3af;
+  border-radius: 0.55rem;
+  box-shadow: 0 0.45rem 1rem rgba(17, 24, 39, 0.22);
+  z-index: 3;
+}
+
+.birdtracks-local-fraction[hidden] {
+  display: none;
+}
+
+.birdtracks-local-fraction input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 1.65rem;
+  padding: 0.05rem 0.25rem;
+  border: 0;
+  border-radius: 0.2rem;
+  background: transparent;
+  color: #111827;
+  font-family: serif;
+  font-size: 1.2rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.birdtracks-local-fraction input:focus {
+  background: rgba(107, 114, 128, 0.1);
+  outline: 1px solid rgba(75, 85, 99, 0.25);
+  outline-offset: 0;
+}
+
+.birdtracks-local-fraction .birdtracks-multiplier-bar {
+  border-top-width: 2px;
+  border-top-color: #374151;
+}
+
+.birdtracks-local-undo:disabled {
+  pointer-events: none;
+}
+
+.birdtracks-canvas-viewport {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: auto;
+  overflow: auto;
+}
+
+.birdtracks-canvas-viewport > svg {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+}
+
+.birdtracks-projector-evaluate .birdtracks-canvas-viewport {
+  overflow: visible;
+}
+
+.birdtracks-operator-button svg {
+  display: block;
+  width: 3rem;
+  height: 2rem;
+  background: transparent;
+  border: 0;
+  touch-action: auto;
+}
+
+.birdtracks-icon-button svg {
+  display: block;
+  width: 2rem;
+  height: 2rem;
+  background: transparent;
+  border: 0;
+}
+
+.birdtracks-icon-button path {
+  fill: none;
+  stroke: #4f4f4f;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.birdtracks-undo-icon circle {
+  fill: #6b7280;
+}
+
+.birdtracks-undo-icon path {
+  fill: none;
+  stroke: white;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.birdtracks-local-undo,
+.birdtracks-undo-button {
+  appearance: none;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.birdtracks-icon-button.selected {
+  color: #f9fafb;
+  background: #303640;
+  border-color: #111827;
+  box-shadow:
+    inset 0 4px 7px rgba(0, 0, 0, 0.72),
+    inset 0 0 0 2px #0f172a,
+    0 1px 0 rgba(255, 255, 255, 0.18);
+  transform: translateY(2px);
+}
+
+.birdtracks-icon-button.selected svg,
+.birdtracks-icon-button.selected svg text {
+  color: #f9fafb;
+  fill: none;
+  stroke: #f9fafb;
+  stroke-width: 2.25;
+}
+
+.birdtracks-trace-button.selected svg text {
+  fill: currentColor;
+  stroke: none;
+}
+
+.birdtracks-projector-creator[data-mode="evaluate"] .birdtracks-line-control,
+.birdtracks-projector-creator[data-mode="evaluate"] .birdtracks-line-control-hit,
+.birdtracks-projector-creator[data-mode="evaluate"] .birdtracks-add-line-control {
+  display: none;
+}
+
+.birdtracks-creator-port.evaluate-order {
+  cursor: ns-resize;
+}
+
+.birdtracks-operator-button line,
+.birdtracks-operator-button rect {
+  stroke: #4f4f4f;
+  stroke-width: 2;
+}
+
+.birdtracks-operator-button line {
+  fill: none;
+}
+
+.birdtracks-operator-button .palette-symmetriser {
+  fill: #efefef;
+}
+
+.birdtracks-operator-button .palette-antisymmetriser {
+  fill: #333;
+}
+
+.birdtracks-creator-port {
+  stroke: none;
+  pointer-events: fill;
+  cursor: crosshair;
+}
+
+.birdtracks-route-handle {
+  fill: transparent;
+  stroke: none;
+  pointer-events: fill;
+  cursor: ns-resize;
+}
+
+.birdtracks-creator-port-visual {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: var(--birdtracks-handle-line-width);
+  pointer-events: none;
+}
+
+.birdtracks-creator-port-visual.active {
+  stroke: var(--birdtracks-port-handle);
+}
+
+.birdtracks-line-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 12px;
+  vector-effect: non-scaling-stroke;
+  pointer-events: stroke;
+  cursor: context-menu;
+}
+
+.birdtracks-line-control {
+  fill: #777;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 100ms ease-in-out;
+}
+
+.birdtracks-line-control-hit {
+  fill: transparent;
+  pointer-events: fill;
+  cursor: pointer;
+}
+
+.birdtracks-recursion-control {
+  fill: none;
+  stroke: #777;
+  stroke-width: var(--birdtracks-operator-line-width);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 100ms ease-in-out;
+}
+
+.birdtracks-recursion-control-hit {
+  fill: transparent;
+  pointer-events: fill;
+  cursor: pointer;
+}
+
+.birdtracks-recursion-control.active {
+  opacity: 1;
+}
+
+.birdtracks-recursion-control-hit:hover + .birdtracks-recursion-control,
+.birdtracks-recursion-control-hit:focus + .birdtracks-recursion-control {
+  opacity: 1;
+}
+
+.birdtracks-add-line-control {
+  stroke: #777;
+  stroke-width: var(--birdtracks-add-line-width);
+  stroke-linecap: round;
+  cursor: pointer;
+}
+
+.birdtracks-add-line-control-hit {
+  fill: transparent;
+  stroke: none;
+  pointer-events: fill;
+}
+
+.birdtracks-add-line-control:hover {
+  stroke: #4f4f4f;
+}
+
+.birdtracks-permutation-node {
+  fill: transparent;
+  stroke: transparent;
+  pointer-events: all;
+}
+
+.birdtracks-node:hover .birdtracks-line-control,
+.birdtracks-node:focus-within .birdtracks-line-control,
+.birdtracks-node:hover .birdtracks-recursion-control,
+.birdtracks-node:focus-within .birdtracks-recursion-control {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.birdtracks-level-guide {
+  stroke: #868686;
+  stroke-width: 0.5px;
+  stroke-dasharray: 1px 4px;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.birdtracks-draft-line {
+  stroke-dasharray: 0.12 0.08;
+}
+
+.birdtracks-coefficient {
+  fill: var(--birdtracks-line);
+  font-family: serif;
+}
+
+.birdtracks-fraction-number {
+  fill: var(--birdtracks-line);
+  font-family: serif;
+}
+
+.birdtracks-fraction-bar {
+  stroke: var(--birdtracks-line);
+  stroke-width: var(--birdtracks-line-width);
+  vector-effect: non-scaling-stroke;
+}
+
+.birdtracks-coefficient-minus {
+  stroke: var(--birdtracks-line);
+  stroke-width: var(--birdtracks-line-width);
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.birdtracks-prefactor-delete-target {
+  fill: transparent;
+  cursor: context-menu;
+  pointer-events: all;
+}
+
+.birdtracks-line {
+  fill: none;
+  stroke: var(--birdtracks-line);
+  stroke-width: var(--birdtracks-line-width);
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.birdtracks-node {
+  cursor: grab;
+}
+
+.birdtracks-node:active {
+  cursor: grabbing;
+}
+
+.birdtracks-port-handle {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: var(--birdtracks-handle-line-width);
+  cursor: ns-resize;
+}
+
+.birdtracks-port-handle:hover,
+.birdtracks-port-handle:active {
+  fill: transparent;
+  stroke: var(--birdtracks-port-handle);
+  stroke-width: var(--birdtracks-handle-line-width);
+}
+
+.birdtracks-free-line-handle,
+.birdtracks-boundary-handle {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: var(--birdtracks-handle-line-width);
+  cursor: ns-resize;
+}
+
+.birdtracks-free-line-handle:hover,
+.birdtracks-free-line-handle:active,
+.birdtracks-boundary-handle:hover,
+.birdtracks-boundary-handle:active {
+  fill: transparent;
+  stroke: var(--birdtracks-free-handle);
+  stroke-width: var(--birdtracks-handle-line-width);
+}
+
+.birdtracks-symmetriser,
+.birdtracks-antisymmetriser {
+  stroke: var(--birdtracks-line);
+  stroke-width: var(--birdtracks-operator-line-width);
+  vector-effect: non-scaling-stroke;
+}
+
+.birdtracks-symmetriser {
+  fill: var(--birdtracks-symmetriser);
+}
+
+.birdtracks-antisymmetriser {
+  fill: var(--birdtracks-antisymmetriser);
+}

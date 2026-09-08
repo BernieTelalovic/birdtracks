@@ -38,7 +38,8 @@ Build confidence from cheap local checks upward:
 4. Associativity checks on small generated examples; never infer commutativity merely from representation-ring multiplication.
 5. Cross-checks against `pair_multiplication` when forgetting operator structure should reproduce its representation-level decomposition.
 6. One shared conformance suite for Python and every compiled backend.
-7. Benchmarks only after semantic equivalence is established.
+7. Run all code in the venv we have set up.
+8. Benchmarks only after semantic equivalence is established.
 
 Use exact comparisons when exact arithmetic is expected. If a numerical oracle is unavoidable, state tolerances and why they are adequate.
 
