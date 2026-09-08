@@ -7,6 +7,7 @@ name = "birdtracks"
 version = "0.1.0"
 description = "Exact and extensible birdtrack algebra computations"
 readme = "README.md"
+license = "PolyForm-Noncommercial-1.0.0"
 requires-python = ">=3.10"
 dependencies = ["igraph>=0.11,<2"]
 

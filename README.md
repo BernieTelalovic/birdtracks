@@ -150,3 +150,10 @@ The longer-term goal is automatic simplification of birdtrack expressions into
 permutation sums for tasks such as projector normalization and orthogonality
 checks. Bug reports, especially examples producing incorrect algebraic
 results, are very welcome.
+
+## License
+
+Birdtracks is source-available under the
+[PolyForm Noncommercial License 1.0.0](LICENSE). It may be used, modified, and
+shared for noncommercial purposes, including use by educational institutions
+and public research organizations. Commercial use is not permitted.
