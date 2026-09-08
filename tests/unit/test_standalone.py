@@ -2,8 +2,21 @@
 
 import json
 from pathlib import Path
+import tomllib
 
 from birdtracks.projectors import standalone
+
+
+def test_application_extras_install_kernel_runtime() -> None:
+    project = tomllib.loads(
+        (Path(__file__).parents[2] / "pyproject.toml").read_text(encoding="utf-8")
+    )["project"]
+
+    for extra in ("app", "standalone"):
+        assert any(
+            dependency.startswith("ipykernel")
+            for dependency in project["optional-dependencies"][extra]
+        )
 
 
 def test_runtime_kernelspec_restarts_bundled_executable(tmp_path: Path) -> None:

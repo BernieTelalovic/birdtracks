@@ -17,8 +17,13 @@ birdtracks = "birdtracks.projectors.standalone:main"
 [project.optional-dependencies]
 compiled = ["Cython>=3,<4"]
 notebook = ["anywidget>=0.9,<1"]
-app = ["anywidget>=0.9,<1", "voila>=0.5,<1"]
-standalone = ["anywidget>=0.9,<1", "voila>=0.5,<1", "pyinstaller>=6,<7"]
+app = ["anywidget>=0.9,<1", "ipykernel>=6,<8", "voila>=0.5,<1"]
+standalone = [
+    "anywidget>=0.9,<1",
+    "ipykernel>=6,<8",
+    "voila>=0.5,<1",
+    "pyinstaller>=6,<7",
+]
 test = ["pytest>=8,<9"]
 training = ["torch>=2.4"]
 
