@@ -6,11 +6,52 @@ import json
 import os
 from pathlib import Path
 import runpy
+import subprocess
 import sys
 from tempfile import TemporaryDirectory
+import webbrowser
 
 
 _KERNEL_ARGUMENT = "--birdtracks-kernel"
+
+
+def _external_process_environment() -> dict[str, str]:
+    """Return an environment without PyInstaller's Linux library override."""
+    environment = os.environ.copy()
+    original_library_path = environment.pop("LD_LIBRARY_PATH_ORIG", None)
+    if original_library_path is None:
+        environment.pop("LD_LIBRARY_PATH", None)
+    else:
+        environment["LD_LIBRARY_PATH"] = original_library_path
+    return environment
+
+
+class _LinuxSystemBrowser:
+    """Open a browser without leaking bundled shared-library paths into it."""
+
+    def open(self, url: str, new: int = 0, autoraise: bool = True) -> bool:
+        del new, autoraise
+        try:
+            subprocess.Popen(
+                ["xdg-open", url],
+                env=_external_process_environment(),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            return False
+        return True
+
+
+def _protect_external_browser_environment() -> None:
+    """Prefer a system browser launcher insulated from the frozen runtime."""
+    if sys.platform.startswith("linux") and getattr(sys, "frozen", False):
+        webbrowser.register(
+            "birdtracks-system-browser",
+            None,
+            _LinuxSystemBrowser(),
+            preferred=True,
+        )
 
 
 def _write_runtime_kernelspec(root: Path) -> Path:
@@ -67,6 +108,7 @@ def _run_application() -> int:
 
     os.environ["BIRDTRACKS_EXPRESSION_ROOT"] = str(Path.cwd())
     os.environ.setdefault("BIRDTRACKS_DEBUG", "0")
+    _protect_external_browser_environment()
     with TemporaryDirectory(prefix="birdtracks-") as temporary:
         runtime = Path(temporary)
         _write_runtime_kernelspec(runtime)
