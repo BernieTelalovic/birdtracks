@@ -44,6 +44,12 @@ def test_standalone_self_test_checks_runtime(capsys) -> None:
     assert "runtime is ready" in capsys.readouterr().out
 
 
+def test_standalone_self_test_supports_windowed_runtime(monkeypatch) -> None:
+    monkeypatch.setattr(standalone.sys, "stdout", None)
+
+    assert standalone.main(["--self-test"]) == 0
+
+
 def test_standalone_rejects_unknown_arguments() -> None:
     try:
         standalone.main(["--unknown"])

@@ -34,8 +34,14 @@ jobs:
       - name: Build self-contained application
         run: python -m PyInstaller --clean --noconfirm packaging/birdtracks.spec
       - name: Smoke-test bundled runtime
-        shell: bash
-        run: '"${{ matrix.executable }}" --self-test'
+        shell: python
+        run: |
+          import subprocess
+          subprocess.run(
+              [r"${{ matrix.executable }}", "--self-test"],
+              check=True,
+              timeout=120,
+          )
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

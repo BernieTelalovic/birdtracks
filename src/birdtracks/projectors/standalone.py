@@ -102,7 +102,8 @@ def _self_test() -> int:
     with TemporaryDirectory(prefix="birdtracks-test-") as temporary:
         specification = _write_runtime_kernelspec(Path(temporary))
         json.loads((specification / "kernel.json").read_text(encoding="utf-8"))
-    print("Birdtracks standalone runtime is ready.")
+    if sys.stdout is not None:
+        print("Birdtracks standalone runtime is ready.")
     return 0
 
 
