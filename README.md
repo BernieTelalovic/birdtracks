@@ -199,6 +199,9 @@ permutation sums for tasks such as projector normalization and orthogonality
 checks. Bug reports, especially examples producing incorrect algebraic
 results, are very welcome.
 
+The experimental learning-guided simplifier is documented in
+[Training the S/A simplification strategy](docs/hybrid-strategy-training.md).
+
 ## License
 
 Birdtracks is source-available under the
