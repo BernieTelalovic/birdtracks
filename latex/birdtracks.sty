@@ -1,0 +1,336 @@
+% birdtracks.sty -- small, standalone TikZ notation for birdtrack diagrams.
+%
+% The package deliberately has no dependency on the Python birdtracks
+% package.  It provides presentation primitives only.
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{birdtracks}[2026/09/20 Birdtrack and Young-diagram notation]
+
+\RequirePackage{tikz}
+\RequirePackage{array}
+\RequirePackage{xparse}
+\RequirePackage{expl3}
+
+\makeatletter
+
+% --------------------------------------------------------------------------
+% Package configuration
+% --------------------------------------------------------------------------
+
+\newdimen\bt@cellwidth
+\newdimen\bt@cellheight
+\newdimen\bt@celllinewidth
+\newdimen\bt@pairsep
+\newdimen\bt@pairrowsep
+\newdimen\bt@boxwidth
+\newdimen\bt@boxheight
+\newdimen\bt@operatorwidth
+\newdimen\bt@operatorlineseparation
+\newdimen\bt@operatorlinelength
+\newdimen\bt@operatorlinewidth
+\newdimen\bt@operatorborderwidth
+\newdimen\bt@operatorheight
+\newdimen\bt@halfoperatorwidth
+\newdimen\bt@leftlineend
+\newdimen\bt@rightlineend
+\newdimen\bt@firstport
+\newdimen\bt@portheight
+
+\def\bt@cellfill{white}
+\def\bt@celllinecolor{black}
+\def\bt@celltextcolor{black}
+\def\bt@boxfill{white}
+\def\bt@boxlinecolor{black}
+\def\bt@boxtextcolor{black}
+\def\bt@operatorfill{white}
+\def\bt@operatorlinecolor{black}
+\def\bt@operatortextcolor{black}
+\def\bt@operator{S}
+\def\bt@operatoroptions{}
+\def\bt@operatortop{1}
+\def\bt@operatorbottom{1}
+
+% Dimensions are intentionally ordinary TeX dimensions.  The two margin
+% settings are dimensionless numbers: 1 means one line separation.
+\pgfkeys{
+  /birdtracks/.is family,
+  /birdtracks,
+  cell width/.code = {\bt@cellwidth=#1\relax},
+  cell height/.code = {\bt@cellheight=#1\relax},
+  cell line width/.code = {\bt@celllinewidth=#1\relax},
+  cell separation/.code = {\bt@pairsep=#1\relax},
+  pair row separation/.code = {\bt@pairrowsep=#1\relax},
+  cell fill/.store in = \bt@cellfill,
+  cell line color/.store in = \bt@celllinecolor,
+  cell text color/.store in = \bt@celltextcolor,
+  box width/.code = {\bt@boxwidth=#1\relax},
+  box height/.code = {\bt@boxheight=#1\relax},
+  box fill/.store in = \bt@boxfill,
+  box line color/.store in = \bt@boxlinecolor,
+  box text color/.store in = \bt@boxtextcolor,
+  operator width/.code = {\bt@operatorwidth=#1\relax},
+  operator line separation/.code = {\bt@operatorlineseparation=#1\relax},
+  operator line length/.code = {\bt@operatorlinelength=#1\relax},
+  operator line width/.code = {\bt@operatorlinewidth=#1\relax},
+  operator border width/.code = {\bt@operatorborderwidth=#1\relax},
+  operator fill/.store in = \bt@operatorfill,
+  operator line color/.store in = \bt@operatorlinecolor,
+  operator text color/.store in = \bt@operatortextcolor,
+  operator top margin/.store in = \bt@operatortop,
+  operator bottom margin/.store in = \bt@operatorbottom,
+  operator/.store in = \bt@operator,
+  operator options/.store in = \bt@operatoroptions,
+}
+
+% Defaults are set before package options are processed.
+\pgfkeys{/birdtracks,
+  cell width=1.8em,
+  cell height=1.8em,
+  cell line width=.4pt,
+  cell separation=.15em,
+  pair row separation=.15em,
+  cell fill=white,
+  cell line color=black,
+  cell text color=black,
+  box width=2.5em,
+  box height=2.5em,
+  box fill=white,
+  box line color=black,
+  box text color=black,
+  operator width=2.0em,
+  operator line separation=1.1em,
+  operator line length=1.1em,
+  operator line width=.5pt,
+  operator border width=.5pt,
+  operator fill=white,
+  operator line color=black,
+  operator text color=black,
+  operator top margin=1,
+  operator bottom margin=1,
+  operator=S,
+}
+
+\DeclareOption*{\pgfkeys{/birdtracks/\CurrentOption}}
+\ProcessOptions\relax
+
+% Change defaults after loading as well.  Settings inside a pair or
+% projector are grouped and therefore remain local to that object.
+\NewDocumentCommand{\btset}{m}{\pgfkeys{/birdtracks,#1}}
+
+% --------------------------------------------------------------------------
+% Young-diagram cells and pairs
+% --------------------------------------------------------------------------
+
+\tikzset{
+  bt/cell/.style={
+    draw=\bt@celllinecolor,
+    fill=\bt@cellfill,
+    text=\bt@celltextcolor,
+    line width=\bt@celllinewidth,
+    minimum width=\bt@cellwidth,
+    minimum height=\bt@cellheight,
+    text width=\bt@cellwidth,
+    inner sep=0pt,
+    outer sep=0pt,
+    align=center,
+  },
+  bt/fill color/.style={fill=#1},
+  bt/line color/.style={draw=#1},
+  bt/text color/.style={text=#1},
+  bt/dotted cell/.style={bt/cell,dotted},
+  bt/box/.style={
+    draw=\bt@boxlinecolor,
+    fill=\bt@boxfill,
+    text=\bt@boxtextcolor,
+    minimum width=\bt@boxwidth,
+    minimum height=\bt@boxheight,
+    text width=\bt@boxwidth,
+    inner sep=2pt,
+    outer sep=0pt,
+    align=center,
+  },
+  bt/box width/.style={
+    minimum width=#1,
+    text width=#1,
+  },
+  bt/box height/.style={minimum height=#1},
+  bt/divider/.style={},
+}
+
+\newcommand{\bt@cell}[2]{%
+  \tikz[baseline=(btcell.center)]%
+    \node (btcell) [bt/cell,#1] {\ensuremath{#2}};%
+}
+
+% A solid cell.  The optional argument is TikZ node styling, so, for
+% example, fill=yellow, draw=red, and line width=1pt are all per-cell.
+\NewDocumentCommand{\btcell}{O{}m}{\bt@cell{#1}{#2}}
+
+% A dotted cell with the same text, sizing, and colour controls.
+\NewDocumentCommand{\btdottedcell}{O{}m}{%
+  \bt@cell{bt/dotted cell,#1}{#2}%
+}
+
+% A custom-border cell.  Its optional TikZ argument is intentionally not
+% restricted: double, dashed, dash pattern, postaction, and path-picture
+% styles are all available to the caller.
+\NewDocumentCommand{\btcustomcell}{O{}m}{\bt@cell{#1}{#2}}
+
+% A cell split from southwest to northeast.  The two arguments are separate
+% centred text areas.  The optional TikZ settings apply to the outer border
+% and to the diagonal (for example draw=blue or line width=1pt).
+\NewDocumentCommand{\btdivcell}{O{}mm}{%
+  \begin{tikzpicture}[
+      x=\bt@cellwidth,
+      y=\bt@cellheight,
+      baseline=.5\bt@cellheight,
+      bt/cell,#1]
+    \path (0,0) rectangle (1,1);
+    \node[inner sep=0pt, text width=.45\bt@cellwidth, align=center]
+      at (.25,.5) {\ensuremath{#2}};
+    \node[inner sep=0pt, text width=.45\bt@cellwidth, align=center]
+      at (.75,.5) {\ensuremath{#3}};
+    \draw[bt/divider] (0,0) -- (1,1);
+  \end{tikzpicture}%
+}
+
+% #2 is matrix material, so rows use \\ and columns use &.  The command is
+% valid in both inline math and display math.  Every cell can independently
+% choose one of the three cell commands above.
+\NewDocumentCommand{\btpair}{O{}m}{%
+  \begingroup
+    \pgfkeys{/birdtracks,#1}%
+    \setlength{\arraycolsep}{\bt@pairsep}%
+    \setlength{\extrarowheight}{\bt@pairrowsep}%
+    \ensuremath{\begin{matrix}#2\end{matrix}}%
+  \endgroup
+}
+
+% --------------------------------------------------------------------------
+% General content boxes
+% --------------------------------------------------------------------------
+
+% Unlike cells, the contents are not forced into math mode.  This makes the
+% box suitable for text, a formula, a pair, or any other LaTeX material.
+\NewDocumentCommand{\btbox}{O{}m}{%
+  \tikz[baseline=(btbox.base)]%
+    \node (btbox) [bt/box,#1] {#2};%
+}
+
+% --------------------------------------------------------------------------
+% Birdtrack symmetrisers and antisymmetrisers
+% --------------------------------------------------------------------------
+
+\tikzset{
+  bt/every line/.style={
+    line width=\bt@operatorlinewidth,
+    line cap=round,
+  },
+  bt/operator/.style={
+    draw=\bt@operatorlinecolor,
+    fill=\bt@operatorfill,
+    text=\bt@operatortextcolor,
+    line width=\bt@operatorborderwidth,
+    minimum width=\bt@operatorwidth,
+    minimum height=\bt@operatorheight,
+    inner sep=0pt,
+    outer sep=0pt,
+    align=center,
+  },
+}
+
+\ExplSyntaxOn
+
+\seq_new:N \l_bt_in_lines_seq
+\seq_new:N \l_bt_out_lines_seq
+\int_new:N \l_bt_port_count_int
+\int_new:N \l_bt_out_count_int
+
+% These commands are normally used in the btprojector environment.  Their
+% bodies are deliberately empty: one line equals one command, and its TikZ
+% options belong only to that line.
+\NewDocumentCommand{\btin}{O{}}{
+  \seq_put_right:Nn \l_bt_in_lines_seq {#1}
+}
+\NewDocumentCommand{\btout}{O{}}{
+  \seq_put_right:Nn \l_bt_out_lines_seq {#1}
+}
+
+\cs_new_protected:Npn \bt_render_projector:
+  {
+    \int_set:Nn \l_bt_port_count_int {\seq_count:N \l_bt_in_lines_seq}
+    \int_set:Nn \l_bt_out_count_int {\seq_count:N \l_bt_out_lines_seq}
+    \int_compare:nNnTF {\l_bt_port_count_int} = {0}
+      {\PackageError{birdtracks}{A projector needs at least one input line}
+        {Add one or more \\btin commands to the environment.}}
+      {
+        \int_compare:nNnTF {\l_bt_port_count_int} = {\l_bt_out_count_int}
+          {\bt_render_projector_valid:}
+          {\PackageError{birdtracks}{A projector needs the same number of input and output lines}
+            {Add matching \\btin and \\btout commands.}}
+      }
+  }
+
+\cs_new_protected:Npn \bt_render_projector_valid:
+  {
+    % The height is specified in line-separation units.  Thus, for n ports,
+    % the box spans top margin + (n-1) + bottom margin units.
+    \pgfmathsetlength{\bt@operatorheight}{
+      (\int_use:N \l_bt_port_count_int - 1 + \bt@operatortop +
+       \bt@operatorbottom) * \the\bt@operatorlineseparation}
+    \pgfmathsetlength{\bt@halfoperatorwidth}{.5 * \the\bt@operatorwidth}
+    \pgfmathsetlength{\bt@leftlineend}{
+      -\the\bt@halfoperatorwidth - \the\bt@operatorlinelength}
+    \pgfmathsetlength{\bt@rightlineend}{
+      \the\bt@halfoperatorwidth + \the\bt@operatorlinelength}
+    \pgfmathsetlength{\bt@firstport}{
+      .5 * \the\bt@operatorheight - \bt@operatortop *
+      \the\bt@operatorlineseparation}
+
+    \begin{tikzpicture}[baseline=(btop.center)]
+      \seq_map_indexed_inline:Nn \l_bt_in_lines_seq
+        {
+          \pgfmathsetlength{\bt@portheight}{
+            \the\bt@firstport - (##1 - 1) *
+            \the\bt@operatorlineseparation}
+          \draw[bt/every line,##2]
+            (\the\bt@leftlineend,\the\bt@portheight) --
+            (-\the\bt@halfoperatorwidth,\the\bt@portheight);
+        }
+      \seq_map_indexed_inline:Nn \l_bt_out_lines_seq
+        {
+          \pgfmathsetlength{\bt@portheight}{
+            \the\bt@firstport - (##1 - 1) *
+            \the\bt@operatorlineseparation}
+          \draw[bt/every line,##2]
+            (\the\bt@halfoperatorwidth,\the\bt@portheight) --
+            (\the\bt@rightlineend,\the\bt@portheight);
+        }
+      \node (btop) [bt/operator,\bt@operatoroptions]
+        {\ensuremath{\bt@operator}};
+    \end{tikzpicture}
+  }
+
+% The body is a list of \btin[...] and \btout[...] commands.  Since it is
+% captured before rendering, line count and line geometry are deterministic.
+\NewDocumentEnvironment{btprojector}{O{}+b}
+  {
+    \group_begin:
+      \seq_clear:N \l_bt_in_lines_seq
+      \seq_clear:N \l_bt_out_lines_seq
+      \pgfkeys{/birdtracks,#1}
+      #2
+      \bt_render_projector:
+  }
+  {\group_end:}
+
+% A readable S/A-specific spelling.  The first optional argument is S or A;
+% the second carries the same local settings accepted by btprojector.
+\NewDocumentEnvironment{btSA}{O{S}O{}+b}
+  {\begin{btprojector}[operator={#1},#2]#3\end{btprojector}}
+  {}
+
+\ExplSyntaxOff
+\makeatother
+
+\endinput

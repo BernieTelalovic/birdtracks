@@ -378,6 +378,8 @@ class DetangleState:
                 index: {"input": inputs, "output": outputs}
                 for index, (inputs, outputs) in enumerate(self.port_orders)
             },
+            in_direction=original.in_direction,
+            out_direction=original.out_direction,
         )
         result = unit * (
             original.canonical_coefficient / unit.canonical_coefficient

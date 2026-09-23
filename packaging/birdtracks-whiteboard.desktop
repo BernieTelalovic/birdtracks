@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Birdtracks Whiteboard
+Comment=Exact birdtrack projector whiteboard
+Exec=birdtracks-whiteboard %f
+Icon=birdtracks-whiteboard-projector
+Terminal=false
+Categories=Education;Science;
+MimeType=application/x-birdtracks-whiteboard;
+StartupWMClass=Birdtracks Whiteboard

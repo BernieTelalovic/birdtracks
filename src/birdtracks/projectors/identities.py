@@ -198,6 +198,8 @@ def _remove_operator(projector: Projector, remove_index: int) -> Projector:
             label: shifted(port) for label, port in output_boundary.items()
         },
         port_orders=remaining_orders,
+        in_direction=projector.in_direction,
+        out_direction=projector.out_direction,
     )
     return unit * (
         projector.canonical_coefficient / unit.canonical_coefficient
@@ -232,11 +234,23 @@ def _recursive_expansion(
     )
     sandwiched = prefix * transposition * prefix
     k = len(labels)
+    def inherit_directions(value: Projector) -> Projector:
+        return Projector(
+            value.nodes,
+            value.connections,
+            coefficient=value.coefficient,
+            input_boundary=value.input_boundary,
+            output_boundary=value.output_boundary,
+            port_orders=value.port_orders if value.port_orders_are_explicit else None,
+            in_direction=projector.in_direction,
+            out_direction=projector.out_direction,
+        )
+
     return ProjectorSum(
         (
-            (prefix, projector.coefficient * Fraction(1, k)),
+            (inherit_directions(prefix), projector.coefficient * Fraction(1, k)),
             (
-                sandwiched,
+                inherit_directions(sandwiched),
                 projector.coefficient * Fraction(sign * (k - 1), k),
             ),
         )
@@ -265,7 +279,12 @@ def _absorb_permutation(
         return None
     if not permutation_node.support <= operator.support:
         return None
-    if projector != Projector(projector.nodes, coefficient=projector.coefficient):
+    if projector != Projector(
+        projector.nodes,
+        coefficient=projector.coefficient,
+        in_direction=projector.in_direction,
+        out_direction=projector.out_direction,
+    ):
         return None
 
     sign = (
@@ -273,7 +292,12 @@ def _absorb_permutation(
         if isinstance(operator, Antisymmetriser)
         else 1
     )
-    reduced = Projector([operator], coefficient=projector.coefficient * sign)
+    reduced = Projector(
+        [operator],
+        coefficient=projector.coefficient * sign,
+        in_direction=projector.in_direction,
+        out_direction=projector.out_direction,
+    )
     return ProjectorSum((reduced,))
 
 

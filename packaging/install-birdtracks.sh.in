@@ -23,7 +23,13 @@ UV_PYTHON_INSTALL_DIR="${BIRDTRACKS_PYTHON_ROOT}" \
     "birdtracks[coding] @ https://github.com/BernieTelalovic/birdtracks/archive/refs/tags/${BIRDTRACKS_VERSION}.tar.gz"
 
 APPLICATIONS_ROOT="${XDG_DATA_HOME:-${HOME}/.local/share}/applications"
+MIME_ROOT="${XDG_DATA_HOME:-${HOME}/.local/share}/mime"
+ICON_ROOT="${XDG_DATA_HOME:-${HOME}/.local/share}/icons/hicolor"
 mkdir -p "${APPLICATIONS_ROOT}"
+mkdir -p "${MIME_ROOT}/packages" "${ICON_ROOT}/scalable/apps" "${ICON_ROOT}/scalable/mimetypes"
+WHITEBOARD_ASSET_ROOT="$(dirname "$("${BIRDTRACKS_BIN_ROOT}/birdtracks-whiteboard" --asset-path birdtracks-whiteboard-file.svg)")"
+cp "${WHITEBOARD_ASSET_ROOT}/birdtracks-whiteboard-file.svg" "${ICON_ROOT}/scalable/apps/birdtracks-whiteboard-projector.svg"
+cp "${WHITEBOARD_ASSET_ROOT}/birdtracks-whiteboard-file.svg" "${ICON_ROOT}/scalable/mimetypes/birdtracks-whiteboard-file-projector.svg"
 cat > "${APPLICATIONS_ROOT}/birdtracks-lab.desktop" <<EOF
 [Desktop Entry]
 Type=Application
@@ -34,8 +40,41 @@ Terminal=true
 Categories=Education;Science;Development;
 EOF
 chmod +x "${APPLICATIONS_ROOT}/birdtracks-lab.desktop"
+cat > "${APPLICATIONS_ROOT}/birdtracks-whiteboard.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Birdtracks Whiteboard
+Comment=Exact birdtrack projector whiteboard
+Exec="${BIRDTRACKS_BIN_ROOT}/birdtracks-whiteboard" %f
+Icon=birdtracks-whiteboard-projector
+Terminal=false
+Categories=Education;Science;
+MimeType=application/x-birdtracks-whiteboard;
+StartupWMClass=Birdtracks Whiteboard
+EOF
+cat > "${MIME_ROOT}/packages/birdtracks-whiteboard.xml" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-birdtracks-whiteboard">
+    <comment>Birdtracks whiteboard</comment>
+    <glob pattern="*.whiteboard"/>
+    <icon name="birdtracks-whiteboard-file-projector"/>
+  </mime-type>
+</mime-info>
+EOF
+if command -v update-mime-database >/dev/null 2>&1; then
+    update-mime-database "${MIME_ROOT}" >/dev/null 2>&1 || true
+fi
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "${APPLICATIONS_ROOT}" >/dev/null 2>&1 || true
+fi
+if command -v xdg-mime >/dev/null 2>&1; then
+    xdg-mime default birdtracks-whiteboard.desktop application/x-birdtracks-whiteboard || true
+fi
 
 echo
 echo "Birdtracks Lab ${BIRDTRACKS_VERSION} is installed."
-echo "Open 'Birdtracks Lab' from your applications menu, or run:"
+echo "Open 'Birdtracks Lab' or 'Birdtracks Whiteboard' from your applications menu."
+echo "You can also run:"
 echo "  ${BIRDTRACKS_BIN_ROOT}/birdtracks-lab"
+echo "  ${BIRDTRACKS_BIN_ROOT}/birdtracks-whiteboard"

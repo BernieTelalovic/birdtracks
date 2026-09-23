@@ -435,8 +435,8 @@ def test_creator_fraction_multiplier_has_keyboard_and_exact_controls() -> None:
 
     assert 'button("Multiply by a fraction"' in source
     assert 'event.key !== "Enter"' in source
-    assert 'aria-label", "Multiplier numerator"' in source
-    assert 'aria-label", "Multiplier denominator"' in source
+    assert 'aria-label", "Prefactor"' in source
+    assert 'aria-label", "Denominator"' in source
     assert 'action === "multiply"' in source
     assert "event.detail.editorId === editorId" in source
     assert "let top = multiplierTop" in source
@@ -539,8 +539,9 @@ def test_canvas_packs_sign_space_without_overlap_and_compacts_empty_layers() -> 
         / "src/birdtracks/projectors/static/projector-widget.js"
     ).read_text()
 
-    assert "const left = 0" in source
+    assert "const left = embedded ? -edgePadding : 0" in source
     assert "const right = usesCompiledDisplay()" in source
+    assert "annotations.childElementCount" in source
     assert 'svg.setAttribute("viewBox", `${box.left} ${box.top}' in source
     assert "function compactEmptyLayers()" in source
     assert "occupied.map((layer, index) => [layer, index])" in source
@@ -999,7 +1000,8 @@ def test_creator_prefactor_right_click_requests_term_deletion() -> None:
 
     assert 'class: "birdtracks-prefactor-delete-target"' in source
     assert 'model.get("term_delete_request") + 1' in source
-    assert 'prefactorTarget.addEventListener("contextmenu"' in source
+    assert 'svg.addEventListener("contextmenu"' in source
+    assert 'prefactorTarget.style.pointerEvents = "none"' in source
 
 
 def test_missing_saved_port_order_uses_graph_order() -> None:
@@ -1488,7 +1490,8 @@ def test_inactive_canvas_lines_keep_evaluate_style_interactions() -> None:
         / "src/birdtracks/projectors/static/projector-widget.js"
     ).read_text()
 
-    assert 'const permittedMode = model.get("active_line") ? mode : "evaluate";' in source
+    assert 'const permittedMode = embedded' in source
+    assert 'model.get("active_line") ? mode : "evaluate"' in source
     assert 'if (!model.get("active_line")) {' not in source
     assert 'model.get("active_line")\n            && interactionMode === "evaluate"' in source
 
@@ -1583,6 +1586,25 @@ def test_creator_snapshot_builds_explicit_projector_topology() -> None:
         port_orders={0: {"input": (10, 11), "output": (10, 11)}},
     )
     assert editor.projector == expected  # type: ignore[attr-defined]
+
+
+def test_atomic_save_snapshot_restores_latest_line_colors() -> None:
+    pytest.importorskip("anywidget")
+    editor = Projector([Symmetriser((1, 2))]).evaluate()._term_editors[0]  # type: ignore[attr-defined]
+    colors = {"right-anchor:0->input:0:1": "#ff0000"}
+
+    editor.save_snapshot = {  # type: ignore[attr-defined]
+        "revision": 1,
+        "graph": editor.graph,  # type: ignore[attr-defined]
+        "positions": editor.positions,  # type: ignore[attr-defined]
+        "port_orders": editor.port_orders,  # type: ignore[attr-defined]
+        "free_levels": editor.free_levels,  # type: ignore[attr-defined]
+        "boundary_orders": editor.boundary_orders,  # type: ignore[attr-defined]
+        "line_colors": colors,
+        "effective_coefficient": editor.effective_coefficient,  # type: ignore[attr-defined]
+    }
+
+    assert editor.line_colors == colors  # type: ignore[attr-defined]
 
 
 def test_configurator_saves_boundary_permutations_and_relative_sign() -> None:

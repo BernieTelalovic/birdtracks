@@ -140,6 +140,8 @@ def detangle(projector: Projector) -> Projector:
         input_boundary=projector.input_boundary,
         output_boundary=projector.output_boundary,
         port_orders=orders,
+        in_direction=projector.in_direction,
+        out_direction=projector.out_direction,
     )
     result = unit * (
         projector.canonical_coefficient
@@ -274,6 +276,8 @@ def widget_graph(
         ],
         "boundary_labels": boundary_labels,
         "free_levels": free_levels,
+        "in_direction": projector.in_direction,
+        "out_direction": projector.out_direction,
     }
 
 

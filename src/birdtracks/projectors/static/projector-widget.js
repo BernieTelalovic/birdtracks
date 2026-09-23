@@ -2,6 +2,13 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const activeEditorByGroup = new Map();
 let activeGroupId = null;
 
+function announceOperatorExpansion(element) {
+  element.dispatchEvent(new CustomEvent("birdtracks-operator-expansion", {
+    bubbles: true,
+    composed: true,
+  }));
+}
+
 function svgElement(name, attributes = {}) {
   const element = document.createElementNS(SVG_NS, name);
   for (const [key, value] of Object.entries(attributes)) {
@@ -65,14 +72,17 @@ function drawExactCoefficient(layer, coefficient, termSign, geometry, x, y) {
   }
   if (unitMagnitude) return;
   const minus = (minusX) => layer.appendChild(svgElement("line", {
-    x1: minusX - fontSize * 0.25,
-    x2: minusX + fontSize * 0.25,
+    x1: minusX - fontSize * 0.36,
+    x2: minusX + fontSize * 0.36,
     y1: y,
     y2: y,
     class: "birdtracks-coefficient-minus",
   }));
   if (denominator === 1n) {
-    if (numerator < 0n) minus(valueX - (magnitude === 1n ? 0 : fontSize * 0.35));
+    if (numerator < 0n) {
+      minus(valueX - (magnitude === 1n ? 0 : fontSize * 0.35)
+        - (magnitude === 1n ? 0 : fontSize * 0.28));
+    }
     if (magnitude === 1n && numerator < 0n) return;
     const text = svgElement("text", {
       x: numerator < 0n ? valueX + fontSize * 0.2 : valueX,
@@ -90,7 +100,9 @@ function drawExactCoefficient(layer, coefficient, termSign, geometry, x, y) {
     geometry.fraction_bar_width,
     digitCount * fractionFontSize * 0.6,
   );
-  if (numerator < 0n) minus(valueX - barWidth / 2 - fractionFontSize * 0.4);
+  if (numerator < 0n) {
+    minus(valueX - barWidth / 2 - fractionFontSize * 0.6);
+  }
   const bar = svgElement("line", {
     x1: valueX - barWidth / 2,
     x2: valueX + barWidth / 2,
@@ -189,24 +201,901 @@ function enableTermReordering({ model, el, svg }) {
   });
 }
 
+// Grid geometry follows pair_multiplication.draw_pair: the barred partition is
+// rotated below-left. Keep editable sums as nodes so products/groups can be
+// introduced later without encoding algebra in SVG positions.
+export function youngCells(term) {
+  return [
+    ...term.unbarred.flatMap((n, row) => Array.from({ length: n }, (_, column) =>
+      ({ side: "unbarred", index: row, row, column }))),
+    ...term.barred.flatMap((n, index) => Array.from({ length: n }, (_, col) =>
+      ({ side: "barred", index, row: term.unbarred.length + term.barred.length - 1 - index,
+        column: -1 - col }))),
+  ];
+}
+
+function validYoungRows(rows) {
+  return rows.every((n, i) => Number.isSafeInteger(n) && n > 0 && (!i || n <= rows[i - 1]));
+}
+
+export function changeYoungCell(term, source, target) {
+  const next = structuredClone(term);
+  let movedLabel = null;
+  if (source) {
+    const rows = next[source.side];
+    const col = source.side === "barred" ? -1 - source.column : source.column;
+    if (rows[source.index] !== col + 1) return null;
+    rows[source.index] -= 1;
+    if (rows.at(-1) === 0) rows.pop();
+    if (!validYoungRows(rows)) return null;
+    movedLabel = (next.labels || []).find((label) => label.side === source.side
+      && label.row === source.index && label.column === col);
+    if (next.labels) next.labels = next.labels.filter((label) => label !== movedLabel);
+  }
+  if (target) {
+    delete next.singleton;
+    const rows = next[target.side];
+    const col = target.side === "barred" ? -1 - target.column : target.column;
+    if (target.index < 0 || target.index > rows.length || col < 0
+        || col !== (rows[target.index] || 0)) return null;
+    if (target.index === rows.length) rows.push(1);
+    else rows[target.index] += 1;
+    if (!validYoungRows(rows)) return null;
+    if (movedLabel) (next.labels ||= []).push({ ...movedLabel,
+      side: target.side, row: target.index, column: col });
+  }
+  if (!next.labels?.length) delete next.labels;
+  const minimum = BigInt(next.barred.length + next.unbarred.length);
+  if (BigInt(next.n0) < minimum) next.n0 = String(minimum);
+  return next;
+}
+
+function directSumIcon() {
+  const icon = svgElement("svg", { viewBox: "0 0 28 28", "aria-hidden": "true",
+    class: "birdtracks-direct-sum-icon" });
+  icon.append(
+    svgElement("circle", { cx: 14, cy: 14, r: 10 }),
+    svgElement("line", { x1: 4, y1: 14, x2: 24, y2: 14 }),
+    svgElement("line", { x1: 14, y1: 4, x2: 14, y2: 24 }),
+  );
+  return icon;
+}
+
+function tensorProductIcon() {
+  const icon = directSumIcon();
+  icon.setAttribute("class", "birdtracks-tensor-product-icon");
+  const offset = 10 / Math.sqrt(2);
+  const lines = icon.querySelectorAll("line");
+  for (const [index, line] of [...lines].entries()) {
+    line.setAttribute("x1", 14 - offset);
+    line.setAttribute("x2", 14 + offset);
+    line.setAttribute("y1", 14 + (index ? offset : -offset));
+    line.setAttribute("y2", 14 + (index ? -offset : offset));
+  }
+  return icon;
+}
+
+function pairSyntax(expression) {
+  return expression.syntax || expression.terms.flatMap((_, i) => i ? ["sum", "pair"] : ["pair"]);
+}
+
+function pairTokenIndex(expression, index) {
+  let term = -1;
+  return pairSyntax(expression).findIndex(token => token === "pair" && ++term === index);
+}
+
+function renderYoungCreator({ model, el, visible = false }) {
+  const host = document.createElement("div");
+  host.className = "birdtracks-young-workspace";
+  host.hidden = !visible;
+  host.setAttribute("aria-label", "Young diagrams and tableaux editor");
+  const termsRow = document.createElement("div");
+  termsRow.className = "birdtracks-young-terms";
+  host.appendChild(termsRow);
+  el.appendChild(host);
+  let expression = structuredClone(model.get("pair_expression"));
+  let activeTerm = 0;
+  let insertionPoint = null;
+  const insertionMarker = document.createElement("div");
+  insertionMarker.className = "birdtracks-young-insertion-marker";
+  insertionMarker.hidden = true;
+  host.appendChild(insertionMarker);
+  function showInsertion(event) {
+    const items = [...termsRow.children];
+    insertionPoint = items.findIndex(item => {
+      const bounds = item.getBoundingClientRect();
+      return event.clientX < bounds.left + bounds.width / 2;
+    });
+    if (insertionPoint < 0) insertionPoint = pairSyntax(expression).length;
+    const item = items[insertionPoint] || items.at(-1);
+    if (!item) return;
+    const bounds = item.getBoundingClientRect();
+    const parent = host.getBoundingClientRect();
+    insertionMarker.hidden = false;
+    insertionMarker.style.left = `${(items[insertionPoint] ? bounds.left : bounds.right) - parent.left - 3}px`;
+    insertionMarker.style.top = `${bounds.top + bounds.height / 2 - parent.top - 12}px`;
+  }
+
+  let selected = null;
+  let zoom = 1;
+  let drag = null;
+  let suppressClick = false;
+  let pointerDown = false;
+  let lastCellClick = null;
+  let doubleClickedCell = false;
+  let pendingCellClick = null;
+  const history = [];
+  const box = 30;
+  function whiteboardPaintbrush() {
+    return el.closest?.(".birdtracks-whiteboard-section")?._birdtracksPaintbrush || null;
+  }
+  function paintbrushColor() {
+    const state = whiteboardPaintbrush();
+    return state?.active && /^#[0-9a-f]{6}$/i.test(state.color)
+      ? state.color.toLowerCase() : null;
+  }
+  function pairCellStyleKey(termIndex, cell) {
+    return `${termIndex}:${cell.side}:${cell.row}:${cell.column}`;
+  }
+  function paintBox(termIndex, cell) {
+    const color = paintbrushColor();
+    if (!color) return false;
+    const panel = termsRow.querySelector(`[data-term-index="${termIndex}"]`);
+    const target = [...(panel?.querySelectorAll(".birdtracks-young-box") || [])]
+      .find((item) => Number(item.dataset.row) === cell.row
+        && Number(item.dataset.column) === cell.column);
+    if (!target) return false;
+    target.style.fill = color;
+    const styles = structuredClone(model.get("pair_cell_styles") || {});
+    const key = pairCellStyleKey(termIndex, cell);
+    styles[key] = { ...(styles[key] || {}), fill: color };
+    model.set("pair_cell_styles", styles);
+    model.save_changes();
+    whiteboardPaintbrush().record?.(color);
+    return true;
+  }
+  const editor = document.createElement("form");
+  editor.className = "birdtracks-young-coefficient-editor";
+  editor.hidden = true;
+  const coefficient = document.createElement("input");
+  coefficient.type = "text";
+  coefficient.inputMode = "numeric";
+  coefficient.setAttribute("aria-label", "Prefactor");
+  const n0 = document.createElement("input");
+  n0.type = "text";
+  n0.inputMode = "numeric";
+  n0.setAttribute("aria-label", "Term N0");
+  const coefficientLabel = document.createElement("label");
+  coefficientLabel.textContent = "Prefactor";
+  coefficientLabel.appendChild(coefficient);
+  const n0Label = document.createElement("label");
+  n0Label.textContent = "N₀";
+  n0Label.appendChild(n0);
+  const apply = document.createElement("button");
+  apply.type = "submit";
+  apply.textContent = "Apply";
+  editor.append(coefficientLabel, n0Label, apply);
+  host.appendChild(editor);
+  const labelEditor = document.createElement("form");
+  labelEditor.className = "birdtracks-young-coefficient-editor birdtracks-young-label-editor";
+  labelEditor.hidden = true;
+  const cellLabelCaption = document.createElement("label");
+  const labelCaptionText = document.createElement("span");
+  const cellLabelInput = document.createElement("input");
+  cellLabelInput.type = "text";
+  cellLabelInput.inputMode = "numeric";
+  cellLabelInput.setAttribute("aria-label", "Tableau integer label");
+  cellLabelCaption.append(labelCaptionText, cellLabelInput);
+  const applyLabel = document.createElement("button");
+  applyLabel.type = "submit";
+  applyLabel.textContent = "Apply label";
+  labelEditor.append(cellLabelCaption, applyLabel);
+  host.appendChild(labelEditor);
+  let labelTarget = null;
+  let prefactorTarget = null;
+
+  function placeInlineInput(input, anchor, fontSize, inset = 0) {
+    const bounds = anchor.getBoundingClientRect();
+    const parent = host.getBoundingClientRect();
+    Object.assign(input.style, {
+      left: `${bounds.left - parent.left + inset}px`, top: `${bounds.top - parent.top + inset}px`,
+      width: `${Math.max(12, bounds.width - inset * 2)}px`,
+      height: `${Math.max(14, bounds.height - inset * 2)}px`, fontSize: `${fontSize * zoom}px`,
+    });
+  }
+
+  function matchesCell(label, cell) {
+    return label.side === cell.side && label.row === cell.index
+      && label.column === (cell.side === "barred" ? -1 - cell.column : cell.column);
+  }
+  function openLabelEditor(cell) {
+    cancelPendingCellClick();
+    editor.hidden = true;
+    labelTarget = { termIndex: activeTerm, cell };
+    const term = expression.terms[activeTerm];
+    const current = (term.labels || []).find((label) => matchesCell(label, cell));
+    labelCaptionText.textContent = cell.side === "barred" ? "Barred label" : "Label";
+    cellLabelInput.value = current?.value || "";
+    labelEditor.hidden = false;
+    const panel = termsRow.querySelector(`[data-term-index="${activeTerm}"]`);
+    const cellRect = panel.querySelector(`[data-row="${cell.row}"][data-column="${cell.column}"]`);
+    placeInlineInput(cellLabelInput, cellRect, 18, 2 * zoom);
+    cellLabelInput.style.textDecoration = cell.side === "barred" ? "overline" : "none";
+    cellLabelInput.focus();
+    cellLabelInput.select();
+  }
+  function applyCellLabel() {
+    if (!labelTarget || labelEditor.hidden) return true;
+    const value = cellLabelInput.value.trim();
+    if (value && !/^[+-]?\d+$/.test(value)) {
+      cellLabelInput.setAttribute("aria-invalid", "true");
+      return false;
+    }
+    const { termIndex, cell } = labelTarget;
+    const next = structuredClone(expression);
+    const term = next.terms[termIndex];
+    const labels = (term.labels || []).filter((label) => !matchesCell(label, cell));
+    if (value) labels.push({ side: cell.side, row: cell.index,
+      column: cell.side === "barred" ? -1 - cell.column : cell.column,
+      value: String(BigInt(value)) });
+    if (labels.length) term.labels = labels;
+    else delete term.labels;
+    commit(next);
+    labelEditor.hidden = true;
+    cellLabelInput.removeAttribute("aria-invalid");
+    return true;
+  }
+  labelEditor.addEventListener("submit", (event) => {
+    event.preventDefault();
+    applyCellLabel();
+  });
+  labelEditor.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Escape") labelEditor.hidden = true;
+  });
+
+  function cancelPendingCellClick() {
+    if (pendingCellClick !== null) clearTimeout(pendingCellClick);
+    pendingCellClick = null;
+  }
+  function commit(next) {
+    cancelPendingCellClick();
+    labelEditor.hidden = true;
+    if (model.get("read_only")) return;
+    if (JSON.stringify(next) === JSON.stringify(expression)) return;
+    history.push(structuredClone(expression));
+    expression = next;
+    selected = null;
+    model.set("pair_expression", structuredClone(expression));
+    model.save_changes();
+    redraw();
+  }
+  function replaceTerm(next) {
+    if (!next) {
+      return false;
+    }
+    const updated = structuredClone(expression);
+    updated.terms[activeTerm] = next;
+    commit(updated);
+    return true;
+  }
+  function openEditor() {
+    cancelPendingCellClick();
+    labelEditor.hidden = true;
+    const term = expression.terms[activeTerm];
+    if (!term) return;
+    coefficient.value = term.coefficient;
+    n0.value = term.n0;
+    prefactorTarget = activeTerm;
+    editor.hidden = false;
+    const panel = termsRow.querySelector(`[data-term-index="${activeTerm}"]`);
+    placeInlineInput(coefficient, panel.querySelector(".birdtracks-young-prefactor-value"), 22);
+    placeInlineInput(n0, panel.querySelector(".birdtracks-young-n0"), 12);
+    coefficient.focus();
+    coefficient.select();
+  }
+  function moveTerm(index, destination) {
+    const next = structuredClone(expression);
+    const syntax = [...pairSyntax(next)];
+    const source = pairTokenIndex(next, index);
+    if (destination === source || destination === source + 1) return;
+    const operatorIndex = ["sum", "tensor"].includes(syntax[source + 1]) ? source + 1
+      : ["sum", "tensor"].includes(syntax[source - 1]) ? source - 1 : -1;
+    const operator = operatorIndex < 0 ? "sum" : syntax[operatorIndex];
+    const removed = [source, operatorIndex].filter(i => i >= 0).sort((a, b) => b - a);
+    const position = destination - removed.filter(i => i < destination).length;
+    for (const i of removed) syntax.splice(i, 1);
+    const termPosition = syntax.slice(0, position).filter(token => token === "pair").length;
+    const tokens = ["pair"];
+    if (["pair", ")"].includes(syntax[position - 1])) tokens.unshift(operator);
+    if (["pair", "("].includes(syntax[position])) tokens.push(operator);
+    syntax.splice(position, 0, ...tokens);
+    const [term] = next.terms.splice(index, 1);
+    next.terms.splice(termPosition, 0, term);
+    next.syntax = syntax;
+    activeTerm = termPosition;
+    insertionPoint = position + tokens.length;
+    commit(next);
+  }
+  function deleteTerm(index) {
+    const next = structuredClone(expression);
+    if (next.syntax) {
+      const position = pairTokenIndex(next, index);
+      next.syntax.splice(position, 1);
+      if (["sum", "tensor"].includes(next.syntax[position])) next.syntax.splice(position, 1);
+      else if (["sum", "tensor"].includes(next.syntax[position - 1])) next.syntax.splice(position - 1, 1);
+    }
+    next.terms.splice(index, 1);
+    activeTerm = Math.max(0, Math.min(index, next.terms.length - 1));
+    editor.hidden = true;
+    lastCellClick = null;
+    doubleClickedCell = false;
+    commit(next);
+  }
+  function applyPrefactor() {
+    if (editor.hidden || prefactorTarget === null) return true;
+    const integer = coefficient.value.trim();
+    const threshold = n0.value.trim();
+    const term = expression.terms[prefactorTarget];
+    if (!/^[+-]?\d+$/.test(integer) || !/^\+?\d+$/.test(threshold)) {
+      coefficient.setAttribute("aria-invalid", "true");
+      return false;
+    }
+    if (BigInt(threshold) < BigInt(term.barred.length + term.unbarred.length)) {
+      n0.setAttribute("aria-invalid", "true");
+      return false;
+    }
+    activeTerm = prefactorTarget;
+    editor.hidden = true;
+    replaceTerm({ ...term, coefficient: String(BigInt(integer)), n0: String(BigInt(threshold)) });
+    coefficient.removeAttribute("aria-invalid");
+    n0.removeAttribute("aria-invalid");
+    return true;
+  }
+  editor.addEventListener("submit", (event) => {
+    event.preventDefault();
+    applyPrefactor();
+  });
+  editor.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Escape") editor.hidden = true;
+  });
+  for (const [form, applyEdit] of [[editor, applyPrefactor], [labelEditor, applyCellLabel]]) {
+    form.addEventListener("focusout", (event) => {
+      if (!form.contains(event.relatedTarget)) applyEdit();
+    });
+  }
+
+  function redraw() {
+    insertionMarker.hidden = true;
+    termsRow.replaceChildren();
+    if (!expression.terms.length) {
+      const zero = document.createElement("span");
+      zero.className = "birdtracks-young-zero";
+      zero.textContent = "0";
+      termsRow.appendChild(zero);
+    }
+    const backend = model.get("pair_drawing_state");
+    const nativeDrawings = JSON.stringify(backend?.expression) === JSON.stringify(expression)
+      ? backend.drawings : [];
+    const syntax = pairSyntax(expression);
+    const bracketHeight = Math.max(1, ...expression.terms.map(term =>
+      term.barred.length + term.unbarred.length)) * box;
+    let termIndex = -1;
+    syntax.forEach((token, tokenIndex) => {
+      if (token !== "pair") {
+        const symbol = document.createElement("span");
+        symbol.className = "birdtracks-young-direct-sum";
+        if (token === "sum" || token === "tensor") {
+          symbol.setAttribute("aria-label", token === "sum" ? "Direct sum" : "Tensor product");
+          symbol.appendChild(token === "sum" ? directSumIcon() : tensorProductIcon());
+        } else {
+          symbol.setAttribute("aria-label", token === "(" ? "Left bracket" : "Right bracket");
+          const bracket = svgElement("svg", { viewBox: `0 0 18 ${bracketHeight}`,
+            class: "birdtracks-young-bracket", "aria-hidden": "true" });
+          bracket.style.width = `${18 * zoom}px`;
+          bracket.style.height = `${bracketHeight * zoom}px`;
+          bracket.appendChild(svgElement("path", { d: token === "("
+            ? `M15 1 Q1 ${bracketHeight / 2} 15 ${bracketHeight - 1}`
+            : `M3 1 Q17 ${bracketHeight / 2} 3 ${bracketHeight - 1}` }));
+          symbol.appendChild(bracket);
+        }
+        symbol.title = "Right-click to remove";
+        symbol.addEventListener("contextmenu", event => {
+          event.preventDefault();
+          const next = structuredClone(expression);
+          next.syntax = [...syntax];
+          next.syntax.splice(tokenIndex, 1);
+          commit(next);
+        });
+        termsRow.appendChild(symbol);
+        return;
+      }
+      const index = ++termIndex;
+      renderTerm(expression.terms[index], index);
+    });
+    function renderTerm(term, termIndex) {
+      const leftColumns = (term.barred[0] || 0) + 1;
+      const rightColumns = (term.unbarred[0] || 0) + 1;
+      const pairRows = Math.max(1, term.barred.length + term.unbarred.length);
+      const gridRows = pairRows + 1;
+      const coefficientWidth = Math.max(40, term.coefficient.length * 13 + term.n0.length * 8 + 16);
+      const axis = coefficientWidth + leftColumns * box;
+      const top = 45;
+      const height = top + gridRows * box + 15;
+      const width = axis + rightColumns * box + 5;
+      const svg = svgElement("svg", { viewBox: `0 0 ${width} ${height}`,
+        role: "group", "aria-label": `Pair term ${termIndex + 1}`, tabindex: 0,
+        "data-term-index": termIndex });
+      svg.classList.add("birdtracks-young-term");
+      svg.classList.toggle("selected", activeTerm === termIndex);
+      svg.style.width = `${width * zoom}px`;
+      svg.style.height = `${height * zoom}px`;
+      const axisLine = svgElement("line", { x1: axis, y1: top - box / 2,
+        x2: axis, y2: top + pairRows * box + box / 2,
+        class: "birdtracks-young-axis" });
+      svg.appendChild(axisLine);
+      const coefficientText = svgElement("text", { x: 15, y: height / 2,
+        class: "birdtracks-young-prefactor" });
+      const valueText = svgElement("tspan", { class: "birdtracks-young-prefactor-value" });
+      valueText.textContent = term.coefficient;
+      coefficientText.appendChild(valueText);
+      const subscript = svgElement("tspan", { "baseline-shift": "sub", "font-size": 12,
+        class: "birdtracks-young-n0" });
+      subscript.textContent = term.n0;
+      coefficientText.appendChild(subscript);
+      const prefactor = svgElement("g", { class: "birdtracks-young-prefactor-control",
+        role: "button", tabindex: 0, "aria-label": `Prefactor of term ${termIndex + 1}` });
+      const prefactorTitle = svgElement("title");
+      prefactorTitle.textContent = "Drag to move the term; double-click to edit the prefactor and N₀; right-click to delete the term";
+      prefactor.append(prefactorTitle, svgElement("rect", {
+        x: 8, y: height / 2 - 25, width: coefficientWidth - 12, height: 42,
+        fill: "transparent", "pointer-events": "all",
+      }), coefficientText);
+
+      prefactor.addEventListener("click", (event) => {
+        event.stopPropagation();
+        activate();
+        if (suppressClick) { suppressClick = false; return; }
+        if (event.ctrlKey) openEditor();
+      });
+      prefactor.addEventListener("dblclick", (event) => {
+        event.stopPropagation(); activate(); openEditor();
+        if (event.target.closest?.(".birdtracks-young-n0")) { n0.focus(); n0.select(); }
+      });
+      prefactor.addEventListener("contextmenu", (event) => {
+        event.preventDefault(); event.stopPropagation(); deleteTerm(termIndex);
+      });
+      prefactor.addEventListener("keydown", (event) => {
+        if (!["Enter", " ", "Delete", "Backspace"].includes(event.key)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        activate();
+        if (["Delete", "Backspace"].includes(event.key)) deleteTerm(termIndex);
+        else openEditor();
+      });
+      svg.appendChild(prefactor);
+      function addYoungCell(at) {
+        const target = { ...at };
+        if (target.side === "unbarred" && !term.unbarred.length && target.row >= 0) {
+          target.index = 0;
+        }
+        if (target.side === "barred" && !term.barred.length
+            && target.row >= term.unbarred.length) target.index = 0;
+        if (target.side === "barred" && term.barred.length
+            && target.index === -1 && target.column === -1) {
+          const next = structuredClone(term);
+          next.barred.unshift(1);
+          if (!validYoungRows(next.barred)) return null;
+          if (next.labels) {
+            for (const label of next.labels) if (label.side === "barred") label.row += 1;
+          }
+          const minimum = BigInt(next.barred.length + next.unbarred.length);
+          if (BigInt(next.n0) < minimum) next.n0 = String(minimum);
+          return next;
+        }
+        return changeYoungCell(term, null, target);
+      }
+      // Faint grid dots make empty, clickable positions visible without
+      // obscuring the standalone renderer's clean cell borders.
+      for (let row = 0; row < gridRows; row += 1) {
+        for (let col = -leftColumns; col < rightColumns; col += 1) {
+          const side = col < 0 ? "barred" : "unbarred";
+          const addable = Boolean(addYoungCell({
+            side, row, column: col,
+            index: side === "barred"
+              ? term.unbarred.length + term.barred.length - 1 - row : row,
+          }));
+          // SVG backgrounds are not reliable hit targets in every notebook
+          // browser. Give every guide cell an explicitly painted hit area.
+          svg.appendChild(svgElement("rect", {
+            x: axis + col * box, y: top + row * box, width: box, height: box,
+            fill: "transparent", "pointer-events": "all",
+            class: addable
+              ? "birdtracks-young-cell-target"
+              : "birdtracks-young-cell-target birdtracks-young-cell-target-hidden",
+            "data-grid-row": row, "data-grid-column": col,
+          }));
+          if (row < pairRows) svg.appendChild(svgElement("circle", {
+            cx: axis + (col + 0.5) * box,
+            cy: top + (row + 0.5) * box,
+            r: 1,
+            class: "birdtracks-young-grid",
+            "pointer-events": "none",
+          }));
+        }
+      }
+      const cells = youngCells(term);
+      const ghost = svgElement("rect", { width: box, height: box,
+        class: "birdtracks-young-drag-target", visibility: "hidden" });
+      // Consume Drawing.as_dict geometry when the kernel has returned it.
+      const drawing = nativeDrawings?.[termIndex];
+      const geometryCells = drawing?.cells?.length === cells.length ? drawing.cells : null;
+      for (const cell of cells) {
+        const nativeCell = geometryCells?.find((item) => item.row === cell.row
+          && item.column - (term.barred[0] || 0) === cell.column);
+        const x = axis + (nativeCell ? nativeCell.column - (term.barred[0] || 0) : cell.column) * box;
+        const y = top + (nativeCell?.row ?? cell.row) * box;
+        const rect = svgElement("rect", { x, y, width: box, height: box,
+          class: "birdtracks-young-box", "data-row": cell.row, "data-column": cell.column,
+          "data-side": cell.side });
+        const cellStyle = (model.get("pair_cell_styles") || {})[
+          pairCellStyleKey(termIndex, cell)
+        ];
+        if (cellStyle && typeof cellStyle === "object") {
+          for (const [property, value] of Object.entries(cellStyle)) {
+            if (typeof value !== "string") continue;
+            if (["fill", "stroke", "strokeWidth", "strokeDasharray", "strokeLinecap",
+              "strokeLinejoin"].includes(property)) {
+              rect.style[property] = value;
+            }
+          }
+        }
+        if (selected && activeTerm === termIndex && selected.row === cell.row
+            && selected.column === cell.column) rect.classList.add("selected");
+        svg.appendChild(rect);
+        const label = (term.labels || []).find((item) => matchesCell(item, cell));
+        if (label) {
+          const text = svgElement("text", { x: x + box / 2, y: y + box / 2 + 1,
+            "text-anchor": "middle", "dominant-baseline": "central",
+            class: "birdtracks-young-label", "data-side": cell.side,
+            "pointer-events": "none" });
+          text.textContent = label.value;
+          if (label.value.length > 2) {
+            text.setAttribute("textLength", box - 6);
+            text.setAttribute("lengthAdjust", "spacingAndGlyphs");
+          }
+          svg.appendChild(text);
+          if (cell.side === "barred") {
+            const half = Math.min(box - 6, Math.max(10, label.value.length * 9)) / 2;
+            svg.appendChild(svgElement("line", { x1: x + box / 2 - half,
+              x2: x + box / 2 + half, y1: y + 5, y2: y + 5,
+              class: "birdtracks-young-label-bar", "pointer-events": "none" }));
+          }
+        } else if (cell.side === "barred") svg.appendChild(svgElement("circle", {
+          cx: x + box / 2, cy: y + box / 2, r: 3, class: "birdtracks-young-antibox" }));
+      }
+      if (!term.barred.length && !term.unbarred.length) {
+        const singletonControl = svgElement("g", { class: "birdtracks-young-singleton-control",
+          "aria-label": term.singleton ? "Singleton pair" : "Create singleton pair" });
+        if (term.singleton) singletonControl.appendChild(svgElement("circle", {
+          cx: axis, cy: height / 2, r: 4, fill: "currentColor" }));
+        axisLine.setAttribute("role", "button");
+        axisLine.setAttribute("aria-label", singletonControl.getAttribute("aria-label"));
+        axisLine.addEventListener("dblclick", event => {
+          event.preventDefault(); event.stopPropagation();
+          cancelPendingCellClick(); activate();
+          const next = { ...term };
+          if (term.singleton) delete next.singleton;
+          else next.singleton = true;
+          replaceTerm(next);
+        });
+        svg.appendChild(singletonControl);
+        // Keep only the visible divider above the cell hit targets. The old
+        // invisible eight-pixel control made the highlighted cell edges inert.
+        svg.appendChild(axisLine);
+      }
+      svg.appendChild(ghost);
+      function location(event) {
+        const cellTarget = event.target.closest?.("[data-grid-row], .birdtracks-young-box");
+        const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(svg.getScreenCTM().inverse());
+        const column = cellTarget ? Number(cellTarget.dataset.gridColumn ?? cellTarget.dataset.column)
+          : Math.floor((point.x - axis) / box);
+        const row = cellTarget ? Number(cellTarget.dataset.gridRow ?? cellTarget.dataset.row)
+          : Math.floor((point.y - top) / box);
+        const side = column < 0 ? "barred" : "unbarred";
+        return { side, row, column,
+          index: side === "barred" ? term.unbarred.length + term.barred.length - 1 - row : row };
+      }
+      function activate() {
+        if (activeTerm !== termIndex) { editor.hidden = true; labelEditor.hidden = true; }
+        activeTerm = termIndex;
+        activeGroupId = model.get("group_id");
+        for (const panel of termsRow.querySelectorAll("svg")) {
+          panel.classList.toggle("selected", panel === svg);
+        }
+      }
+      svg.addEventListener("pointerdown", (event) => {
+        cancelPendingCellClick();
+        suppressClick = false;
+        activate();
+        pointerDown = true;
+        if (event.button !== 0 || event.ctrlKey) return;
+        const at = location(event);
+        const source = cells.find((cell) => cell.row === at.row && cell.column === at.column);
+        if (!source) {
+          const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(svg.getScreenCTM().inverse());
+          if (event.target.closest?.(".birdtracks-young-prefactor-control") || point.y < top || point.y >= top + gridRows * box) {
+            drag = { term: true, x: event.clientX, y: event.clientY, moved: false };
+            (event.target.closest?.(".birdtracks-young-prefactor-control") || svg).setPointerCapture(event.pointerId);
+          }
+          return;
+        }
+        if (paintbrushColor()) {
+          selected = source;
+          return;
+        }
+        selected = source;
+        for (const rect of svg.querySelectorAll(".birdtracks-young-box")) {
+          rect.classList.toggle("selected", Number(rect.dataset.row) === source.row
+            && Number(rect.dataset.column) === source.column);
+        }
+        drag = { source, x: event.clientX, y: event.clientY, moved: false };
+        svg.setPointerCapture(event.pointerId);
+      });
+      svg.addEventListener("pointermove", (event) => {
+        if (!drag) return;
+        if (Math.hypot(event.clientX - drag.x, event.clientY - drag.y) > 5) drag.moved = true;
+        if (drag.moved) {
+          svg.classList.add("dragging");
+          if (drag.term) {
+            svg.classList.add("moving-term");
+            showInsertion(event);
+            return;
+          }
+          const target = location(event);
+          const valid = target.side === drag.source.side && changeYoungCell(term, drag.source, target);
+          ghost.setAttribute("visibility", "visible");
+          ghost.setAttribute("x", axis + target.column * box);
+          ghost.setAttribute("y", top + target.row * box);
+          ghost.classList.toggle("invalid", !valid);
+        }
+      });
+      svg.addEventListener("pointerup", (event) => {
+        pointerDown = false;
+        if (!drag) return;
+        const completed = drag;
+        drag = null;
+        svg.classList.remove("dragging", "moving-term");
+        insertionMarker.hidden = true;
+        ghost.setAttribute("visibility", "hidden");
+        if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId);
+        if (!completed.moved) return;
+        suppressClick = true;
+        if (completed.term) {
+          moveTerm(termIndex, insertionPoint ?? pairSyntax(expression).length);
+          return;
+        }
+        const target = location(event);
+        replaceTerm(target.side === completed.source.side
+          ? changeYoungCell(term, completed.source, target) : null);
+      });
+      svg.addEventListener("pointercancel", () => {
+        pointerDown = false;
+        drag = null;
+        svg.classList.remove("dragging", "moving-term");
+        insertionMarker.hidden = true;
+        ghost.setAttribute("visibility", "hidden");
+      });
+      svg.addEventListener("click", (event) => {
+        activate();
+        if (suppressClick) { suppressClick = false; return; }
+        if (event.ctrlKey) { openEditor(); return; }
+        const at = location(event);
+        const source = cells.find((cell) => cell.row === at.row && cell.column === at.column);
+        if (source && paintBox(termIndex, source)) {
+          event.preventDefault();
+          event.stopPropagation();
+          selected = source;
+          return;
+        }
+        // Browser click counts can increase even when successive clicks land
+        // on different empty cells in the same SVG. Only the same cell is a
+        // label-edit gesture; a quick click elsewhere still adds a box.
+        const cellKey = `${termIndex}:${at.row}:${at.column}`;
+        doubleClickedCell = event.detail > 1 && lastCellClick === cellKey;
+        lastCellClick = cellKey;
+        if (doubleClickedCell) { cancelPendingCellClick(); return; }
+        const existing = source;
+        if (existing) {
+          selected = existing;
+          return;
+        }
+        replaceTerm(addYoungCell(at));
+      });
+      svg.addEventListener("contextmenu", (event) => {
+        const at = location(event);
+        const source = cells.find((cell) => cell.row === at.row && cell.column === at.column);
+        if (!source) return;
+        event.preventDefault();
+        event.stopPropagation();
+        cancelPendingCellClick();
+        activate();
+        selected = source;
+        replaceTerm(changeYoungCell(term, source, null));
+      });
+      svg.addEventListener("dblclick", (event) => {
+        event.preventDefault();
+        cancelPendingCellClick();
+        const at = location(event);
+        const source = cells.find((cell) => cell.row === at.row && cell.column === at.column);
+        if (!source) return;
+        if (paintBox(termIndex, source)) {
+          event.stopPropagation();
+          selected = source;
+          return;
+        }
+        if (event.ctrlKey || !doubleClickedCell) return;
+        doubleClickedCell = false;
+        activate();
+        openLabelEditor(source);
+      });
+      svg.addEventListener("keydown", (event) => {
+        if (event.ctrlKey && event.key === "Enter") { event.preventDefault(); openEditor(); }
+        if ((event.key === "Delete" || event.key === "Backspace") && selected) {
+          event.preventDefault();
+          replaceTerm(changeYoungCell(term, selected, null));
+        }
+      });
+      termsRow.appendChild(svg);
+    }
+  }
+  const update = () => {
+    const next = model.get("pair_expression");
+    if (JSON.stringify(next) === JSON.stringify(expression)) return;
+    cancelPendingCellClick();
+    expression = structuredClone(next);
+    activeTerm = Math.max(0, Math.min(activeTerm, expression.terms.length - 1));
+    selected = null;
+    history.length = 0;
+    editor.hidden = true;
+    labelEditor.hidden = true;
+    redraw();
+  };
+  model.on("change:pair_expression", update);
+  // Geometry replies must not replace SVG nodes in the middle of a gesture.
+  const redrawGeometry = () => { if (!pointerDown && !drag && editor.hidden && labelEditor.hidden) redraw(); };
+  model.on("change:pair_drawing_state", redrawGeometry);
+  model.on("change:pair_cell_styles", redrawGeometry);
+  redraw();
+  return {
+    show(visible) {
+      host.hidden = !visible;
+      if (!visible) { cancelPendingCellClick(); editor.hidden = true; labelEditor.hidden = true; }
+    },
+    tool(action) {
+      cancelPendingCellClick();
+      labelEditor.hidden = true;
+      if (action === "left-bracket" || action === "right-bracket") {
+        const next = structuredClone(expression);
+        next.syntax = [...pairSyntax(next)];
+        const lastTerm = next.terms.at(-1);
+        const emptyConstructor = lastTerm && !lastTerm.singleton && !lastTerm.barred.length && !lastTerm.unbarred.length
+          && lastTerm.coefficient === "1" && lastTerm.n0 === "0" && !lastTerm.labels?.length;
+        // Keep the pending operand inside a newly opened group.
+        const position = next.syntax.length - (action === "left-bracket"
+          && next.syntax.at(-1) === "pair" && emptyConstructor ? 1 : 0);
+        next.syntax.splice(position,
+          0, action === "left-bracket" ? "(" : ")");
+        insertionPoint = position + 1;
+        editor.hidden = true;
+        commit(next);
+      } else if (action === "add-term" || action === "tensor-term") {
+        const next = structuredClone(expression);
+        const insertion = next.terms.length;
+        if (next.syntax || action === "tensor-term") {
+          next.syntax = [...pairSyntax(next)];
+          if (["pair", ")"].includes(next.syntax.at(-1))) next.syntax.push(action === "tensor-term" ? "tensor" : "sum");
+          next.syntax.push("pair");
+        }
+        next.terms.splice(insertion, 0,
+          { kind: "pair", barred: [], unbarred: [], coefficient: "1", n0: "0" });
+        activeTerm = insertion;
+        editor.hidden = true;
+        commit(next);
+      } else if (action === "undo") {
+        const previous = history.pop();
+        if (!previous) return;
+        expression = previous;
+        activeTerm = Math.max(0, Math.min(activeTerm, expression.terms.length - 1));
+        selected = null;
+        editor.hidden = true;
+        model.set("pair_expression", structuredClone(expression));
+        model.save_changes();
+        redraw();
+      } else if (action === "zoom-in" || action === "zoom-out") {
+        zoom = Math.max(0.5, Math.min(3, zoom * (action === "zoom-in" ? 1.2 : 1 / 1.2)));
+        redraw();
+      }
+    },
+    dispose() {
+      cancelPendingCellClick();
+      model.off("change:pair_expression", update);
+      model.off("change:pair_drawing_state", redrawGeometry);
+      model.off("change:pair_cell_styles", redrawGeometry);
+    },
+  };
+}
+
+function renderPairEditor({ model, el }) {
+  return renderYoungCreator({ model, el, visible: true });
+}
+
+function renderPairEvaluation({ model, el }) {
+  const host = document.createElement("div");
+  host.className = "birdtracks-pair-evaluation";
+  host.setAttribute("aria-label", "Pair evaluation");
+  host.hidden = true;
+  el.appendChild(host);
+  let revealed = 1;
+  function redraw() {
+    host.replaceChildren();
+    const state = model.get("pair_evaluation") || {};
+    if (state.error) {
+      const error = document.createElement("p");
+      error.setAttribute("role", "alert");
+      error.textContent = state.error;
+      host.appendChild(error);
+      return;
+    }
+    const lines = state.lines || [];
+    if (!lines.length) {
+      host.textContent = "Calculating pair multiplication…";
+      return;
+    }
+    for (const [index, line] of lines.slice(0, revealed).entries()) {
+      const row = document.createElement("div");
+      row.className = "birdtracks-pair-evaluation-row";
+      row.setAttribute("aria-label", line.caption);
+      const equals = document.createElement("span");
+      equals.className = "birdtracks-pair-equals";
+      equals.textContent = index ? "=" : "";
+      const drawing = document.createElement("div");
+      // SVG is generated by the local Python drawing adapter from validated
+      // integers and backend geometry; no entered markup is interpolated.
+      drawing.innerHTML = line.svg;
+      row.append(equals, drawing);
+      host.appendChild(row);
+    }
+    if (revealed < lines.length) {
+      const next = document.createElement("button");
+      next.type = "button";
+      next.className = "birdtracks-pair-next-step birdtracks-pair-equals";
+      next.textContent = "=";
+      next.setAttribute("aria-label", "Next pair simplification step");
+      next.title = lines[revealed].caption;
+      next.addEventListener("click", () => { revealed += 1; redraw(); });
+      host.appendChild(next);
+    }
+  }
+  const update = () => { revealed = 1; redraw(); };
+  model.on("change:pair_evaluation", update);
+  return {
+    show(visible) { host.hidden = !visible; if (visible) redraw(); },
+    dispose() { model.off("change:pair_evaluation", update); },
+  };
+}
+
 function renderToolbar({ model, el }) {
   const groupId = model.get("group_id");
   el.classList.add("birdtracks-shared-toolbar");
   const toolbar = document.createElement("div");
   toolbar.className = "birdtracks-creator-toolbar";
-  const status = document.createElement("div");
-  status.className = "birdtracks-canvas-status";
-  status.setAttribute("role", "status");
-  status.setAttribute("aria-live", "polite");
-
-  function updateStatus(event) {
-    if (event.detail.groupId !== groupId) return;
-    status.textContent = event.detail.message;
-    status.scrollLeft = status.scrollWidth;
-  }
-  document.addEventListener("birdtracks-projector-status", updateStatus);
-
   function dispatch(action, payload = {}) {
+    if (model.get("create_kind") === "young") {
+      youngEditor.tool(action);
+      return;
+    }
     document.dispatchEvent(new CustomEvent("birdtracks-projector-tool", {
       detail: { groupId, action, ...payload },
     }));
@@ -230,12 +1119,12 @@ function renderToolbar({ model, el }) {
       event.dataTransfer.setData("application/x-birdtracks-operator", kind);
       event.dataTransfer.effectAllowed = "copy";
     });
-    const icon = svgElement("svg", { viewBox: "0 0 48 32", "aria-hidden": "true" });
+    const icon = svgElement("svg", { viewBox: "0 0 34 32", "aria-hidden": "true" });
     icon.append(
-      svgElement("line", { x1: 2, y1: 10, x2: 46, y2: 10 }),
-      svgElement("line", { x1: 2, y1: 22, x2: 46, y2: 22 }),
+      svgElement("line", { x1: 2.5, y1: 10, x2: 31.5, y2: 10 }),
+      svgElement("line", { x1: 2.5, y1: 22, x2: 31.5, y2: 22 }),
       svgElement("rect", {
-        x: 17, y: 4, width: 14, height: 24,
+        x: 10, y: 4, width: 14, height: 24,
         class: kind === "symmetriser" ? "palette-symmetriser" : "palette-antisymmetriser",
       }),
     );
@@ -254,6 +1143,10 @@ function renderToolbar({ model, el }) {
 
   function undoButton() {
     const result = button("Undo", () => {
+      if (model.get("create_kind") === "young") {
+        youngEditor.tool("undo");
+        return;
+      }
       model.set("undo_request", {
         editor_id: activeEditorByGroup.get(groupId) || "",
         revision: Date.now(),
@@ -268,6 +1161,10 @@ function renderToolbar({ model, el }) {
   const addSymmetriser = operatorButton("symmetriser");
   const addAntisymmetriser = operatorButton("antisymmetriser");
   function requestTerm(sign) {
+    if (model.get("create_kind") === "young") {
+      if (sign > 0) youngEditor.tool("add-term");
+      return;
+    }
     model.set("add_term_request", {
       sign,
       editor_id: activeEditorByGroup.get(groupId) || "",
@@ -278,6 +1175,11 @@ function renderToolbar({ model, el }) {
   const addPositiveTerm = button("Insert positive term", () => requestTerm(1));
   addPositiveTerm.className = "birdtracks-icon-button birdtracks-add-term-button";
   addPositiveTerm.textContent = "+";
+  const leftBracket = iconButton("Add left bracket", "M21 3 Q5 16 21 29", "left-bracket");
+  const rightBracket = iconButton("Add right bracket", "M11 3 Q27 16 11 29", "right-bracket");
+  const tensorTerm = button("Add tensor-product factor", () => dispatch("tensor-term"));
+  tensorTerm.className = "birdtracks-icon-button";
+  tensorTerm.appendChild(tensorProductIcon());
   const addNegativeTerm = button("Insert negative term", () => requestTerm(-1));
   addNegativeTerm.className = "birdtracks-icon-button birdtracks-add-term-button";
   addNegativeTerm.textContent = "−";
@@ -288,20 +1190,19 @@ function renderToolbar({ model, el }) {
   numerator.type = "text";
   numerator.inputMode = "numeric";
   numerator.value = "1";
-  numerator.setAttribute("aria-label", "Multiplier numerator");
+  numerator.setAttribute("aria-label", "Prefactor");
   const fractionBar = document.createElement("span");
   fractionBar.className = "birdtracks-multiplier-bar";
   const denominator = document.createElement("input");
   denominator.type = "text";
   denominator.inputMode = "numeric";
   denominator.value = "1";
-  denominator.setAttribute("aria-label", "Multiplier denominator");
+  denominator.setAttribute("aria-label", "Denominator");
   multiplier.append(numerator, fractionBar, denominator);
   function confirmMultiplier() {
     if (!/^[+-]?\d+$/.test(numerator.value.trim())
         || !/^[+-]?\d+$/.test(denominator.value.trim())
         || BigInt(denominator.value.trim()) === 0n) {
-      status.textContent = "Enter an integer numerator and a nonzero denominator.";
       return;
     }
     dispatch("multiply", {
@@ -360,20 +1261,49 @@ function renderToolbar({ model, el }) {
   updateTrace();
   const createTools = document.createElement("div");
   createTools.className = "birdtracks-toolbar-tools birdtracks-toolbar-left";
+  const kindToggle = button("Switch to Young diagrams / tableaux", () => {
+    model.set("create_kind", model.get("create_kind") === "young" ? "birdtracks" : "young");
+    model.save_changes();
+  });
+  kindToggle.className = "birdtracks-kind-toggle";
+  const pairIcon = svgElement("svg", { viewBox: "0 0 48 32", "aria-hidden": "true" });
+  pairIcon.append(
+    svgElement("rect", { x: 24, y: 2, width: 14, height: 14, class: "kind-pair-box" }),
+    svgElement("rect", { x: 10, y: 16, width: 14, height: 14, class: "kind-pair-box" }),
+    svgElement("circle", { cx: 17, cy: 23, r: 2, class: "kind-pair-bullet" }),
+  );
+  const birdtrackIcon = svgElement("svg", { viewBox: "0 0 48 32", "aria-hidden": "true" });
+  // S(1,2) A(2,3): the middle strand passes through both operators.
+  for (const y of [6, 16, 26]) {
+    birdtrackIcon.appendChild(svgElement("line", { x1: 2, y1: y, x2: 46, y2: y }));
+  }
+  birdtrackIcon.append(
+    svgElement("rect", { x: 11, y: 2, width: 10, height: 18, class: "kind-symmetriser" }),
+    svgElement("rect", { x: 29, y: 12, width: 10, height: 18, class: "kind-antisymmetriser" }),
+  );
   createTools.append(
     addSymmetriser,
     addAntisymmetriser,
     addPositiveTerm,
     addNegativeTerm,
+    leftBracket, rightBracket, tensorTerm,
   );
   const evaluateTools = document.createElement("div");
   evaluateTools.className = "birdtracks-toolbar-tools birdtracks-toolbar-left";
   evaluateTools.append(trace);
   const rightTools = document.createElement("div");
   rightTools.className = "birdtracks-toolbar-tools birdtracks-toolbar-right";
+  const modeSelector = document.createElement("div");
+  modeSelector.className = "birdtracks-mode-selector";
+  modeSelector.setAttribute("role", "group");
+  modeSelector.setAttribute("aria-label", "Interaction mode");
+  createTab.classList.add("birdtracks-mode-button");
+  evaluateTab.classList.add("birdtracks-mode-button");
+  modeSelector.append(createTab, evaluateTab);
+  const centerTools = document.createElement("div");
+  centerTools.className = "birdtracks-toolbar-tools birdtracks-toolbar-center";
+  centerTools.append(kindToggle, modeSelector);
   rightTools.append(
-    createTab,
-    evaluateTab,
     iconButton("Zoom in", "M8 14 H20 M14 8 V20 M19 19 L29 29 M14 24 A10 10 0 1 1 14 4 A10 10 0 1 1 14 24", "zoom-in"),
     iconButton("Zoom out", "M8 14 H20 M19 19 L29 29 M14 24 A10 10 0 1 1 14 4 A10 10 0 1 1 14 24", "zoom-out"),
     undoButton(),
@@ -393,6 +1323,7 @@ function renderToolbar({ model, el }) {
     createTools.hidden = mode !== "create";
     evaluateTools.hidden = mode !== "evaluate";
     if (mode !== "create") multiplier.hidden = true;
+    showKind();
   }
   function chooseMode(mode) {
     showMode(mode);
@@ -404,10 +1335,36 @@ function renderToolbar({ model, el }) {
   }
   createTab.addEventListener("click", () => chooseMode("create"));
   evaluateTab.addEventListener("click", () => chooseMode("evaluate"));
-  model.on("change:mode", () => showMode(model.get("mode")));
-  showMode(model.get("mode") || "evaluate");
-  toolbar.append(createTools, evaluateTools, status, rightTools);
+  const updateToolbarMode = () => showMode(model.get("mode"));
+  model.on("change:mode", updateToolbarMode);
+  toolbar.append(createTools, evaluateTools, centerTools, rightTools);
   el.appendChild(toolbar);
+  const youngEditor = renderYoungCreator({ model, el });
+  const pairEvaluator = renderPairEvaluation({ model, el });
+  function showKind() {
+    const young = model.get("create_kind") === "young";
+    el.closest(".birdtracks-calculator-app")?.classList.toggle("birdtracks-young-active", young);
+    kindToggle.replaceChildren(young ? pairIcon : birdtrackIcon);
+    kindToggle.title = young ? "Switch to Birdtracks" : "Switch to Young diagrams / tableaux";
+    kindToggle.setAttribute("aria-label", kindToggle.title);
+    kindToggle.setAttribute("aria-pressed", String(young));
+    addSymmetriser.hidden = young;
+    addAntisymmetriser.hidden = young;
+    addNegativeTerm.hidden = young;
+    for (const control of [leftBracket, rightBracket, tensorTerm]) control.hidden = !young;
+    if (young) addPositiveTerm.replaceChildren(directSumIcon());
+    else addPositiveTerm.textContent = "+";
+    addPositiveTerm.title = young ? "Add direct-sum term" : "Insert positive term";
+    addPositiveTerm.setAttribute("aria-label", addPositiveTerm.title);
+    evaluateTab.disabled = false;
+    trace.disabled = young;
+    trace.hidden = young;
+    youngEditor.show(young && currentToolbarMode === "create");
+    pairEvaluator.show(young && currentToolbarMode === "evaluate");
+
+  }
+  model.on("change:create_kind", showKind);
+  showMode(model.get("mode") || "evaluate");
   function openMultiplierFromKeyboard(event) {
     if (event.key !== "*" || currentToolbarMode !== "create") return;
     if (activeGroupId !== null && activeGroupId !== groupId) return;
@@ -423,19 +1380,28 @@ function renderToolbar({ model, el }) {
     if (activeGroupId !== null && activeGroupId !== groupId) return;
     if (event.target instanceof HTMLInputElement
         || event.target instanceof HTMLTextAreaElement) return;
+    if (event.target.isContentEditable || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (model.get("create_kind") === "young") {
+      const action = {"[": "left-bracket", "(": "left-bracket", "]": "right-bracket", ")": "right-bracket"}[event.key];
+      if (action) { event.preventDefault(); youngEditor.tool(action); return; }
+    }
     if (event.key !== "+" && event.key !== "-") return;
     event.preventDefault();
     requestTerm(event.key === "+" ? 1 : -1);
   }
   document.addEventListener("keydown", addTermFromKeyboard);
   return () => {
-    document.removeEventListener("birdtracks-projector-status", updateStatus);
+    youngEditor.dispose();
+    pairEvaluator.dispose();
+    model.off("change:create_kind", showKind);
+    model.off("change:mode", updateToolbarMode);
     model.off("change:trace_enabled", updateTrace);
     document.removeEventListener("keydown", addTermFromKeyboard);
   };
 }
 
 function renderCreator({ model, el }) {
+  const embedded = model.get("widget_role") === "embedded";
   const widgetMode = model.get("mode") || "evaluate";
   let groupId = model.get("group_id");
   const updateGroupId = () => {
@@ -453,6 +1419,7 @@ function renderCreator({ model, el }) {
   el.classList.add(
     "birdtracks-projector-widget",
     "birdtracks-projector-creator",
+    ...(embedded ? ["birdtracks-projector-embedded"] : []),
     `birdtracks-projector-${widgetMode}`,
   );
   const template = model.get("graph");
@@ -540,13 +1507,127 @@ function renderCreator({ model, el }) {
       route: routeFor(boundary.boundary_label),
     })),
   ];
+
+  // A saved free strand is represented in the exact graph by a one-line
+  // identity permutation.  That representation is necessary at the Python
+  // boundary, but it is not an operator in the create-mode editor: keeping it
+  // as a layer makes insertion beside the strand allocate fresh lines and
+  // makes its two boundary handles look like a nontrivial permutation.
+  function unwrapIdentityBoundaryNodes() {
+    const removable = new Set();
+    const replacements = [];
+    for (const node of nodes) {
+      if (node.kind !== "permutation"
+          || node.labels.length !== 1
+          || !node.mapping?.some(([input, output]) => input === output)) continue;
+      const label = node.labels[0];
+      const entering = connections.find((connection) =>
+        connection.source.type === "right-anchor"
+        && connection.target.type === "port"
+        && connection.target.node === node.index
+        && connection.target.label === label
+      );
+      const leaving = connections.find((connection) =>
+        connection.source.type === "port"
+        && connection.source.node === node.index
+        && connection.source.label === label
+        && connection.target.type === "left-anchor"
+      );
+      if (!entering || !leaving) continue;
+      removable.add(node.index);
+      replacements.push({
+        entering,
+        leaving,
+        connection: {
+          source: entering.source,
+          target: leaving.target,
+          boundaryLabel: entering.boundaryLabel ?? leaving.boundaryLabel,
+          route: { ...entering.route, ...leaving.route },
+        },
+      });
+    }
+    if (!removable.size) return;
+    connections = connections.filter((connection) =>
+      !replacements.some(({ entering, leaving }) =>
+        connection === entering || connection === leaving
+      )
+    );
+    connections.push(...replacements.map(({ connection }) => connection));
+    const kept = nodes.filter((node) => !removable.has(node.index));
+    const indexMap = new Map(
+      kept.map((node, index) => [node.index, index]),
+    );
+    nodes = kept;
+    nodes.forEach((node, index) => { node.index = index; });
+    for (const connection of connections) {
+      for (const endpoint of [connection.source, connection.target]) {
+        if (endpoint.type === "port") endpoint.node = indexMap.get(endpoint.node);
+      }
+    }
+  }
+
+  unwrapIdentityBoundaryNodes();
   if (!nodes.length && !connections.length) connections = [{
     source: { type: "right-anchor", level: 0 },
     target: { type: "left-anchor", level: 0 },
     route: {},
   }];
+  const lineColors = new Map(
+    Object.entries(model.get("line_colors") || {})
+      .filter(([, color]) => typeof color === "string"),
+  );
+  let savedToLiveColorKeys = new Map();
+  function whiteboardPaintbrush() {
+    return el.closest?.(".birdtracks-whiteboard-section")?._birdtracksPaintbrush || null;
+  }
+  function colorLine(path, key) {
+    path.dataset.lineKey = key;
+    const color = lineColors.get(key);
+    if (color) path.style.stroke = color;
+  }
+  function edgeLineKey(source, target) {
+    return `${endpointKey(source)}->${endpointKey(target)}`;
+  }
+  function lineKey(connection, fallback = null) {
+    return connection.source && connection.target
+      ? edgeLineKey(connection.source, connection.target)
+      : fallback;
+  }
+  function colorLineWithFallback(path, key, fallback) {
+    path.dataset.lineKey = key;
+    const color = lineColors.get(key)
+      || (fallback ? lineColors.get(fallback) : null);
+    if (color) path.style.stroke = color;
+  }
+  function paintbrushTarget(path, key, legacyKey = null) {
+    path.dataset.lineKey = key;
+    let pendingPaint = null;
+    path.addEventListener("click", (event) => {
+      const state = whiteboardPaintbrush();
+      if (!state?.active || !/^#[0-9a-f]{6}$/i.test(state.color)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (pendingPaint !== null) clearTimeout(pendingPaint);
+      pendingPaint = null;
+      // Wait out the browser's double-click interval. Redrawing after the
+      // first press would detach this path and prevent canvas insertion.
+      if (event.detail > 1) return;
+      const color = state.color.toLowerCase();
+      pendingPaint = setTimeout(() => {
+        pendingPaint = null;
+        if (legacyKey) lineColors.delete(legacyKey);
+        lineColors.set(key, color);
+        model.set("line_colors", Object.fromEntries(lineColors));
+        model.save_changes();
+        state.record?.(color);
+        redraw();
+      }, 300);
+    });
+  }
   let nextLabel = Math.max(0, ...nodes.flatMap((node) => node.labels)) + 1;
   let controlDown = false;
+  let directionMode = template.in_direction === "left"
+    ? "left-in" : template.in_direction === "right" ? "left-out" : "neutral";
   let draft = null;
   let lineDragActive = false;
   let lastNodePointerDown = null;
@@ -628,6 +1709,7 @@ function renderCreator({ model, el }) {
   save.textContent = "Save";
   save.addEventListener("click", () => saveProjector());
   save.className = "birdtracks-save-button";
+  save.hidden = embedded;
   const workspace = document.createElement("div");
   workspace.className = "birdtracks-creator-workspace";
   const localUndo = document.createElement("button");
@@ -655,24 +1737,57 @@ function renderCreator({ model, el }) {
   localNumerator.type = "text";
   localNumerator.inputMode = "numeric";
   localNumerator.value = "1";
-  localNumerator.setAttribute("aria-label", "Projector multiplier numerator");
+  localNumerator.setAttribute("aria-label", "Prefactor");
   const localBar = document.createElement("span");
   localBar.className = "birdtracks-multiplier-bar";
   const localDenominator = document.createElement("input");
   localDenominator.type = "text";
   localDenominator.inputMode = "numeric";
   localDenominator.value = "1";
-  localDenominator.setAttribute("aria-label", "Projector multiplier denominator");
+  localDenominator.setAttribute("aria-label", "Denominator");
   localFraction.append(localNumerator, localBar, localDenominator);
+  let inlineFraction = false;
+  function openInlineFraction(target) {
+    inlineFraction = true;
+    localFraction.classList.add("birdtracks-inline-fraction");
+    localNumerator.setAttribute("aria-label", "Prefactor");
+    localDenominator.setAttribute("aria-label", "Denominator");
+    localNumerator.value = String(coefficientNumerator);
+    localDenominator.value = String(coefficientDenominator);
+    setLocalFractionOpen(true);
+    const numbers = [...svg.querySelectorAll(".birdtracks-fraction-number")];
+    const top = numbers[0] || svg.querySelector(".birdtracks-coefficient") || target;
+    const bottom = numbers[1];
+    const parent = workspace.getBoundingClientRect();
+    const bounds = top.getBoundingClientRect();
+    const fontSize = Math.max(12, Number.parseFloat(getComputedStyle(top).fontSize) *
+      Math.abs(svg.getScreenCTM().a));
+    for (const [input, anchor, offset] of [[localNumerator, top, 0], [localDenominator, bottom, fontSize + 4]]) {
+      const rect = anchor?.getBoundingClientRect() || bounds;
+      Object.assign(input.style, { left: `${rect.left - parent.left}px`,
+        top: `${rect.top - parent.top + (anchor ? 0 : offset)}px`,
+        width: `${Math.max(20, rect.width)}px`, height: `${Math.max(18, rect.height)}px`,
+        fontSize: `${fontSize}px` });
+    }
+    (target === bottom ? localDenominator : localNumerator).focus();
+    (target === bottom ? localDenominator : localNumerator).select();
+  }
   function setLocalFractionOpen(open) {
+    if (!open) inlineFraction = false;
     localFraction.hidden = !open;
     workspace.classList.toggle("fraction-open", open);
+    if (!open) {
+      inlineFraction = false;
+      localFraction.classList.remove("birdtracks-inline-fraction");
+      localNumerator.removeAttribute("style");
+      localDenominator.removeAttribute("style");
+    }
   }
   function applyLocalMultiplier() {
     if (!/^[+-]?\d+$/.test(localNumerator.value.trim())
         || !/^[+-]?\d+$/.test(localDenominator.value.trim())
         || BigInt(localDenominator.value.trim()) === 0n) {
-      message.textContent = "Enter an integer numerator and a nonzero denominator.";
+      message.textContent = "The prefactor must be an integer and the denominator a nonzero integer.";
       return false;
     }
     multiplyCoefficient(localNumerator.value.trim(), localDenominator.value.trim());
@@ -693,6 +1808,7 @@ function renderCreator({ model, el }) {
     input.addEventListener("pointerdown", (event) => event.stopPropagation());
     input.addEventListener("keydown", (event) => {
       event.stopPropagation();
+      if (event.key === "Escape") { setLocalFractionOpen(false); return; }
       if (input === localNumerator && event.key === "/") {
         event.preventDefault();
         localDenominator.focus();
@@ -704,6 +1820,9 @@ function renderCreator({ model, el }) {
       applyLocalMultiplier();
     });
   }
+  localFraction.addEventListener("focusout", (event) => {
+    if (inlineFraction && !localFraction.contains(event.relatedTarget)) applyLocalMultiplier();
+  });
   function closeLocalFractionOnOutsideClick(event) {
     if (localFraction.hidden || localFraction.contains(event.target)) return;
     applyLocalMultiplier();
@@ -726,14 +1845,18 @@ function renderCreator({ model, el }) {
     localUndo.style.top = top;
     localMultiply.style.left = left;
     localMultiply.style.top = top;
-    localFraction.style.left = left;
-    localFraction.style.top = `calc(${top} + 2.25rem)`;
+    if (!inlineFraction) {
+      localFraction.style.left = left;
+      localFraction.style.top = `calc(${top} + 2.25rem)`;
+    }
   }
   const canvasViewport = document.createElement("div");
   canvasViewport.className = "birdtracks-canvas-viewport";
   canvasViewport.appendChild(svg);
   const activateEditor = (event) => {
     activeEditorByGroup.set(groupId, editorId);
+    if (model.get("mode") === "create") interactionMode = "create";
+    else if (model.get("mode") === "evaluate") interactionMode = "evaluate";
     document.dispatchEvent(new CustomEvent("birdtracks-projector-selected", {
       detail: { groupId, editorId },
     }));
@@ -758,17 +1881,36 @@ function renderCreator({ model, el }) {
     const level = Math.max(0, Math.round((point.y - geometry.top_margin) / spacing));
     addNode(kind, layer, level);
   });
+  svg.addEventListener("contextmenu", (event) => {
+    if (interactionMode !== "create") return;
+    if (eventPoint(event).x > geometry.left_boundary) return;
+    event.preventDefault();
+    event.stopPropagation();
+    model.set(
+      "term_delete_request",
+      model.get("term_delete_request") + 1,
+    );
+    model.save_changes();
+  });
   svg.addEventListener("dblclick", (event) => {
+    const prefactor = event.target.closest?.(".birdtracks-coefficient, .birdtracks-fraction-number, .birdtracks-prefactor-delete-target");
+    if (interactionMode === "create" && prefactor) {
+      event.preventDefault();
+      openInlineFraction(prefactor);
+      return;
+    }
     if (performance.now() < suppressCanvasDoubleClickUntil) {
       event.preventDefault();
       return;
     }
-    if (interactionMode !== "create") return;
+    if (interactionMode !== "create" && model.get("mode") !== "create") return;
+    interactionMode = "create";
     const blocked = event.target.closest?.(
-      ".birdtracks-node, .birdtracks-creator-endpoint, "
+      ".birdtracks-direction-control, "
       + ".birdtracks-add-line-control, .birdtracks-line-control-hit",
     );
-    if (blocked) return;
+    const clickedNode = event.target.closest?.('.birdtracks-node');
+    if (blocked || (clickedNode && !clickedNode.querySelector('.birdtracks-permutation-node'))) return;
     event.preventDefault();
     const point = eventPoint(event);
     let layer = 0;
@@ -789,9 +1931,13 @@ function renderCreator({ model, el }) {
         layer = nearest.layer;
       }
     }
+    // Each strand owns the full band below it: down to the next strand, or
+    // down to the add-line controls for the last strand.
     const level = Math.max(
       0,
-      Math.floor((point.y - geometry.top_margin) / spacing),
+      Math.min(levelCount() - 1, Math.floor(
+        (point.y - geometry.top_margin) / spacing,
+      )),
     );
     addNode("symmetriser", layer, level);
   });
@@ -799,13 +1945,15 @@ function renderCreator({ model, el }) {
   el.append(workspace, save);
 
   function setMode(mode) {
-    const permittedMode = model.get("active_line") ? mode : "evaluate";
+    const permittedMode = embedded
+      ? (mode === "create" ? "create" : "evaluate")
+      : (model.get("active_line") ? mode : "evaluate");
     const previousMode = interactionMode;
     interactionMode = permittedMode;
     el.dataset.mode = permittedMode;
-    model.set("mode", permittedMode);
+    if (model.get("mode") !== permittedMode) model.set("mode", permittedMode);
     model.save_changes();
-    if (permittedMode === "evaluate" && previousMode !== "evaluate") {
+    if (!embedded && permittedMode === "evaluate" && previousMode !== "evaluate") {
       saveProjector();
     }
     updateLocalControls();
@@ -884,12 +2032,28 @@ function renderCreator({ model, el }) {
       }
       if (!connection) return;
       const index = connections.indexOf(connection);
+      const inheritedColor = lineColors.get(
+        edgeLineKey(connection.source, connection.target),
+      );
       const input = { type: "port", side: "input", node: node.index, label };
       const output = { type: "port", side: "output", node: node.index, label };
-      connections.splice(index, 1,
-        { source: connection.source, target: input, route: { ...connection.route } },
-        { source: output, target: connection.target, route: { ...connection.route } },
-      );
+      const entering = {
+        source: connection.source,
+        target: input,
+        boundaryLabel: connection.boundaryLabel,
+        route: { ...connection.route },
+      };
+      const leaving = {
+        source: output,
+        target: connection.target,
+        boundaryLabel: connection.boundaryLabel,
+        route: { ...connection.route },
+      };
+      connections.splice(index, 1, entering, leaving);
+      if (inheritedColor) {
+        lineColors.set(edgeLineKey(entering.source, entering.target), inheritedColor);
+        lineColors.set(edgeLineKey(leaving.source, leaving.target), inheritedColor);
+      }
     });
   }
 
@@ -908,15 +2072,28 @@ function renderCreator({ model, el }) {
       connections = connections.filter((connection) =>
         connection !== entering && connection !== leaving
       );
-      if (entering && leaving) connections.push({
-        source: entering.source,
-        target: leaving.target,
-        route: {
-          ...entering.route,
-          ...leaving.route,
-          [String(layer)]: level + offset,
-        },
-      });
+      if (entering && leaving) {
+        const replacement = {
+          source: entering.source,
+          target: leaving.target,
+          boundaryLabel: entering.boundaryLabel ?? leaving.boundaryLabel,
+          route: {
+            ...entering.route,
+            ...leaving.route,
+            [String(layer)]: level + offset,
+          },
+        };
+        connections.push(replacement);
+        const inheritedColor = lineColors.get(
+          edgeLineKey(entering.source, entering.target),
+        ) || lineColors.get(edgeLineKey(leaving.source, leaving.target));
+        if (inheritedColor) {
+          lineColors.set(
+            edgeLineKey(replacement.source, replacement.target),
+            inheritedColor,
+          );
+        }
+      }
     });
   }
 
@@ -1020,7 +2197,8 @@ function renderCreator({ model, el }) {
   }
 
   function addNode(kind, requestedLayer = null, requestedLevel = 0) {
-    if (interactionMode !== "create") return;
+    if (interactionMode !== "create" && model.get("mode") !== "create") return;
+    interactionMode = "create";
     rememberEditorState();
     const index = nodes.length;
     const rightmost = nodes.reduce((maximum, node) => Math.max(maximum, node.layer), -1);
@@ -1118,6 +2296,7 @@ function renderCreator({ model, el }) {
         replacements.push({
           source: incoming.source,
           target: outgoing.target,
+          boundaryLabel: incoming.boundaryLabel ?? outgoing.boundaryLabel,
           route: { ...(incoming.route || {}), ...(outgoing.route || {}) },
         });
         connections = connections.filter((connection) =>
@@ -1245,10 +2424,14 @@ function renderCreator({ model, el }) {
     // The coefficient/sign already lives inside `coefficient_space`. Starting
     // at zero halves the old whitespace before +/- without overlapping the
     // preceding term.
-    const left = 0;
+    // Embedded add-line controls sit on the boundaries. Give their visible
+    // plus glyph just enough room on both sides without restoring a prefactor
+    // gutter inside the diagram.
+    const edgePadding = embedded ? Math.min(nodeWidth, spacing) * 0.1 : 0;
+    const left = embedded ? -edgePadding : 0;
     const right = usesCompiledDisplay()
       ? rightBoundary
-      : rightBoundary + geometry.step / 2;
+      : rightBoundary + (embedded ? edgePadding : geometry.step / 2);
     return {
       left,
       width: right - left,
@@ -1448,10 +2631,30 @@ function renderCreator({ model, el }) {
         }
       }
       points.push(end);
-      lines.appendChild(svgElement("path", {
+      const lineKey = edgeLineKey(sourceEndpoint, targetEndpoint);
+      const legacyLineKey = `strand:${strand.strand_label}`;
+      const path = svgElement("path", {
         d: routedPath(points),
         class: "birdtracks-line birdtracks-display-strand",
-      }));
+      });
+      const hitTarget = svgElement("path", {
+        d: routedPath(points),
+        class: "birdtracks-line-hit",
+        "aria-label": "Birdtrack line",
+      });
+      colorLineWithFallback(path, lineKey, legacyLineKey);
+      paintbrushTarget(hitTarget, lineKey, legacyLineKey);
+      lines.append(path, hitTarget);
+      if (directionMode !== "neutral") {
+        if (strand.source.kind === "right_boundary") {
+          drawDirectionArrowSegment(lines, points[0], points[1]);
+        }
+        if (strand.target.kind === "left_boundary") {
+          drawDirectionArrowSegment(
+            lines, points[points.length - 2], points[points.length - 1],
+          );
+        }
+      }
     }
   }
 
@@ -1474,7 +2677,16 @@ function renderCreator({ model, el }) {
     const handles = svgElement("g", { class: "birdtracks-port-handles" });
     const annotations = svgElement("g", { class: "birdtracks-annotations" });
     const interactions = svgElement("g", { class: "birdtracks-interactions" });
-    svg.append(guides, lines, nodeLayer, handles, annotations, interactions);
+    const canvasHit = svgElement("rect", {
+      x: box.left,
+      y: box.top,
+      width: box.width,
+      height: box.height,
+      fill: "transparent",
+      "pointer-events": "all",
+      "aria-hidden": "true",
+    });
+    svg.append(canvasHit, guides, lines, nodeLayer, handles, annotations, interactions);
 
     for (let level = 0; level < levelCount(); level += 1) {
       guides.appendChild(svgElement("line", {
@@ -1501,6 +2713,12 @@ function renderCreator({ model, el }) {
         "data-free-connection": connectionIndex,
         "aria-label": "Connection; right-click to delete",
       });
+      const edgeKey = lineKey(connection);
+      const legacyStrandKey = connection.boundaryLabel === undefined
+        ? null
+        : `strand:${connection.boundaryLabel}`;
+      colorLineWithFallback(visible, edgeKey, legacyStrandKey);
+      paintbrushTarget(hitTarget, edgeKey, legacyStrandKey);
       hitTarget.addEventListener("contextmenu", (event) => {
         event.preventDefault();
         if (interactionMode !== "create") return;
@@ -1515,6 +2733,7 @@ function renderCreator({ model, el }) {
         layer -= 1
       ) drawRouteHandle(handles, connection, layer);
     });
+    if (!compiledDisplay) drawDirectionArrows(lines);
     if (draft) {
       const start = coordinates(draft.source);
       lines.appendChild(svgElement("path", {
@@ -1531,6 +2750,11 @@ function renderCreator({ model, el }) {
       drawAddLineControl(handles, "left");
       drawAddLineControl(handles, "right");
     }
+    const visibleNodes = nodes.filter((node) =>
+      !compiledDisplay || node.kind !== "permutation");
+    if (interactionMode === "create" && !visibleNodes.length) {
+      drawFreeDirectionControls(interactions, box);
+    }
     for (const node of nodes) {
       if (!compiledDisplay || node.kind !== "permutation") {
         drawNode(nodeLayer, handles, interactions, node);
@@ -1546,29 +2770,28 @@ function renderCreator({ model, el }) {
         class: "birdtracks-prefactor-delete-target",
         "aria-label": "Projector prefactor; right-click to delete projector",
       });
-      prefactorTarget.addEventListener("contextmenu", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        model.set(
-          "term_delete_request",
-          model.get("term_delete_request") + 1,
-        );
-        model.save_changes();
-      });
+      // The prefactor is deleted by the SVG-level contextmenu handler above.
+      // It must not intercept ordinary clicks, which may be line insertion or
+      // a drag beginning at a leftmost port.
+      prefactorTarget.style.pointerEvents = "none";
       annotations.appendChild(prefactorTarget);
     }
-    drawExactCoefficient(
-      annotations,
-      currentGraphCoefficient(),
-      displayedTermSign(),
-      geometry,
-      geometry.left_boundary / 2,
-      yFor(Math.max(0, levelCount() - 1) / 2),
-    );
+    if (!model.get("prefactor_owned")) {
+      drawExactCoefficient(
+        annotations,
+        currentGraphCoefficient(),
+        displayedTermSign(),
+        geometry,
+        geometry.left_boundary / 2,
+        yFor(Math.max(0, levelCount() - 1) / 2),
+      );
+    }
     // Measure the actual rendered prefactor. If it outgrows its coefficient
     // slot, keep its right edge against the diagram and enlarge the viewBox
     // by precisely the measured left overflow.
-    const annotationBox = annotations.getBBox();
+    const annotationBox = annotations.childElementCount
+      ? annotations.getBBox()
+      : { x: box.left, width: 0 };
     const annotationRight = annotationBox.x + annotationBox.width;
     const annotationShift = Math.min(0, geometry.left_boundary - annotationRight);
     if (annotationShift) {
@@ -1758,6 +2981,7 @@ function renderCreator({ model, el }) {
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
     const node = nodes[endpoint.node];
     const order = endpoint.side === "input" ? node.inputOrder : node.outputOrder;
     const origin = order.indexOf(endpoint.label);
@@ -1891,10 +3115,19 @@ function renderCreator({ model, el }) {
     hitTarget.addEventListener("pointerdown", (event) => {
       event.preventDefault();
       event.stopPropagation();
+      hitTarget.setPointerCapture?.(event.pointerId);
       const before = snapshotEditorState();
       const originLevel = routeLevel(connection, layer);
       let snappedLevel = originLevel;
+      let moved = false;
+      const startX = event.clientX;
+      const startY = event.clientY;
       function move(moveEvent) {
+        if (!moved && Math.hypot(
+          moveEvent.clientX - startX,
+          moveEvent.clientY - startY,
+        ) < 6) return;
+        moved = true;
         const point = eventPoint(moveEvent);
         const displacement = (point.y - yFor(originLevel)) / spacing;
         const steps = Math.abs(displacement) < 0.2
@@ -1919,6 +3152,7 @@ function renderCreator({ model, el }) {
         document.removeEventListener("pointermove", move);
         document.removeEventListener("pointerup", finish);
         document.removeEventListener("pointercancel", finish);
+        if (!moved) return;
         // Reordering needs the pre-drag slot to determine direction. During
         // pointermove the route is only a visual preview.
         if (display?.displayColumn !== undefined) {
@@ -1946,11 +3180,166 @@ function renderCreator({ model, el }) {
     layerGroup.appendChild(group);
   }
 
+  function drawFreeDirectionControls(interactions, box) {
+    const y = (yFor(0) + yFor(levelCount() - 1)) / 2;
+    for (const side of ["left", "right"]) {
+      const x = side === "left"
+        ? geometry.left_boundary + spacing * 0.3
+        : box.rightBoundary - spacing * 0.3;
+      const control = svgElement("g", {
+        class: "birdtracks-direction-control",
+        role: "button",
+        "aria-label": `Set ${side} projector direction`,
+      });
+      const hit = svgElement("circle", {
+        cx: x, cy: y, r: spacing * 0.1,
+        class: "birdtracks-direction-control-hit",
+      });
+      const glyph = svgElement("path", { class: "birdtracks-direction-glyph" });
+      const update = () => {
+        const half = Math.min(nodeWidth, spacing) * 0.02;
+        const arm = Math.min(nodeWidth, spacing) * 0.03;
+        const mode = directionMode === "neutral" ? "neutral"
+          : directionMode === "left-out" ? "out" : "in";
+        glyph.setAttribute("d", mode === "neutral"
+          ? `M ${x} ${y - half} L ${x} ${y + half}`
+          : mode === "out"
+          ? `M ${x + arm} ${y - half} L ${x - arm} ${y} L ${x + arm} ${y + half}`
+          : `M ${x - arm} ${y - half} L ${x + arm} ${y} L ${x - arm} ${y + half}`);
+      };
+      hit.addEventListener("pointerdown", (event) => {
+        if (!event.ctrlKey && !controlDown) return;
+        event.preventDefault();
+        event.stopPropagation();
+        directionMode = directionMode === "neutral"
+          ? side === "right" ? "left-in" : "left-out"
+          : side === "right"
+          ? directionMode === "left-in" ? "left-out" : "neutral"
+          : directionMode === "left-out" ? "left-in" : "neutral";
+        model.set("direction_mode", directionMode);
+        model.save_changes();
+        redraw();
+      });
+      control.append(hit, glyph);
+      update();
+      interactions.appendChild(control);
+    }
+  }
+
+  function drawDirectionArrows(layer) {
+    if (directionMode === "neutral") return;
+    const pointsFor = (connection) => routePoints(connection);
+    for (const connection of connections) {
+      const fromRight = connection.source.type === "right-anchor";
+      const toLeft = connection.target.type === "left-anchor";
+      if (!fromRight && !toLeft) continue;
+      const points = pointsFor(connection);
+      const segment = fromRight
+        ? [points[0], points[1]]
+        : [points[points.length - 2], points[points.length - 1]];
+      if (!segment[0] || !segment[1]) continue;
+      drawDirectionArrowSegment(layer, segment[0], segment[1]);
+    }
+  }
+
+  function drawDirectionArrowSegment(layer, start, end) {
+    if (!start || !end) return;
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const length = Math.hypot(dx, dy);
+    if (!length) return;
+    const tangentX = dx / length;
+    const tangentY = dy / length;
+    const ux = tangentX;
+    const uy = tangentY;
+    const px = -tangentY;
+    const py = tangentX;
+    const x = (start.x + end.x) / 2;
+    const y = (start.y + end.y) / 2;
+    const size = Math.min(nodeWidth, spacing) * 0.10;
+    const direction = directionMode === "left-in" ? -1 : 1;
+    const tipX = x + direction * ux * size;
+    const tipY = y + direction * uy * size;
+    const backX = x - direction * ux * size * 0.8;
+    const backY = y - direction * uy * size * 0.8;
+    const spread = size * 0.7;
+    const path = `M ${backX + px * spread} ${backY + py * spread}`
+      + ` L ${tipX} ${tipY}`
+      + ` L ${backX - px * spread} ${backY - py * spread}`;
+    layer.appendChild(svgElement("path", {
+      d: path,
+      class: "birdtracks-direction-arrow",
+      "aria-hidden": "true",
+    }));
+  }
+
   function drawNode(nodeLayer, handles, interactions, node) {
     const centreX = xForNode(node);
     const top = yFor(node.level) - geometry.operator_padding;
     const height = (node.labels.length - 1) * spacing + 2 * geometry.operator_padding;
     const group = svgElement("g", { class: "birdtracks-node", "data-node": node.index });
+    const directionControls = [];
+    const directionNodes = nodes.filter((item) =>
+      !usesCompiledDisplay() || item.kind !== "permutation");
+    const leftNode = directionNodes.reduce((best, item) =>
+      xForNode(item) < xForNode(best) ? item : best);
+    const rightNode = directionNodes.reduce((best, item) =>
+      xForNode(item) > xForNode(best) ? item : best);
+    const leftmost = node === leftNode;
+    const rightmost = node === rightNode;
+    const directionSides = interactionMode !== "create" ? []
+      : leftmost && rightmost
+      ? ["left", "right"]
+      : [leftmost ? "left" : "right"];
+    for (const side of directionSides) {
+      const x = centreX + (side === "left" ? -1 : 1) * (nodeWidth / 2 + spacing * 0.42);
+      const y = localControlY;
+      const control = svgElement("g", {
+        class: "birdtracks-direction-control",
+        role: "button",
+        "aria-label": `Set ${side} projector direction`,
+      });
+      const hit = svgElement("circle", {
+        cx: x, cy: y, r: spacing * 0.1,
+        class: "birdtracks-direction-control-hit",
+      });
+      const glyph = svgElement("path", {
+        class: "birdtracks-direction-glyph",
+      });
+      const update = () => {
+        const half = Math.min(nodeWidth, spacing) * 0.02;
+        const arm = Math.min(nodeWidth, spacing) * 0.03;
+        const mode = directionMode === "neutral" ? "neutral"
+          : directionMode === "left-out" ? "out" : "in";
+        glyph.setAttribute("d", mode === "neutral"
+          ? `M ${x} ${y - half} L ${x} ${y + half}`
+          : mode === "out"
+          ? `M ${x + arm} ${y - half} L ${x - arm} ${y} L ${x + arm} ${y + half}`
+          : `M ${x - arm} ${y - half} L ${x + arm} ${y} L ${x - arm} ${y + half}`);
+      };
+      const cycle = (event) => {
+        if (!event.ctrlKey && !controlDown) return;
+        event.preventDefault();
+        event.stopPropagation();
+        directionMode = directionMode === "neutral"
+          ? side === "right" ? "left-in" : "left-out"
+          : side === "right"
+          ? directionMode === "left-in" ? "left-out" : "neutral"
+          : directionMode === "left-out" ? "left-in" : "neutral";
+        update();
+        model.set("direction_mode", directionMode);
+        model.save_changes();
+        redraw();
+      };
+      hit.addEventListener("pointerdown", cycle);
+      hit.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      control.append(hit, glyph);
+      update();
+      directionControls.push(control);
+    }
     if (node.kind === "permutation" && node.mapping) {
       for (const [input, output] of node.mapping) {
         const startY = yFor(node.level + node.inputOrder.indexOf(input));
@@ -1985,6 +3374,10 @@ function renderCreator({ model, el }) {
           event.clientY - lastNodePointerDown.y,
         ) < 6;
       if (isDoubleClick) {
+        // A permutation is a movable strand arrangement, not an operator to
+        // toggle.  Leave its native dblclick available to the canvas so a
+        // create-mode double-click can insert an operator at that position.
+        if (interactionMode === "create" && node.kind === "permutation") return;
         event.preventDefault();
         event.stopPropagation();
         lastNodePointerDown = null;
@@ -2024,7 +3417,7 @@ function renderCreator({ model, el }) {
       drawEndpoint(handles, { type: "port", side: "output", node: node.index, label });
     });
     if (node.kind !== "permutation"
-        && (interactionMode === "create" || model.get("active_line"))) {
+        && (interactionMode === "create" || interactionMode === "evaluate")) {
       for (const edge of ["top", "bottom"]) {
         const lineY = edge === "top" ? top : top + height;
         const recursiveControl = interactionMode === "evaluate";
@@ -2037,7 +3430,7 @@ function renderCreator({ model, el }) {
           event.preventDefault();
           event.stopPropagation();
           if (recursiveControl) {
-            if (node.labels.length >= 2 && model.get("active_line")) {
+            if (node.labels.length >= 2) {
               saveProjector(node.index, edge);
             }
           } else {
@@ -2097,6 +3490,7 @@ function renderCreator({ model, el }) {
         else group.append(hitTarget, control);
       }
     }
+    for (const control of directionControls) interactions.appendChild(control);
     nodeLayer.appendChild(group);
   }
 
@@ -2144,7 +3538,8 @@ function renderCreator({ model, el }) {
   }
 
   function resizeNode(node, edge, delta) {
-    if (interactionMode !== "create") return;
+    if (interactionMode !== "create" && model.get("mode") !== "create") return;
+    interactionMode = "create";
     rememberEditorState();
     if (delta > 0) {
       const label = nextLabel++;
@@ -2212,11 +3607,24 @@ function renderCreator({ model, el }) {
         && connection.source.label === label
       );
       connections = connections.filter((connection) => connection !== entering && connection !== leaving);
-      if (entering && leaving) connections.push({
-        source: entering.source,
-        target: leaving.target,
-        route: { ...entering.route, ...leaving.route },
-      });
+      if (entering && leaving) {
+        const replacement = {
+          source: entering.source,
+          target: leaving.target,
+          boundaryLabel: entering.boundaryLabel ?? leaving.boundaryLabel,
+          route: { ...entering.route, ...leaving.route },
+        };
+        connections.push(replacement);
+        const inheritedColor = lineColors.get(
+          edgeLineKey(entering.source, entering.target),
+        ) || lineColors.get(edgeLineKey(leaving.source, leaving.target));
+        if (inheritedColor) {
+          lineColors.set(
+            edgeLineKey(replacement.source, replacement.target),
+            inheritedColor,
+          );
+        }
+      }
       if (edge === "top") node.level += 1;
     }
     reorderCreatorLayer(node.layer, node, node.level);
@@ -2226,6 +3634,7 @@ function renderCreator({ model, el }) {
   function dragNode(event, node) {
     if (event.button !== 0) return;
     event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
     const startX = event.clientX;
     const startY = event.clientY;
     const origin = { layer: node.layer, level: node.level };
@@ -2233,7 +3642,10 @@ function renderCreator({ model, el }) {
     const matrix = svg.getScreenCTM();
     const sx = matrix ? matrix.a : 1;
     const sy = matrix ? matrix.d : 1;
+    let moved = false;
     function move(moveEvent) {
+      if (!moved && Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < 6) return;
+      moved = true;
       if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) >= 6) {
         lastNodePointerDown = null;
       }
@@ -2250,6 +3662,7 @@ function renderCreator({ model, el }) {
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", finish);
       document.removeEventListener("pointercancel", finish);
+      if (!moved) return;
       if (node.layer === origin.layer) {
         const requestedLevel = node.level;
         // As with free lines, restore the origin before the insertion move;
@@ -2286,7 +3699,7 @@ function renderCreator({ model, el }) {
         spliceNodeIntoLines(node);
         reorderCreatorLayer(node.layer, node, node.level);
       }
-      if (JSON.stringify(snapshotEditorState()) !== JSON.stringify(before)) {
+      if (node.layer !== origin.layer || node.level !== origin.level) {
         rememberEditorState(before);
       }
       compactEmptyLayers();
@@ -2336,6 +3749,7 @@ function renderCreator({ model, el }) {
       document.removeEventListener("pointercancel", cancel);
       const candidate = document.elementFromPoint(upEvent.clientX, upEvent.clientY);
       const encoded = candidate && candidate.getAttribute("data-endpoint");
+      let connected = false;
       if (encoded) {
         const other = JSON.parse(decodeURIComponent(encoded));
         const source = isSource(endpoint) ? endpoint : other;
@@ -2351,6 +3765,7 @@ function renderCreator({ model, el }) {
             && !connections.some((item) => endpointKey(item.target) === targetKey)) {
           connections.push({ source, target });
           rememberEditorState(before);
+          connected = true;
         }
       }
       lineDragActive = false;
@@ -2561,6 +3976,8 @@ function renderCreator({ model, el }) {
     for (const connection of [...connections]) {
       if (connection.source.type !== "right-anchor"
           || connection.target.type !== "left-anchor") continue;
+      const legacyKey = `${endpointKey(connection.source)}->${endpointKey(connection.target)}`;
+      const inheritedColor = lineColors.get(legacyKey);
       const label = nextLabel++;
       const node = {
         index: nodes.length,
@@ -2576,18 +3993,23 @@ function renderCreator({ model, el }) {
       };
       nodes.push(node);
       connections = connections.filter((item) => item !== connection);
-      connections.push(
-        {
-          source: connection.source,
-          target: { type: "port", side: "input", node: node.index, label },
-          route: { ...(connection.route || {}) },
-        },
-        {
-          source: { type: "port", side: "output", node: node.index, label },
-          target: connection.target,
-          route: { ...(connection.route || {}) },
-        },
-      );
+      const entering = {
+        source: connection.source,
+        target: { type: "port", side: "input", node: node.index, label },
+        boundaryLabel: connection.boundaryLabel ?? connection.source.level + 1,
+        route: { ...(connection.route || {}) },
+      };
+      const leaving = {
+        source: { type: "port", side: "output", node: node.index, label },
+        target: connection.target,
+        boundaryLabel: connection.boundaryLabel ?? connection.source.level + 1,
+        route: { ...(connection.route || {}) },
+      };
+      connections.push(entering, leaving);
+      if (inheritedColor) {
+        lineColors.set(edgeLineKey(entering.source, entering.target), inheritedColor);
+        lineColors.set(edgeLineKey(leaving.source, leaving.target), inheritedColor);
+      }
     }
     collapseFreeLineLayers();
     compactEmptyLayers();
@@ -2646,6 +4068,10 @@ function renderCreator({ model, el }) {
           savedOutputLabel(node.index, output),
         ])
         : null,
+      in_direction: directionMode === "left-in" ? "left"
+        : directionMode === "left-out" ? "right" : "neutral",
+      out_direction: directionMode === "left-in" ? "right"
+        : directionMode === "left-out" ? "left" : "neutral",
     }));
     const remapPort = (endpoint, side) => ({
       node: indexMap.get(endpoint.node),
@@ -2653,6 +4079,50 @@ function renderCreator({ model, el }) {
         ? savedInputLabel(endpoint.node, endpoint.label)
         : savedOutputLabel(endpoint.node, endpoint.label),
     });
+    // Save renumbers both nodes and ports. Color keys must use the same
+    // coordinates as the serialized graph, not the live editor coordinates.
+    const savedLineColors = {};
+    savedToLiveColorKeys = new Map();
+    const savedEndpoint = (endpoint) => endpoint.type === "port"
+      ? { ...endpoint, ...remapPort(endpoint, endpoint.side) }
+      : endpoint;
+    for (const connection of connections) {
+      const color = lineColors.get(edgeLineKey(connection.source, connection.target));
+      const savedKey = edgeLineKey(
+        savedEndpoint(connection.source), savedEndpoint(connection.target),
+      );
+      savedToLiveColorKeys.set(savedKey, edgeLineKey(connection.source, connection.target));
+      if (color) savedLineColors[savedKey] = color;
+    }
+    // Evaluation hides permutation/identity nodes. Give the resulting visible
+    // corridor the same color, stopping at every real S/A operator.
+    const visibleOperator = (index) => nodes[index].kind !== "permutation"
+      && nodes[index].labels.length > 1;
+    for (const first of connections) {
+      if (first.source.type === "port" && !visibleOperator(first.source.node)) continue;
+      let current = first;
+      let color = null;
+      const visited = new Set();
+      while (current && !visited.has(current)) {
+        visited.add(current);
+        color ||= lineColors.get(edgeLineKey(current.source, current.target));
+        const target = current.target;
+        if (target.type !== "port" || visibleOperator(target.node)) break;
+        const node = nodes[target.node];
+        const label = node.kind === "permutation"
+          ? node.mapping.find(([input]) => input === target.label)?.[1]
+          : target.label;
+        current = outgoing.get(endpointKey({
+          type: "port", side: "output", node: target.node, label,
+        }));
+      }
+      if (!current) continue;
+      const liveKey = edgeLineKey(first.source, current.target);
+      color = lineColors.get(liveKey) || color;
+      const savedKey = edgeLineKey(savedEndpoint(first.source), savedEndpoint(current.target));
+      savedToLiveColorKeys.set(savedKey, liveKey);
+      if (color) savedLineColors[savedKey] = color;
+    }
     const internal = connections.filter((item) =>
       item.source.type === "port" && item.target.type === "port"
     );
@@ -2699,6 +4169,10 @@ function renderCreator({ model, el }) {
       boundary_labels: boundaryLabels,
       layer_count: Math.max(...ordered.map((node) => node.layer)) + 1,
       coefficient: effectiveCoefficient,
+      in_direction: directionMode === "left-in" ? "left"
+        : directionMode === "left-out" ? "right" : "neutral",
+      out_direction: directionMode === "left-in" ? "right"
+        : directionMode === "left-out" ? "left" : "neutral",
       base_coefficient: {
         numerator: String(coefficientNumerator),
         denominator: String(coefficientDenominator),
@@ -2717,6 +4191,7 @@ function renderCreator({ model, el }) {
     }]));
     const boundaryOrders = { input: boundaryLabels, output: boundaryLabels };
     const revision = model.get("save_request") + 1;
+    if (expandNode !== null) announceOperatorExpansion(el);
     model.set("graph", savedGraph);
     model.set("positions", positions);
     model.set("port_orders", portOrders);
@@ -2727,6 +4202,7 @@ function renderCreator({ model, el }) {
     model.set("save_snapshot", {
       revision, graph: savedGraph, positions, port_orders: portOrders,
       free_levels: savedFreeLevels, boundary_orders: boundaryOrders,
+      line_colors: savedLineColors,
       effective_coefficient: effectiveCoefficient,
     });
     if (expandNode !== null) {
@@ -2746,15 +4222,20 @@ function renderCreator({ model, el }) {
   function updateModifier(event) {
     if (controlDown === event.ctrlKey) return;
     controlDown = event.ctrlKey;
+    svg.classList.toggle("ctrl-active", controlDown);
     updateLocalControls();
   }
   function updateLocalControls() {
     localUndo.classList.toggle("visible", controlDown && interactionMode === "evaluate");
-    localMultiply.classList.toggle("visible", controlDown && interactionMode === "create");
+    localMultiply.classList.toggle(
+      "visible",
+      controlDown && interactionMode === "create" && !model.get("prefactor_owned"),
+    );
   }
   function clearModifier() {
     if (!controlDown) return;
     controlDown = false;
+    svg.classList.remove("ctrl-active");
     localUndo.classList.remove("visible");
     localMultiply.classList.remove("visible");
   }
@@ -2783,14 +4264,30 @@ function renderCreator({ model, el }) {
   const saveFromPython = () => saveProjector();
   const localUndoFromPython = () => undoEditorOperation();
   const redrawTermSign = () => redraw();
-  const redrawActiveLine = () => {
-    if (!model.get("active_line")) interactionMode = "evaluate";
+  const redrawPrefactorOwnership = () => {
+    updateLocalControls();
     redraw();
   };
+  const redrawActiveLine = () => {
+    if (embedded) interactionMode = model.get("mode") || "evaluate";
+    else if (!model.get("active_line")) interactionMode = "evaluate";
+    redraw();
+  };
+  const redrawMode = () => setMode(model.get("mode"));
   model.on("change:save_command", saveFromPython);
   model.on("change:local_undo_command", localUndoFromPython);
   model.on("change:term_sign change:term_leading", redrawTermSign);
+  model.on("change:prefactor_owned", redrawPrefactorOwnership);
   model.on("change:active_line", redrawActiveLine);
+  model.on("change:mode", redrawMode);
+  const syncLineColors = () => {
+    lineColors.clear();
+    for (const [key, color] of Object.entries(model.get("line_colors") || {})) {
+      if (typeof color === "string") lineColors.set(savedToLiveColorKeys.get(key) || key, color);
+    }
+    redraw();
+  };
+  model.on("change:line_colors", syncLineColors);
   const localUndoResizeObserver = typeof ResizeObserver === "undefined"
     ? null
     : new ResizeObserver(positionLocalUndo);
@@ -2809,7 +4306,10 @@ function renderCreator({ model, el }) {
     model.off("change:save_command", saveFromPython);
     model.off("change:local_undo_command", localUndoFromPython);
     model.off("change:term_sign change:term_leading", redrawTermSign);
+    model.off("change:prefactor_owned", redrawPrefactorOwnership);
     model.off("change:active_line", redrawActiveLine);
+    model.off("change:mode", redrawMode);
+    model.off("change:line_colors", syncLineColors);
     model.off("change:group_id", updateGroupId);
     localUndoResizeObserver?.disconnect();
     if (activeEditorByGroup.get(groupId) === editorId) {
@@ -2902,6 +4402,7 @@ function renderConfigured({ model, el }) {
 
   function drawCoefficient(coefficient) {
     annotationLayer.replaceChildren();
+    if (model.get("prefactor_owned")) return;
     const numerator = BigInt(coefficient.numerator);
     const denominator = BigInt(coefficient.denominator);
     const middleLevel = TOP_LINE_LEVEL
@@ -2952,8 +4453,8 @@ function renderConfigured({ model, el }) {
     if (numerator === 1n && denominator === 1n) return;
     function drawMinus(signX, signY) {
       annotationLayer.appendChild(svgElement("line", {
-        x1: signX - fontSize * 0.25,
-        x2: signX + fontSize * 0.25,
+        x1: signX - fontSize * 0.36,
+        x2: signX + fontSize * 0.36,
         y1: signY,
         y2: signY,
         class: "birdtracks-coefficient-minus",
@@ -2962,7 +4463,13 @@ function renderConfigured({ model, el }) {
     if (denominator === 1n) {
       const negative = numerator < 0n;
       const magnitude = negative ? -numerator : numerator;
-      if (negative) drawMinus(x - (magnitude === 1n ? 0 : fontSize * 0.35), middleLevel);
+      if (negative) {
+        drawMinus(
+          x - (magnitude === 1n ? 0 : fontSize * 0.35)
+            - (magnitude === 1n ? 0 : fontSize * 0.28),
+          middleLevel,
+        );
+      }
       if (magnitude === 1n && negative) return;
       const text = svgElement("text", {
         x: negative ? x + fontSize * 0.2 : x,
@@ -2985,7 +4492,7 @@ function renderConfigured({ model, el }) {
       digitCount * fractionFontSize * 0.6,
     );
     if (numerator < 0n) {
-      drawMinus(x - barWidth / 2 - fractionFontSize * 0.4, middleLevel);
+      drawMinus(x - barWidth / 2 - fractionFontSize * 0.6, middleLevel);
     }
     const bar = svgElement("line", {
       x1: x - barWidth / 2,
@@ -3436,6 +4943,7 @@ function renderConfigured({ model, el }) {
       group.addEventListener("dblclick", (event) => {
         event.preventDefault();
         event.stopPropagation();
+        announceOperatorExpansion(el);
         model.set("expand_node_request", {
           node: node.index,
           revision: Date.now(),
@@ -3585,12 +5093,18 @@ function renderConfigured({ model, el }) {
   drawCoefficient(model.get("effective_coefficient"));
   drawLines();
   const redrawTermSign = () => drawCoefficient(model.get("effective_coefficient"));
+  const redrawPrefactorOwnership = () => drawCoefficient(model.get("effective_coefficient"));
   model.on("change:term_sign change:term_leading", redrawTermSign);
+  model.on("change:prefactor_owned", redrawPrefactorOwnership);
 }
 
 export default {
   render(context) {
-    if (context.model.get("widget_role") === "toolbar") renderToolbar(context);
-    else renderCreator(context);
+    if (context.model.get("widget_role") === "toolbar") return renderToolbar(context);
+    if (context.model.get("widget_role") === "pair") {
+      const editor = renderPairEditor(context);
+      return () => editor.dispose();
+    }
+    return renderCreator(context);
   },
 };

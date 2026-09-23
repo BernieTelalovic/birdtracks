@@ -1,192 +1,135 @@
-# Birdtracks Calculator
+# Birdtracks Whiteboard
 
-Birdtracks provides exact algebraic objects and an interactive canvas for
-constructing, simplifying, tracing, saving, and reloading sums of birdtrack
-projection operators.
+Birdtracks Whiteboard is a desktop app for writing, drawing, evaluating,
+saving, and reopening birdtrack calculations. A whiteboard is meant to feel
+like typesetting in $\LaTeX$, with intuitive birdtrack drawing and interactive
+kernel commands such as evaluating an equation line with shift+enter.
 
-The calculator can run inside a Jupyter notebook or as a local browser app. Its
-coefficients use exact integer and rational arithmetic.
+The app uses exact algebra internally. You can evaluate expressions step by
+step without setting up Python or writing code.
 
-## Install the complete coding environment
+## Install and run
 
-No existing Python installation is required. The online installer downloads a
-private, managed Python runtime, Birdtracks, JupyterLab, and all required
-dependencies. It does not modify the computer's system Python or require Git
-or a compiler.
+The installers include a private Python runtime and every dependency. They do
+not require an existing Python installation, Git, or a compiler, and they do
+not modify the system Python.
 
-- **Windows:** download
-  [`install-birdtracks.cmd`](https://github.com/BernieTelalovic/birdtracks/releases/latest/download/install-birdtracks.cmd)
-  and double-click it. When it finishes, open the **Birdtracks Lab** desktop
-  shortcut.
-- **Linux:** download
-  [`install-birdtracks.sh`](https://github.com/BernieTelalovic/birdtracks/releases/latest/download/install-birdtracks.sh),
-  then run:
+### Windows
 
-  ```console
-  chmod +x install-birdtracks.sh
-  ./install-birdtracks.sh
-  ```
+1. Download
+   [`install-birdtracks.cmd`](https://github.com/BernieTelalovic/birdtracks/releases/latest/download/install-birdtracks.cmd).
+2. Double-click the downloaded file and wait for installation to finish.
+3. Open **Birdtracks Whiteboard** from the Start menu.
 
-  Open **Birdtracks Lab** from the applications menu when installation
-  finishes.
+The installer associates `.whiteboard` files with the app, so saved boards can
+also be opened by double-clicking them. Windows may display a SmartScreen
+warning until signed releases are available. Choose **More info**, confirm the
+file came from this repository's official Releases page, and choose **Run
+anyway**.
 
-Birdtracks Lab opens JupyterLab in the browser. Notebooks have the complete
-Python API available, including `birdtracks.create()` for the canvas. An
-internet connection is required during installation, but not for normal use.
-Running a newer release's installer upgrades the isolated environment.
+### Linux
 
-In Birdtracks Lab, create a Python notebook and start with:
+Download
+[`install-birdtracks.sh`](https://github.com/BernieTelalovic/birdtracks/releases/latest/download/install-birdtracks.sh),
+then run:
+
+```console
+chmod +x install-birdtracks.sh
+./install-birdtracks.sh
+```
+
+Open **Birdtracks Whiteboard** from the application menu. The installer also
+registers `.whiteboard` files with the desktop, so they can be opened from the
+file manager.
+
+An internet connection is required during installation but not for ordinary
+use. Running a newer release's installer upgrades the managed installation.
+
+## Start a whiteboard
+
+Launch **Birdtracks Whiteboard** without a file to create an untitled board.
+To open a board from a terminal, pass its path:
+
+```console
+birdtracks-whiteboard my-notes.whiteboard
+```
+
+Inside the app:
+
+- Type ordinary LaTeX-style mathematics directly on a line.
+- Type `\birdtracks` to insert an interactive projector.
+- Type `\pair` to insert an interactive Young-diagram pair.
+- Press `Enter` to create a new line.
+- Press `Shift+Enter` to evaluate an expression exactly.
+- Press `Shift+Backspace` to restore the source behind a generated result.
+- Use **Save** to write the board to a `.whiteboard` file and **Load** to open
+  another board.
+
+The **Export to LaTeX** button remains visible but is disabled for the 0.2.0
+release.
+
+See the [Birdtracks Whiteboard user manual](src/birdtracks/projectors/whiteboard/README.md)
+for every source command, keyboard shortcut, toolbar action, projector
+interaction, and Young-diagram interaction.
+
+## Whiteboard expressions
+
+Use `A := expression` or `A \def expression` to give an expression a name.
+Later lines can use that name. Start a line with `&` to continue the preceding
+logical line.
+
+Projector expressions support ordered products, grouped expressions, exact
+coefficients, and traces such as `\tr A` or `\tr(A + B)`. Pair expressions use
+`\oplus` for direct sums and `\otimes` for ordered tensor products. For example,
+`2_4\pair` gives an embedded pair coefficient 2 with `N₀ = 4`.
+
+Evaluating a projector expression applies automatic identities and exposes
+interactive result terms. Operators can then be expanded manually to build a
+calculation line by line. Evaluating a pair expression reveals its automatic
+representation calculation steps.
+
+## Development installation
+
+This is optional. Most whiteboard users should use the Windows or Linux
+installer above. From a repository checkout, developers can run:
+
+```console
+python -m pip install -e '.[app]'
+birdtracks-whiteboard
+```
+
+## Advanced computation
+
+The Python API and Birdtracks Lab are intended for larger calculations,
+automation, notebooks, and direct access to exact algebraic objects. They are
+secondary to the whiteboard app and are not needed for ordinary interactive
+work.
+
+The standard installer also provides **Birdtracks Lab**. Open it from the
+desktop or application menu, create a Python notebook, and import Birdtracks:
 
 ```python
 import birdtracks as bt
 
-canvas = bt.create()
+canvas = bt.create(session="my-equation")
 canvas
 ```
 
-## Download the canvas-only app
-
-If only the visual canvas is needed, download the self-contained app from the
-project's GitHub Releases page:
-
-- **Windows:** download
-  [`Birdtracks.exe`](https://github.com/BernieTelalovic/birdtracks/releases/latest/download/Birdtracks.exe)
-  and double-click it.
-- **Linux:** download
-  [`Birdtracks`](https://github.com/BernieTelalovic/birdtracks/releases/latest/download/Birdtracks),
-  make it executable, and open it:
-
-  ```console
-  chmod +x Birdtracks
-  ./Birdtracks
-  ```
-
-The app starts a private server on your own computer and opens the calculator
-in the default browser. Closing the terminal or stopping the Birdtracks process
-shuts it down. Saved expressions are placed in an `expressions` folder beside
-the directory from which Birdtracks was launched.
-
-Windows may show a SmartScreen warning until signed release binaries are
-available. Choose **More info**, verify that the file came from this project's
-official Releases page, and then choose **Run anyway**.
-
-## Installation
-
-This section is only for users who already maintain their own Python
-environment and for developers. Users of either installer above can skip it.
-
-Install the notebook support with:
+Install only the jupyter notebook support in an existing environment with:
 
 ```console
 python -m pip install -e '.[notebook]'
 ```
 
-Install the complete JupyterLab coding environment with:
+Install the complete coding environment and launch JupyterLab with:
 
 ```console
 python -m pip install -e '.[coding]'
 birdtracks-lab
 ```
 
-To launch the calculator as a browser app from the command line, install the
-application extras instead:
-
-```console
-python -m pip install -e '.[app]'
-```
-
-## Launching the calculator
-
-In a notebook:
-
-```python
-import birdtracks as bt
-
-canvas = bt.create(session="my-equation")
-canvas
-```
-
-From a terminal, run:
-
-```console
-python -c "import birdtracks as bt; bt.create()"
-```
-
-This starts the complete calculator in your default browser. Press **Save** to
-choose the expression filename. Server output is suppressed by default; use
-`bt.create(debug=True)` when you want rendering errors and tracebacks to be
-shown.
-
-## Create mode
-
-Create mode builds a sum of projectors:
-
-- Add a line with either **+** control below the bottom line.
-- Add a symmetriser by selecting **S**, or by double-clicking between two
-  lines.
-- Add an antisymmetriser by selecting **A**, or by double-clicking an existing
-  symmetriser.
-- Drag lines and operators to rearrange the diagram.
-- Right-click a line or operator to delete it.
-- Right-click a projector prefactor to delete that complete projector term.
-- Add another projector with the **+** or **−** toolbar control, or the
-  corresponding keyboard key.
-- Hold Ctrl to reveal a projector's multiply control. Enter an exact fraction,
-  use **/** to switch between numerator and denominator, and press Enter or
-  click outside the editor to apply it.
-
-## Evaluate mode
-
-Evaluate mode manipulates the constructed expression while preserving exact
-algebraic values:
-
-- Double-click an S or A operator to expand it.
-- Hover over an operator's top or bottom line and select the exposed tear icon
-  to apply its recursive expansion identity.
-- Drag operators and free lines vertically through equivalent arrangements.
-  Reordering an antisymmetriser's ports updates the projector sign.
-- Toggle **tr** to enclose every equation line in trace brackets and display
-  the resulting polynomial in the symbolic dimension `N`.
-- Hold Ctrl to reveal the undo control for an individual projector.
-- Use the upper-right undo control to remove the latest equation line.
-
-All terms in a traced sum should represent operators on the same domain size.
-For example, a projector on three lines and one on four lines are otherwise
-traced independently and their resulting polynomials are simply added.
-
-## Saving and loading expressions
-
-A bare session name is saved relative to the directory where Python was
-started. Birdtracks creates an `expressions` subdirectory and appends
-`.canvas.json` automatically:
-
-```text
-expressions/my-equation.canvas.json
-```
-
-An explicit path may point anywhere instead. Saved JSON contains the canvas
-state and equation history in a readable, versioned format.
-
-Reload the exact expression represented by the final saved equation line with:
-
-```python
-import birdtracks as bt
-
-expression = bt.load("my-equation")
-```
-
-Reopen the complete saved canvas with:
-
-```python
-canvas = bt.create(session="my-equation")
-```
-
-## Why simplify manually?
-
-Manual expansion and simplification can substantially reduce the intermediate
-work needed for traces and projector products. It is also useful for checking
-identities visually and building intuition before handing an expression to an
-automatic solver:
+The Python API exposes exact projector products, canonicalization, collapse,
+and symbolic traces:
 
 ```python
 collapsed = expression.collapse()
@@ -194,10 +137,14 @@ trace = collapsed.trace()
 product = expression * expression
 ```
 
-The longer-term goal is automatic simplification of birdtrack expressions into
-permutation sums for tasks such as projector normalization and orthogonality
-checks. Bug reports, especially examples producing incorrect algebraic
-results, are very welcome.
+Saved calculator sessions use versioned `.canvas.json` sidecars. Reload the
+final exact expression with `bt.load("my-equation")`, or reopen its complete
+interactive history with `bt.create(session="my-equation")`.
+
+Architecture and mathematical conventions are documented in
+[`docs/`](docs/), including the [notation](docs/notation.md),
+[calculator architecture](docs/calculator-app.md), and
+[Young-diagram integration](docs/pair-multiplication.md).
 
 ## License
 
