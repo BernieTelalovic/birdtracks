@@ -1,5 +1,7 @@
 """Exact computations for permutations and birdtrack operators."""
 
+from typing import Any
+
 from .linear_combinations import (
     CoefficientPrecisionWarning,
     DimensionPolynomial,
@@ -17,10 +19,15 @@ from .permutations import (
     multiply_many,
     set_display_notation,
 )
+from .symbolic import Polynomial, SymbolicCoefficient, parse_symbolic
 from .projectors import (
     AlgebraicIdentity,
     ANTISYMMETRISER_RECURSION,
     Antisymmetriser,
+    DiagramAlgebraBackend,
+    DiagramValueCodec,
+    DefinitionKind,
+    DefinitionLine,
     Connection,
     IDENTITIES,
     DetangleAction,
@@ -34,16 +41,32 @@ from .projectors import (
     SAME_TYPE_NESTED_ABSORPTION,
     NodePort,
     Projector,
+    ProjectorAlgebraBackend,
     ProjectorCanvasSession,
     ProjectorConfiguration,
     ProjectorNode,
     ProjectorSum,
+    ProjectorValueCodec,
     PermutationNode,
     Symmetriser,
     SATarget,
     StrandPath,
+    TypedWhiteboardSidecar,
+    ValueCodec,
+    WhiteboardSidecar,
+    WhiteboardStores,
     collapse_resolved_sa_pair,
     create,
+    diagram_backend,
+    diagram_codec,
+    projector_codec,
+    projector_backend,
+    resolve_sidecar_path,
+    to_latex,
+    whiteboard_latex,
+    write_sidecar,
+    write_typed_sidecar,
+    whiteboard,
     SYMMETRISER_RECURSION,
     beam_search_detangle,
     detangle_game,
@@ -74,9 +97,14 @@ from .projectors import (
 )
 
 __all__ = [
+    "Pair",
     "AlgebraicIdentity",
     "ANTISYMMETRISER_RECURSION",
     "Antisymmetriser",
+    "DiagramAlgebraBackend",
+    "DiagramValueCodec",
+    "DefinitionKind",
+    "DefinitionLine",
     "CoefficientPrecisionWarning",
     "Connection",
     "DimensionPolynomial",
@@ -94,17 +122,36 @@ __all__ = [
     "Permutation",
     "PermutationSum",
     "PolynomialPermutationSum",
+    "Polynomial",
+    "SymbolicCoefficient",
+    "parse_symbolic",
     "Projector",
+    "ProjectorAlgebraBackend",
     "ProjectorCanvasSession",
     "ProjectorConfiguration",
     "ProjectorNode",
     "ProjectorSum",
+    "ProjectorValueCodec",
     "PermutationNode",
     "Symmetriser",
     "SATarget",
     "StrandPath",
+    "ValueCodec",
+    "WhiteboardSidecar",
+    "WhiteboardStores",
+    "TypedWhiteboardSidecar",
+    "diagram_backend",
+    "diagram_codec",
     "collapse_resolved_sa_pair",
     "create",
+    "whiteboard",
+    "to_latex",
+    "whiteboard_latex",
+    "projector_codec",
+    "projector_backend",
+    "resolve_sidecar_path",
+    "write_sidecar",
+    "write_typed_sidecar",
     "SYMMETRISER_RECURSION",
     "beam_search_detangle",
     "compose",
@@ -141,3 +188,16 @@ __all__ = [
     "sa_pair_ready_to_collapse",
     "resolver_training_game",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Load optional representation classes only when requested."""
+    if name == "Pair":
+        from .representations import pair_backend
+
+        return pair_backend().Pair
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | {"Pair"})

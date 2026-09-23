@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fractions import Fraction
 
+from birdtracks.linear_combinations import PermutationSum
 from birdtracks.permutations import Permutation
 
 from .permutation_node import PermutationNode
@@ -20,8 +21,33 @@ def expand_node(projector: Projector, node_index: int) -> ProjectorSum:
     # Reconstructing the ProjectorSum here deliberately canonicalizes topology,
     # adds exact prefactors, and removes any resulting zero coefficient.
     return ProjectorSum(
-        (_replace_trivial_sa_nodes(term).detangle(), coefficient)
+        (
+            _inherit_directions(
+                projector,
+                _replace_trivial_sa_nodes(term).detangle(),
+            ),
+            coefficient,
+        )
         for term, coefficient in absorbed
+    )
+
+
+def _inherit_directions(source: Projector, value: Projector) -> Projector:
+    """Restore the source boundary directions on a derived expansion term."""
+    if (
+        value.in_direction == source.in_direction
+        and value.out_direction == source.out_direction
+    ):
+        return value
+    return Projector(
+        value.nodes,
+        value.connections,
+        coefficient=value.coefficient,
+        input_boundary=value.input_boundary,
+        output_boundary=value.output_boundary,
+        port_orders=value.port_orders if value.port_orders_are_explicit else None,
+        in_direction=source.in_direction,
+        out_direction=source.out_direction,
     )
 
 
@@ -47,6 +73,8 @@ def _full_node_expansion_terms(
             input_boundary=projector.input_boundary,
             output_boundary=projector.output_boundary,
             port_orders=projector.port_orders,
+            in_direction=projector.in_direction,
+            out_direction=projector.out_direction,
         )
         coefficient = (
             projector.canonical_coefficient
@@ -96,6 +124,8 @@ def permute_node_ports(
         input_boundary=projector.input_boundary,
         output_boundary=projector.output_boundary,
         port_orders=orders,
+        in_direction=projector.in_direction,
+        out_direction=projector.out_direction,
     )
     result = unit * (
         projector.canonical_coefficient / unit.canonical_coefficient
@@ -226,6 +256,8 @@ def _replace_trivial_sa_nodes(projector: Projector) -> Projector:
         input_boundary=projector.input_boundary,
         output_boundary=projector.output_boundary,
         port_orders=projector.port_orders,
+        in_direction=projector.in_direction,
+        out_direction=projector.out_direction,
     )
     return unit * (
         projector.canonical_coefficient / unit.canonical_coefficient
@@ -331,6 +363,8 @@ def _substitute_node(
         input_boundary=input_boundary,
         output_boundary=output_boundary,
         port_orders=orders,
+        in_direction=projector.in_direction,
+        out_direction=projector.out_direction,
     )
 
 
@@ -447,6 +481,8 @@ def _contract_permutation_node(
             label: shifted(port) for label, port in output_boundary.items()
         },
         port_orders=remaining_orders,
+        in_direction=projector.in_direction,
+        out_direction=projector.out_direction,
     )
     return unit * (
         projector.canonical_coefficient / unit.canonical_coefficient
@@ -500,6 +536,186 @@ def remove_multiply_connected_s_a_terms(value: ProjectorSum) -> ProjectorSum:
         (projector, coefficient)
         for projector, coefficient in value
         if MULTIPLY_CONNECTED_S_A_ANNIHILATION.apply(projector) is None
+    )
+
+
+def collect_fully_expanded_permutations(value: ProjectorSum) -> ProjectorSum:
+    """Collect alike terms after removing presentation-only identity wiring.
+
+    Expansion retains each replacement node so that a partially expanded
+    diagram remains editable.  An identity permutation may also anchor a free
+    boundary strand while its other strands merely connect to a surviving
+    S/A.  Split that node into its free strands and bypass the rest, so equal
+    projectors do not retain different identity-wiring presentations.
+
+    Once a term contains only permutation nodes, its one boundary permutation
+    is its complete operator.  Replacing it with a single canonical
+    permutation node lets :class:`ProjectorSum` collect equal terms while
+    retaining exact scalar prefactors.
+
+    Traced permutation diagrams are deliberately retained because their
+    collapse has symbolic dimension factors rather than a single rational
+    boundary permutation.
+    """
+    if not isinstance(value, ProjectorSum):
+        raise TypeError("value must be a ProjectorSum")
+
+    terms: list[tuple[Projector, Fraction]] = []
+    for projector, coefficient in value:
+        projector = _normalize_identity_permutation_anchors(projector)
+        if not projector.nodes:
+            terms.append((projector, coefficient))
+            continue
+        if not all(isinstance(node, PermutationNode) for node in projector.nodes):
+            terms.append((projector, coefficient))
+            continue
+        collapsed = projector.collapse()
+        if not isinstance(collapsed, PermutationSum) or len(collapsed) != 1:
+            terms.append((projector, coefficient))
+            continue
+        ((permutation, scalar),) = tuple(collapsed)
+        canonical = Projector(
+            [PermutationNode(permutation, support=projector.support)],
+            in_direction=projector.in_direction,
+            out_direction=projector.out_direction,
+        )
+        terms.append((canonical, coefficient * scalar))
+    return _collect_equivalent_mixed_projectors(ProjectorSum(terms))
+
+
+def _collect_equivalent_mixed_projectors(value: ProjectorSum) -> ProjectorSum:
+    """Collect equal S/A terms whose permutation wiring has been rearranged.
+
+    Projector graph canonicalization deliberately keeps boundary labels fixed.
+    A permutation can nevertheless be moved through a symmetriser or
+    antisymmetriser, giving equal operators with distinct boundary wiring.
+    After structural collection, compare the exact collapsed value of mixed
+    S/A-permutation terms.  Their graph shapes need not agree: moving a
+    permutation through an S/A can change both its support and its number of
+    explicit connections.
+    """
+    mixed: list[tuple[Projector, Fraction]] = []
+    terms: list[tuple[Projector, Fraction]] = []
+    for projector, coefficient in value:
+        if any(isinstance(node, PermutationNode) for node in projector.nodes) and any(
+        isinstance(node, (Symmetriser, Antisymmetriser))
+        for node in projector.nodes
+        ):
+            mixed.append((projector, coefficient))
+        else:
+            terms.append((projector, coefficient))
+    if len(mixed) < 2:
+        return value
+
+    equivalent: dict[object, tuple[Projector, Fraction]] = {}
+    for projector, coefficient in mixed:
+        key = projector.collapse()
+        representative, previous = equivalent.get(key, (projector, Fraction()))
+        equivalent[key] = representative, previous + coefficient
+    terms.extend(
+        (projector, coefficient)
+        for projector, coefficient in equivalent.values()
+        if coefficient
+    )
+    return ProjectorSum(terms)
+
+
+def _normalize_identity_permutation_anchors(projector: Projector) -> Projector:
+    """Bypass non-free strands of identity permutation nodes until stable."""
+    result = projector
+    while True:
+        for index, node in enumerate(result.nodes):
+            if not isinstance(node, PermutationNode) or node.permutation:
+                continue
+            split = _split_identity_permutation_anchor(result, index)
+            if split is not None:
+                result = split
+                break
+        else:
+            return result
+
+
+def _split_identity_permutation_anchor(
+    projector: Projector, node_index: int
+) -> Projector | None:
+    """Retain only free identity strands on one partially connected node."""
+    node = projector.nodes[node_index]
+    if not isinstance(node, PermutationNode) or node.permutation:
+        return None
+
+    incoming = {
+        connection.target.label: connection
+        for connection in projector.connections
+        if connection.target.node == node_index
+    }
+    outgoing = {
+        connection.source.label: connection
+        for connection in projector.connections
+        if connection.source.node == node_index
+    }
+    input_at = {
+        port.label: boundary_label
+        for boundary_label, port in projector.input_boundary.items()
+        if port.node == node_index
+    }
+    output_at = {
+        port.label: boundary_label
+        for boundary_label, port in projector.output_boundary.items()
+        if port.node == node_index
+    }
+    free = frozenset(label for label in node.support if label in input_at and label in output_at)
+    if not free or free == node.support:
+        return None
+
+    connections = [
+        connection
+        for connection in projector.connections
+        if connection.source.node != node_index
+        and connection.target.node != node_index
+    ]
+    input_boundary = dict(projector.input_boundary)
+    output_boundary = dict(projector.output_boundary)
+    for label in node.support - free:
+        before = incoming.get(label)
+        after = outgoing.get(label)
+        if before is not None and after is not None:
+            connections.append(Connection(before.source, after.target))
+        elif label in input_at and after is not None:
+            input_boundary[input_at[label]] = after.target
+        elif before is not None and label in output_at:
+            output_boundary[output_at[label]] = before.source
+        else:
+            return None
+
+    orders = {
+        index: {
+            "input": values["input"],
+            "output": values["output"],
+        }
+        for index, values in projector.port_orders.items()
+    }
+    orders[node_index] = {
+        side: tuple(label for label in orders[node_index][side] if label in free)
+        for side in ("input", "output")
+    }
+    nodes = list(projector.nodes)
+    nodes[node_index] = PermutationNode(
+        Permutation.identity(),
+        support=free,
+        in_direction=node.in_direction,
+        out_direction=node.out_direction,
+    )
+    unit = Projector(
+        nodes,
+        connections,
+        input_boundary=input_boundary,
+        output_boundary=output_boundary,
+        port_orders=orders,
+        in_direction=projector.in_direction,
+        out_direction=projector.out_direction,
+    )
+    return unit * (
+        projector.canonical_coefficient / unit.canonical_coefficient
     )
 
 
@@ -588,6 +804,7 @@ __all__ = [
     "expand_node",
     "permute_node_ports",
     "recursive_expand_node",
+    "collect_fully_expanded_permutations",
     "remove_multiply_connected_s_a_terms",
     "simplify_step",
 ]

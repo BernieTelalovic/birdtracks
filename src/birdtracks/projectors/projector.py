@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from os import PathLike
 from types import MappingProxyType
+from typing import Literal
 
 from birdtracks.linear_combinations.coefficients import require_coefficient
 from birdtracks.linear_combinations import PermutationSum, PolynomialPermutationSum
@@ -16,6 +17,7 @@ from .permutation_node import PermutationNode
 from .symmetrisers import Antisymmetriser, Symmetriser
 
 ProjectorNode = Symmetriser | Antisymmetriser | PermutationNode
+Direction = Literal["left", "right", "neutral"]
 
 
 @dataclass(frozen=True, order=True)
@@ -56,6 +58,8 @@ class Projector:
         "_connections",
         "_input_boundary",
         "_output_boundary",
+        "_in_direction",
+        "_out_direction",
         "_port_orders",
         "_port_orders_explicit",
         "_coefficient",
@@ -74,6 +78,8 @@ class Projector:
         input_boundary: Mapping[int, NodePort] | None = None,
         output_boundary: Mapping[int, NodePort] | None = None,
         port_orders: Mapping[int, Mapping[str, Iterable[int]]] | None = None,
+        in_direction: Direction = "neutral",
+        out_direction: Direction = "neutral",
     ) -> None:
         try:
             canonical_nodes = tuple(nodes)
@@ -89,6 +95,9 @@ class Projector:
             )
 
         self._nodes = canonical_nodes
+        _validate_directions(in_direction, out_direction)
+        self._in_direction = in_direction
+        self._out_direction = out_direction
         self._layers = _make_layers(canonical_nodes)
         supplied = (
             _automatic_connections(canonical_nodes)
@@ -141,9 +150,12 @@ class Projector:
         self._canonical_value_coefficient = (
             self._canonical_coefficient * orientation_sign
         )
-        self._hash = hash(
-            (self._canonical_value_coefficient, self._canonical_topology)
-        )
+        self._hash = hash((
+            self._canonical_value_coefficient,
+            self._canonical_topology,
+            self._in_direction,
+            self._out_direction,
+        ))
 
     @property
     def coefficient(self) -> Fraction:
@@ -163,6 +175,16 @@ class Projector:
     @property
     def nodes(self) -> tuple[ProjectorNode, ...]:
         return self._nodes
+
+    @property
+    def in_direction(self) -> Direction:
+        """Side on which this projector receives its input lines."""
+        return self._in_direction
+
+    @property
+    def out_direction(self) -> Direction:
+        """Side on which this projector emits its output lines."""
+        return self._out_direction
 
     @property
     def layers(self) -> tuple[tuple[int, ...], ...]:
@@ -349,6 +371,8 @@ class Projector:
             port_orders=(
                 self._port_orders if self._port_orders_explicit else None
             ),
+            in_direction="neutral",
+            out_direction="neutral",
         )
 
     def __mul__(self, other: object) -> Projector:
@@ -365,6 +389,8 @@ class Projector:
                 input_boundary=self._input_boundary,
                 output_boundary=self._output_boundary,
                 port_orders=self._port_orders if self._port_orders_explicit else None,
+                in_direction=self._in_direction,
+                out_direction=self._out_direction,
             )
         return NotImplemented
 
@@ -427,6 +453,8 @@ class Projector:
             isinstance(other, Projector)
             and self._canonical_value_coefficient
             == other._canonical_value_coefficient
+            and self._in_direction == other._in_direction
+            and self._out_direction == other._out_direction
             and self._canonical_topology == other._canonical_topology
         )
 
@@ -446,7 +474,9 @@ class Projector:
             f"Projector({list(self._nodes)!r}, "
             f"connections={list(self._connections)!r}{coefficient}, "
             f"input_boundary={dict(self._input_boundary)!r}, "
-            f"output_boundary={dict(self._output_boundary)!r}{port_orders})"
+            f"output_boundary={dict(self._output_boundary)!r}, "
+            f"in_direction={self._in_direction!r}, "
+            f"out_direction={self._out_direction!r}{port_orders})"
         )
 
 
@@ -469,6 +499,8 @@ def _make_layers(nodes: tuple[ProjectorNode, ...]) -> tuple[tuple[int, ...], ...
 def _structurally_equal(left: Projector, right: Projector) -> bool:
     return (
         left.canonical_coefficient == right.canonical_coefficient
+        and left.in_direction == right.in_direction
+        and left.out_direction == right.out_direction
         and left.nodes == right.nodes
         and left.connections == right.connections
         and left.input_boundary == right.input_boundary
@@ -478,6 +510,7 @@ def _structurally_equal(left: Projector, right: Projector) -> bool:
 
 def _compose_projectors(left: Projector, right: Projector) -> Projector:
     """Join ``left`` to ``right``; absent labels pass through unchanged."""
+    _validate_connection_directions(left, right)
     offset = len(left.nodes)
 
     def shifted(port: NodePort) -> NodePort:
@@ -532,7 +565,38 @@ def _compose_projectors(left: Projector, right: Projector) -> Projector:
             if left.port_orders_are_explicit or right.port_orders_are_explicit
             else None
         ),
+        in_direction=right.in_direction,
+        out_direction=left.out_direction,
     )
+
+
+def _validate_directions(in_direction: object, out_direction: object) -> None:
+    if in_direction not in {"left", "right", "neutral"}:
+        raise ValueError("in_direction must be 'left', 'right', or 'neutral'")
+    if out_direction not in {"left", "right", "neutral"}:
+        raise ValueError("out_direction must be 'left', 'right', or 'neutral'")
+    if (in_direction, out_direction) not in {
+        ("left", "right"),
+        ("right", "left"),
+        ("neutral", "neutral"),
+    }:
+        raise ValueError("in_direction and out_direction must be paired")
+
+
+def _validate_connection_directions(left: Projector, right: Projector) -> None:
+    """Validate the right-to-left connection made by ``left * right``.
+
+    ``right`` supplies the source on its left boundary and ``left`` receives
+    it on its right boundary. Neutral boundaries retain the legacy behaviour.
+    """
+    if (right.out_direction, left.in_direction) not in {
+        ("neutral", "neutral"),
+        ("left", "left"),
+        ("right", "right"),
+    }:
+        raise ValueError(
+            "projector composition requires matching output and input sides"
+        )
 
 
 def _projector_from_permutation(permutation: Permutation) -> Projector:
@@ -546,7 +610,12 @@ def _horizontal_reflection(projector: Projector) -> Projector:
         return NodePort(last - port.node, port.label)
 
     nodes = tuple(
-        PermutationNode(node.permutation.inverse())
+        PermutationNode(
+            node.permutation.inverse(),
+            node.support,
+            in_direction=node.out_direction,
+            out_direction=node.in_direction,
+        )
         if isinstance(node, PermutationNode)
         else node
         for node in reversed(projector.nodes)
@@ -577,6 +646,8 @@ def _horizontal_reflection(projector: Projector) -> Projector:
             label: reflected_port(port)
             for label, port in projector.input_boundary.items()
         },
+        in_direction=projector.out_direction,
+        out_direction=projector.in_direction,
         port_orders=port_orders if projector.port_orders_are_explicit else None,
     )
 

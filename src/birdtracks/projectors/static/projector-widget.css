@@ -1,3 +1,223 @@
+.birdtracks-kind-toggle {
+  padding: 0.25rem 0.65rem;
+  white-space: nowrap;
+}
+
+.birdtracks-creator-toolbar .birdtracks-kind-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.65rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #eef2f6;
+  box-shadow: inset 0 1px 2px #0f172a0a;
+}
+.birdtracks-kind-toggle::after {
+  content: "";
+  width: 1.35rem;
+  height: 0.7rem;
+  border-radius: 999px;
+  background: radial-gradient(circle at 27% 50%, #475569 0 3px, transparent 3.5px), #cbd5e1;
+}
+.birdtracks-kind-toggle[aria-pressed="true"]::after {
+  background: radial-gradient(circle at 73% 50%, #0369a1 0 3px, transparent 3.5px), #bae6fd;
+}
+.birdtracks-creator-toolbar .birdtracks-kind-toggle:hover { border-color: #94a3b8; }
+.birdtracks-kind-toggle:focus-visible,
+.birdtracks-mode-selector .birdtracks-mode-button:focus-visible {
+  outline: 2px solid #0284c7;
+  outline-offset: 2px;
+}
+.birdtracks-mode-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid #d5dce5;
+  border-radius: 0.7rem;
+  background: #e9edf2;
+}
+.birdtracks-mode-selector .birdtracks-mode-button {
+  border: 1px solid transparent;
+  border-radius: 0.45rem;
+  background: transparent;
+  box-shadow: none;
+}
+.birdtracks-mode-selector .birdtracks-mode-button.selected {
+  border-color: #d5dce5;
+  background: white;
+  box-shadow: 0 1px 3px #0f172a14;
+}
+.birdtracks-mode-selector .birdtracks-mode-button.selected svg {
+  stroke: #0369a1;
+  color: #0369a1;
+}
+.birdtracks-mode-selector .birdtracks-mode-button:not(.selected):hover:not(:disabled) {
+  background: #f8fafc;
+}
+.birdtracks-mode-selector .birdtracks-mode-button:disabled { opacity: 0.35; cursor: default; }
+
+.birdtracks-kind-toggle svg {
+  display: block;
+  width: 3rem;
+  height: 2rem;
+  background: transparent;
+  border: 0;
+}
+
+.birdtracks-kind-toggle line,
+.birdtracks-kind-toggle rect {
+  stroke: #4f4f4f;
+  stroke-width: 1.5;
+}
+
+.birdtracks-kind-toggle .kind-pair-box { fill: white; }
+.birdtracks-kind-toggle .kind-pair-bullet { fill: #333; }
+.birdtracks-kind-toggle .kind-symmetriser { fill: #efefef; }
+.birdtracks-kind-toggle .kind-antisymmetriser { fill: #333; }
+
+.birdtracks-creator-toolbar button[hidden],
+.birdtracks-young-workspace[hidden],
+.birdtracks-young-coefficient-editor[hidden] {
+  display: none;
+}
+
+.birdtracks-young-workspace {
+  position: relative;
+  width: 100%;
+  padding: 1rem 0;
+  color: #17202a;
+}
+
+.birdtracks-calculator-app.birdtracks-young-active .birdtracks-young-workspace {
+  padding-block: 0;
+}
+
+.birdtracks-young-terms {
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+  gap: 0;
+  padding: 0;
+}
+
+.birdtracks-young-term {
+  flex: 0 0 auto;
+  border: 0;
+  background: white;
+  touch-action: none;
+  user-select: none;
+  cursor: crosshair;
+}
+
+.birdtracks-calculator-app.birdtracks-young-active {
+  border: 0;
+}
+
+.birdtracks-young-term.dragging { cursor: grabbing; }
+.birdtracks-young-axis { stroke: #94a3b8; stroke-dasharray: 3 5; }
+.birdtracks-young-grid { fill: #cbd5e1; pointer-events: none; }
+.birdtracks-young-box { fill: white; stroke: #17202a; stroke-width: 1.3; }
+.birdtracks-young-box.selected { fill: #e0f2fe; }
+.birdtracks-young-drag-target { fill: #bae6fd; fill-opacity: 0.6; stroke: #0284c7; stroke-dasharray: 4 2; pointer-events: none; }
+.birdtracks-young-drag-target.invalid { fill: #fecaca; stroke: #dc2626; }
+.birdtracks-young-antibox { fill: #17202a; pointer-events: none; }
+.birdtracks-young-label { fill: #17202a; font-family: Georgia, serif; font-size: 18px; pointer-events: none; }
+.birdtracks-young-label-bar { stroke: #17202a; stroke-width: 1.2; pointer-events: none; }
+.birdtracks-young-prefactor { font-family: Georgia, serif; font-size: 22px; }
+.birdtracks-young-prefactor-control { cursor: pointer; }
+.birdtracks-young-prefactor-control:hover .birdtracks-young-prefactor { fill: #0369a1; }
+.birdtracks-young-cell-target:not(.birdtracks-young-cell-target-hidden):hover { fill: #e0f2fe; fill-opacity: 0.5; }
+.birdtracks-young-direct-sum {
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin: 0 0.1em;
+  padding: 0;
+}
+.birdtracks-direct-sum-icon,
+.birdtracks-tensor-product-icon { display: block; width: 1em; height: 1em; }
+.birdtracks-tensor-product-icon circle,
+.birdtracks-tensor-product-icon line,
+.birdtracks-direct-sum-icon circle,
+.birdtracks-direct-sum-icon line { fill: none; stroke: currentColor; stroke-width: 1.1; }
+.birdtracks-young-zero { padding: 1rem; font-family: Georgia, serif; font-size: 1.5rem; }
+
+.birdtracks-young-coefficient-editor {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  gap: 0.6rem;
+  width: fit-content;
+  padding: 0.65rem;
+  margin: 0.6rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.5rem;
+  background: #f8fafc;
+  box-shadow: 0 3px 12px #0002;
+}
+
+.birdtracks-young-coefficient-editor label { display: grid; gap: 0.2rem; font-size: 0.8rem; }
+.birdtracks-young-coefficient-editor input { width: 7rem; padding: 0.25rem; }
+.birdtracks-young-coefficient-editor button { padding: 0.3rem 0.7rem; }
+
+/* Inputs occupy the glyph or cell they edit, with no detached dialog chrome. */
+.birdtracks-young-coefficient-editor {
+  inset: 0;
+  width: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+}
+.birdtracks-young-coefficient-editor label { font-size: 0; }
+.birdtracks-young-coefficient-editor label > span,
+.birdtracks-young-coefficient-editor button { display: none; }
+.birdtracks-young-coefficient-editor input {
+  position: absolute;
+  box-sizing: border-box;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: white;
+  color: #17202a;
+  font-family: Georgia, serif;
+  text-align: center;
+  pointer-events: auto;
+}
+.birdtracks-young-coefficient-editor input:focus { box-shadow: inset 0 -1px #93c5fd; }
+.birdtracks-young-coefficient-editor input[aria-invalid="true"] { box-shadow: inset 0 -1px #dc2626; }
+.birdtracks-local-fraction.birdtracks-inline-fraction {
+  inset: 0 !important;
+  transform: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+}
+.birdtracks-local-fraction.birdtracks-inline-fraction .birdtracks-multiplier-bar { display: none; }
+.birdtracks-local-fraction.birdtracks-inline-fraction input {
+  position: absolute;
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  outline: none;
+  border-radius: 0;
+  background: white;
+  text-align: center;
+  font-family: inherit;
+  pointer-events: auto;
+}
+
 .birdtracks-projector-widget svg {
   display: block;
   width: min(100%, 640px);
@@ -107,19 +327,11 @@
 
 .birdtracks-creator-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(4rem, 20rem) auto;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 0.5rem;
   width: 100%;
   margin-bottom: 0.5rem;
-}
-
-.birdtracks-canvas-status {
-  min-width: 0;
-  overflow-x: auto;
-  white-space: nowrap;
-  text-align: right;
-  font-size: 0.85rem;
 }
 
 .birdtracks-toolbar-tools {
@@ -143,11 +355,13 @@
   grid-column: 1;
   grid-row: 1;
   justify-content: flex-start;
+  flex-wrap: wrap;
 }
 
-.birdtracks-canvas-status {
+.birdtracks-toolbar-center {
   grid-column: 2;
   grid-row: 1;
+  justify-content: center;
 }
 
 .birdtracks-creator-toolbar button {
@@ -415,9 +629,15 @@
   overflow: visible;
 }
 
+.birdtracks-operator-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .birdtracks-operator-button svg {
   display: block;
-  width: 3rem;
+  width: 2.125rem;
   height: 2rem;
   background: transparent;
   border: 0;
@@ -491,6 +711,10 @@
   display: none;
 }
 
+.birdtracks-projector-embedded .birdtracks-level-guide {
+  display: none;
+}
+
 .birdtracks-creator-port.evaluate-order {
   cursor: ns-resize;
 }
@@ -540,7 +764,7 @@
 .birdtracks-line-hit {
   fill: none;
   stroke: transparent;
-  stroke-width: 12px;
+  stroke-width: 20px;
   vector-effect: non-scaling-stroke;
   pointer-events: stroke;
   cursor: context-menu;
@@ -619,6 +843,47 @@
   pointer-events: auto;
 }
 
+.birdtracks-direction-control {
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  transition: opacity 100ms ease-in-out;
+}
+
+.birdtracks-direction-control-hit {
+  fill: transparent;
+  pointer-events: none;
+}
+
+.birdtracks-direction-glyph {
+  fill: none;
+  stroke: #b8b8b8;
+  stroke-width: 0.25px;
+  stroke-linecap: round;
+  stroke-linejoin: miter;
+  pointer-events: none;
+}
+
+.birdtracks-direction-arrow {
+  fill: none;
+  stroke: #000;
+  stroke-width: var(--birdtracks-line-width);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.birdtracks-direction-control.ctrl-active,
+.ctrl-active .birdtracks-direction-control {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.ctrl-active .birdtracks-direction-control-hit {
+  pointer-events: all;
+}
+
 .birdtracks-level-guide {
   stroke: #868686;
   stroke-width: 0.5px;
@@ -650,8 +915,8 @@
 
 .birdtracks-coefficient-minus {
   stroke: var(--birdtracks-line);
-  stroke-width: var(--birdtracks-line-width);
-  stroke-linecap: round;
+  stroke-width: calc(var(--birdtracks-line-width) * 0.45);
+  stroke-linecap: butt;
   vector-effect: non-scaling-stroke;
 }
 
@@ -722,3 +987,34 @@
 .birdtracks-antisymmetriser {
   fill: var(--birdtracks-antisymmetriser);
 }
+
+.birdtracks-young-bracket {
+  display: block;
+  background: transparent;
+  border: 0;
+  overflow: visible;
+}
+.birdtracks-young-bracket path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.birdtracks-young-insertion-marker {
+  position: absolute;
+  height: 24px;
+  border-left: 2px solid #0284c7;
+  pointer-events: none;
+}
+.birdtracks-young-insertion-marker[hidden] { display: none; }
+.birdtracks-young-prefactor-control { cursor: grab; }
+.birdtracks-young-term.moving-term { opacity: 0.55; cursor: grabbing; }
+
+.birdtracks-pair-evaluation[hidden] { display: none; }
+.birdtracks-pair-evaluation { padding: 1rem 0; overflow-x: auto; }
+.birdtracks-pair-evaluation-row { display: flex; align-items: center; gap: 0.25rem; margin-bottom: 1rem; }
+.birdtracks-pair-equals { flex: 0 0 2rem; width: 2rem; text-align: center; font: 26px Georgia, serif; }
+.birdtracks-pair-next-step { display: block; background: transparent; border: 0; cursor: pointer; }
+.birdtracks-pair-next-step:hover { color: #0284c7; }
+.birdtracks-pair-evaluation .birdtracks-pair-evaluation-line { display: block; max-width: none; border: 0; background: transparent; color: #17202a; }
+.birdtracks-pair-evaluation-line [data-cell] > rect { pointer-events: all; }

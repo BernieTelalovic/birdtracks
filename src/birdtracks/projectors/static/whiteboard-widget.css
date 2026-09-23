@@ -1,0 +1,577 @@
+.birdtracks-whiteboard-section {
+  width: 100%;
+  margin: 0.75rem 0 1rem;
+  padding: 0.75rem 0.9rem;
+  box-sizing: border-box;
+  border: 1px solid var(--birdtracks-border, #d5dce5);
+  border-radius: 0.65rem;
+  background: var(--birdtracks-background, #fff);
+}
+
+.birdtracks-whiteboard-heading {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 1rem;
+  margin: -0.75rem 0 0.5rem;
+  padding: 0.75rem 0 0;
+  border-bottom: 1px solid var(--birdtracks-border, #d5dce5);
+  color: #475569;
+  background: var(--birdtracks-background, #fff);
+  font: 600 0.78rem/1.2 system-ui, sans-serif;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.birdtracks-whiteboard-toolbar {
+  position: relative;
+  z-index: 2;
+  background: var(--birdtracks-background, #fff);
+}
+
+.birdtracks-whiteboard-tabs {
+  align-self: flex-end;
+  display: flex;
+  min-width: 0;
+  margin-left: auto;
+  margin-bottom: -1px;
+  overflow-x: auto;
+}
+
+.birdtracks-whiteboard-tab {
+  min-width: 7rem;
+  max-width: 16rem;
+  height: 2.15rem;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-bottom-color: var(--birdtracks-border, #d5dce5);
+  border-radius: 0.45rem 0.45rem 0 0;
+  background: #eef2f6;
+  color: #475569;
+  font: 500 0.82rem/1.1 system-ui, sans-serif;
+  display: flex;
+  align-items: center;
+}
+
+.birdtracks-whiteboard-tab-select,
+.birdtracks-whiteboard-close-tab {
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.birdtracks-whiteboard-tab-select {
+  min-width: 0;
+  flex: 1;
+  padding: 0.35rem 0.25rem 0.35rem 0.7rem;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.birdtracks-whiteboard-close-tab {
+  width: 1.75rem;
+  flex: 0 0 1.75rem;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 1rem;
+}
+
+.birdtracks-whiteboard-close-tab:hover { background: #dbe2ea; }
+
+.birdtracks-whiteboard-tab + .birdtracks-whiteboard-tab {
+  margin-left: 0.2rem;
+}
+
+.birdtracks-whiteboard-tab.active {
+  border-bottom-color: var(--birdtracks-background, #fff);
+  background: var(--birdtracks-background, #fff);
+  color: #111827;
+}
+
+.birdtracks-whiteboard-tab .birdtracks-whiteboard-title {
+  width: min(16rem, 28vw);
+  min-width: 8rem;
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  background: var(--birdtracks-background, #fff);
+  padding: 0.35rem 0.7rem;
+}
+
+.birdtracks-whiteboard-add-tab {
+  min-width: 2.5rem;
+  width: 2.5rem;
+  padding-inline: 0;
+  text-align: center;
+  font-size: 1.15rem;
+  display: block;
+  cursor: pointer;
+}
+
+.birdtracks-whiteboard-title {
+  width: min(22rem, 40vw);
+  min-width: 8rem;
+  flex: 0 1 22rem;
+  margin: 0;
+  padding: 0.15rem 0.25rem;
+  border: 1px solid transparent;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: none;
+}
+
+.birdtracks-whiteboard-title::placeholder {
+  color: #64748b;
+  opacity: 1;
+}
+
+.birdtracks-whiteboard-title:focus {
+  border-color: #93c5fd;
+  outline: 2px solid #dbeafe;
+  background: #f8fbff;
+}
+
+.birdtracks-whiteboard-edit-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2.35rem;
+  margin: 0;
+  padding: 0;
+}
+
+.birdtracks-whiteboard-action {
+  min-height: 2rem;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.4rem;
+  background: #f8fafc;
+  color: #111827;
+  font: 500 0.82rem/1.1 system-ui, sans-serif;
+  letter-spacing: normal;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.birdtracks-whiteboard-action:hover { background: #eef2f6; }
+.birdtracks-latex-logo { font-family: serif; white-space: nowrap; }
+.birdtracks-latex-logo-a,
+.birdtracks-latex-logo-e { display: inline-block; font-size: 0.82em; line-height: 1; }
+.birdtracks-latex-logo-a { vertical-align: 0.18em; }
+.birdtracks-latex-logo-e { margin-left: -0.08em; vertical-align: -0.12em; }
+
+.birdtracks-whiteboard-paintbrush {
+  display: inline-grid;
+  width: 2.35rem;
+  height: 2.35rem;
+  place-items: center;
+  padding: 0.35rem;
+  border: 1px solid transparent;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: #111827;
+  cursor: pointer;
+}
+
+.birdtracks-whiteboard-paintbrush:hover,
+.birdtracks-whiteboard-paintbrush.selected {
+  border-color: #cbd5e1;
+  background: #eef2f6;
+}
+
+.birdtracks-whiteboard-paintbrush:focus-visible,
+.birdtracks-whiteboard-color-panel button:focus-visible,
+.birdtracks-whiteboard-color-panel input:focus-visible {
+  outline: 2px solid #0284c7;
+  outline-offset: 2px;
+}
+
+.birdtracks-whiteboard-paintbrush svg {
+  width: 1.6rem;
+  height: 1.6rem;
+  overflow: visible;
+}
+
+.birdtracks-whiteboard-paintbrush svg path {
+  stroke: currentColor;
+  stroke-linejoin: round;
+  stroke-width: 1.2;
+}
+
+.birdtracks-whiteboard-paintbrush svg .birdtracks-paintbrush-handle {
+  fill: #111827;
+  stroke: none;
+}
+
+.birdtracks-whiteboard-paintbrush svg .birdtracks-paintbrush-ferrule {
+  fill: #111827;
+  stroke: none;
+}
+
+.birdtracks-whiteboard-paintbrush svg .birdtracks-paintbrush-tip {
+  fill: #000;
+  stroke: none;
+}
+
+.birdtracks-whiteboard-section.paintbrush-active .birdtracks-line-hit,
+.birdtracks-whiteboard-section.paintbrush-active .birdtracks-line {
+  cursor: crosshair;
+}
+
+.birdtracks-whiteboard-color-panel {
+  position: absolute;
+  z-index: 8;
+  top: 2.7rem;
+  left: 0;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 0.45rem 0.65rem;
+  min-width: 18rem;
+  padding: 0.7rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.5rem;
+  background: #fff;
+  box-shadow: 0 4px 14px #0f172a26;
+  font: 0.78rem/1.2 system-ui, sans-serif;
+}
+
+.birdtracks-whiteboard-color-panel[hidden] { display: none; }
+.birdtracks-whiteboard-color-label { grid-column: 1 / -1; color: #475569; }
+.birdtracks-whiteboard-recent-colors {
+  display: flex;
+  min-height: 1.65rem;
+  gap: 0.3rem;
+}
+
+.birdtracks-whiteboard-recent-color {
+  width: 1.55rem;
+  height: 1.55rem;
+  padding: 0;
+  border: 1px solid #94a3b8;
+  border-radius: 0.25rem;
+  cursor: pointer;
+}
+
+.birdtracks-whiteboard-picker-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.3rem;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.birdtracks-whiteboard-color-wheel {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.birdtracks-whiteboard-rgb-fields {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: 0.4rem;
+}
+
+.birdtracks-whiteboard-rgb-fields label {
+  display: grid;
+  gap: 0.15rem;
+  color: #475569;
+  font-size: 0.7rem;
+}
+
+.birdtracks-whiteboard-rgb-fields input {
+  box-sizing: border-box;
+  width: 3.4rem;
+  padding: 0.25rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.25rem;
+}
+
+.birdtracks-whiteboard-blocks {
+  min-width: 0;
+  overflow-anchor: none;
+  display: grid;
+  gap: 0;
+  padding-bottom: calc(100vh - 5rem);
+}
+.birdtracks-whiteboard-block {
+  position: relative;
+  min-width: 0;
+  padding-bottom: 0.5em;
+  font-family: Georgia, serif;
+  font-size: 1.15rem;
+  line-height: 1.5;
+}
+.birdtracks-whiteboard-block.connected-line::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  bottom: 0;
+  left: -0.8ch;
+  width: 2px;
+  background: #9ca3af;
+  pointer-events: none;
+}
+.birdtracks-whiteboard-block:not(:first-child):not(.continuation) {
+  padding-top: 0.5em;
+}
+.birdtracks-whiteboard-block.connection-break {
+  padding-top: 1.25em;
+}
+.birdtracks-whiteboard-block.connection-break.connected-line::before {
+  top: 1.25em;
+}
+.birdtracks-whiteboard-caret {
+  position: absolute;
+  z-index: 5;
+  display: block;
+  width: 1px;
+  min-height: 22px;
+  background: #17202a;
+  opacity: 1;
+  pointer-events: none;
+}
+.birdtracks-whiteboard-caret[hidden] {
+  display: none !important;
+}
+.birdtracks-whiteboard-source,
+.birdtracks-whiteboard-rendered {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 1.5em;
+  padding: 0 0.55rem;
+  border: 1px solid transparent;
+  border-radius: 0.4rem;
+  color: #17202a;
+  font-family: Georgia, serif;
+  font-size: 1.15rem;
+  line-height: 1.5;
+}
+
+.birdtracks-whiteboard-source {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  resize: none;
+  overflow: hidden;
+  border-color: transparent;
+  outline: none;
+  background: transparent;
+  color: transparent;
+  caret-color: #17202a;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.birdtracks-whiteboard-source::selection {
+  background: rgba(148, 163, 184, 0.28);
+}
+
+.birdtracks-whiteboard-rendered {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  cursor: text;
+  white-space: pre-wrap;
+}
+.birdtracks-whiteboard-rendered > .birdtracks-pair-evaluation-line {
+  display: block;
+  max-width: none;
+}
+.birdtracks-whiteboard-rendered.pair-wrapping {
+  overflow-x: hidden;
+}
+.birdtracks-whiteboard-rendered math[display="inline"] {
+  vertical-align: middle;
+}
+.birdtracks-whiteboard-pair-operator {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin: 0 0.1em;
+  vertical-align: -0.12em;
+}
+.birdtracks-whiteboard-pair-operator svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.1;
+}
+.birdtracks-pair-evaluation-line [data-cell] > rect { pointer-events: all; }
+.birdtracks-whiteboard-rendered mfrac,
+.birdtracks-whiteboard-rendered mfrac > *,
+.birdtracks-whiteboard-rendered mfrac > * > * {
+  font-size: inherit;
+  math-depth: 0;
+}
+.birdtracks-whiteboard-embedded-projector {
+  position: relative;
+  z-index: 4;
+  display: inline-flex;
+  vertical-align: middle;
+  min-width: 0;
+  min-height: 4.5rem;
+  margin: 0 0.2em;
+  border-radius: 0.4rem;
+  background: var(--birdtracks-background, #fff);
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  pointer-events: auto;
+}
+.birdtracks-whiteboard-embedded-projector .birdtracks-canvas-viewport {
+  overflow: visible;
+}
+.birdtracks-whiteboard-embedded-pair .birdtracks-young-workspace {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.birdtracks-whiteboard-embedded-pair {
+  margin-inline: 0;
+}
+.birdtracks-whiteboard-embedded-projector .birdtracks-canvas-viewport > svg {
+  display: block;
+}
+.birdtracks-whiteboard-embedded-projector:not(.topology-editing) .birdtracks-add-line-control,
+.birdtracks-whiteboard-embedded-projector:not(.topology-editing) .birdtracks-line-control,
+.birdtracks-whiteboard-embedded-projector:not(.topology-editing) .birdtracks-line-control-hit,
+.birdtracks-whiteboard-embedded-projector:not(.topology-editing) .birdtracks-direction-control {
+  display: none;
+}
+.birdtracks-whiteboard-embedded-projector
+  .birdtracks-projector-widget,
+.birdtracks-whiteboard-embedded-projector
+  .birdtracks-creator-workspace,
+.birdtracks-whiteboard-embedded-projector
+  .birdtracks-canvas-viewport,
+.birdtracks-whiteboard-embedded-projector svg {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+.birdtracks-whiteboard-block.has-embedded-projector
+  .birdtracks-whiteboard-source {
+  pointer-events: auto;
+  z-index: 0;
+}
+.birdtracks-whiteboard-block.has-embedded-projector
+  .birdtracks-whiteboard-rendered {
+  pointer-events: none;
+}
+.birdtracks-whiteboard-block.calculation-read-only
+  .birdtracks-whiteboard-source {
+  pointer-events: none;
+}
+.birdtracks-whiteboard-block.calculation-read-only.calculation-step {
+  padding-left: 4ch;
+}
+.birdtracks-whiteboard-block.calculation-read-only.has-embedded-projector
+  .birdtracks-whiteboard-rendered {
+  pointer-events: auto;
+}
+.birdtracks-whiteboard-block.has-embedded-projector
+  .birdtracks-whiteboard-embedded-projector {
+  pointer-events: auto;
+}
+.birdtracks-whiteboard-rendered math[display="block"] {
+  display: block;
+  margin: 0;
+  font-size: 1.2em;
+}
+.birdtracks-whiteboard-rendered:focus-visible {
+  outline: none;
+}
+.birdtracks-whiteboard-calculation-pending {
+  position: relative;
+  z-index: 6;
+  color: #64748b;
+  font-size: 0.875rem;
+  font-style: italic;
+  padding: 0.2rem 0;
+  pointer-events: auto;
+}
+.birdtracks-whiteboard-calculation-pending.error {
+  color: #b91c1c;
+  font-style: normal;
+}
+.birdtracks-whiteboard-cancel-calculation {
+  background: none;
+  border: 0;
+  color: #475569;
+  cursor: pointer;
+  font: inherit;
+  margin-left: 0.6rem;
+  padding: 0;
+  text-decoration: underline;
+}
+.birdtracks-whiteboard-calculation-log {
+  color: #b91c1c;
+  margin-left: 0.6rem;
+  text-decoration: underline;
+}
+.birdtracks-whiteboard-cancel-calculation:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+.birdtracks-whiteboard-calculation-pending[hidden] {
+  display: none;
+}
+.birdtracks-whiteboard-rendered.error {
+  color: #17202a;
+}
+.birdtracks-whiteboard-invalid-source {
+  color: inherit;
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: #dc2626;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.18em;
+}
+.birdtracks-whiteboard-command-suggestion {
+  color: #94a3b8;
+  opacity: 0.85;
+}
+.birdtracks-whiteboard-definition-operator {
+  vertical-align: middle;
+  padding: 0;
+  margin: 0;
+}
+.birdtracks-whiteboard-block.calculation-rejected {
+  cursor: not-allowed;
+  animation: birdtracks-whiteboard-rejected 0.45s ease-in-out;
+}
+@keyframes birdtracks-whiteboard-rejected {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}

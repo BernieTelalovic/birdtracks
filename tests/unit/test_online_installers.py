@@ -28,3 +28,14 @@ def test_installers_bootstrap_without_system_python_or_git() -> None:
         assert "birdtracks[coding]" in contents
         assert "archive/refs/tags/" in contents
         assert "git+" not in contents
+
+
+def test_installers_register_the_whiteboard_with_its_document_icon() -> None:
+    linux = (PACKAGING / "install-birdtracks.sh.in").read_text(encoding="utf-8")
+    windows = (PACKAGING / "install-birdtracks.ps1.in").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'birdtracks-whiteboard-file.svg" "${ICON_ROOT}/scalable/apps/' in linux
+    assert "Birdtracks Whiteboard.lnk" in windows
+    assert '$WhiteboardShortcut.IconLocation = "$InstalledIcon,0"' in windows

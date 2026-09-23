@@ -30,9 +30,11 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install build dependencies
-        run: python -m pip install --upgrade pip ".[standalone]"
+        run: python -m pip install --upgrade pip ".[standalone,app]"
       - name: Build self-contained application
         run: python -m PyInstaller --clean --noconfirm packaging/birdtracks.spec
+      - name: Build whiteboard application
+        run: python -m PyInstaller --clean --noconfirm packaging/whiteboard.spec
       - name: Smoke-test bundled runtime
         shell: python
         run: |
@@ -42,17 +44,26 @@ jobs:
               check=True,
               timeout=120,
           )
+          subprocess.run(
+              [r"dist/Birdtracks Whiteboard${{ matrix.os == 'windows-latest' && '.exe' || '' }}", "--help"],
+              check=True,
+              timeout=30,
+          )
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.executable }}
+          path: |
+            ${{ matrix.executable }}
+            dist/Birdtracks Whiteboard${{ matrix.os == 'windows-latest' && '.exe' || '' }}
           if-no-files-found: error
 
       - name: Attach application to GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.executable }}
+          files: |
+            ${{ matrix.executable }}
+            dist/Birdtracks Whiteboard${{ matrix.os == 'windows-latest' && '.exe' || '' }}
 
   publish-installers:
     if: startsWith(github.ref, 'refs/tags/v')

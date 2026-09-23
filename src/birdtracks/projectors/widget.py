@@ -15,6 +15,11 @@ if TYPE_CHECKING:
     from .projector_sum import ProjectorSum
 
 
+# The whiteboard owns the prefactor. An embedded canvas must start its
+# diagram at the left edge so `2\birdtracks` reads like a normal term.
+_EMBEDDED_COEFFICIENT_SPACE = 0.0
+
+
 def _ordered_display_items(
     value: ProjectorSum,
     candidates: list[object],
@@ -46,6 +51,8 @@ def projector_sum_widget(
     detangler: str | PathLike[str] | object | None = None,
     prompt_for_session: bool = False,
     debug: bool = False,
+    pair_expression: dict[str, object] | None = None,
+    create_kind: str = "birdtracks",
     restored_lines: list[
         tuple[ProjectorSum, tuple[object, ...], tuple[int, ...]]
     ]
@@ -63,7 +70,6 @@ def projector_sum_widget(
 
     from .projector_sum import ProjectorSum
     from .simplification import remove_multiply_connected_s_a_terms
-
     learned_detangler = None
     automatic_detangler = detangler is None
     if detangler is None:
@@ -76,12 +82,13 @@ def projector_sum_widget(
         if isinstance(detangler, (str, PathLike)):
             try:
                 learned_detangler = LearnedDetangler.load(detangler)
-            except ValueError:
+            except (ImportError, ValueError):
                 if not automatic_detangler:
                     raise
-                # A source-tree checkpoint from an older visible-layout schema
-                # must not prevent the calculator from opening. It is ignored
-                # until retrained; explicit paths still fail loudly.
+                # An optional source-tree checkpoint must not prevent the
+                # calculator from opening when its training dependency is not
+                # installed or its visible-layout schema is stale. Explicit
+                # paths still fail loudly.
                 learned_detangler = None
         else:
             learned_detangler = detangler
@@ -100,6 +107,9 @@ def projector_sum_widget(
 
     group_id = uuid4().hex
     toolbar = _projector_toolbar_widget(group_id, mode)
+    if pair_expression is not None:
+        toolbar.pair_expression = pair_expression
+    toolbar.create_kind = create_kind
     if initial_editor is not None:
         initial_editor.group_id = group_id
     if restored_lines is not None:
@@ -112,6 +122,13 @@ def projector_sum_widget(
         _term_signs: tuple[int, ...]
         _saved_projector_sum: ProjectorSum
         _history: list[ProjectorSum]
+
+        @property
+        def current_pair_expression(self) -> object:
+            """Return the synchronized, ordered Young-diagram edit document."""
+            from ..young_diagrams import PairExpression
+
+            return PairExpression.from_state(self._toolbar.pair_expression)
 
         @property
         def projector_sum(self) -> ProjectorSum:
@@ -237,6 +254,8 @@ def projector_sum_widget(
             session,
             {
                 "mode": result.mode,
+                "create_kind": toolbar.create_kind,
+                "pair_expression": toolbar.pair_expression,
                 "lines": [
                     {
                         "terms": [
@@ -301,13 +320,22 @@ def projector_sum_widget(
         row.remove_class("birdtracks-traced-row")
 
     def update_canvas_children() -> None:
+        young = toolbar.create_kind == "young"
+        for row in result._rows:
+            row.layout.display = "none" if young else "flex"
         trailing = (
             (result._trace_result_row,)
             if result._trace_result_row is not None
             else ()
         )
         prompt = (session_prompt,) if prompt_for_session else ()
-        result.children = (toolbar, *result._rows, *trailing, *prompt, save_step)
+        result.children = (
+            toolbar,
+            *result._rows,
+            *trailing,
+            *prompt,
+            save_step,
+        )
 
     def append_row(
         value: ProjectorSum,
@@ -458,7 +486,10 @@ def projector_sum_widget(
                     )
                     for sign, item in zip(signs, editors, strict=True)
                 ]
-                from .simplification import remove_multiply_connected_s_a_terms
+                from .simplification import (
+                    collect_fully_expanded_permutations,
+                    remove_multiply_connected_s_a_terms,
+                )
 
                 expanded = _expand_from_canvas_request(
                     current_terms[selected], request
@@ -471,6 +502,7 @@ def projector_sum_widget(
                 next_value = remove_multiply_connected_s_a_terms(
                     ProjectorSum(next_terms)
                 )
+                next_value = collect_fully_expanded_permutations(next_value)
                 result._history.append(next_value)
                 append_row(
                     next_value,
@@ -710,6 +742,8 @@ def projector_sum_widget(
         result._saved_projector_sum = result._history[-1]
 
     def request_global_undo(change: dict[str, object]) -> None:
+        if toolbar.create_kind == "young":
+            return
         request = change["new"]
         if not request or not isinstance(request, dict):
             return
@@ -738,6 +772,7 @@ def projector_sum_widget(
             not request
             or not isinstance(request, dict)
             or result.mode != "create"
+            or toolbar.create_kind == "young"
         ):
             return
         requested_sign = request.get("sign")
@@ -810,9 +845,13 @@ def projector_sum_widget(
         if new_mode not in {"create", "evaluate"}:
             return
         result.mode = new_mode
+        if toolbar.create_kind == "young":
+            persist()
+            return
         if new_mode == "create":
             toolbar.trace_enabled = False
             for editor in result._term_editors:
+                editor.mode = "create"
                 apply_editor_zoom(editor)
             return
 
@@ -903,6 +942,14 @@ def projector_sum_widget(
 
     canvas_observe(toolbar, synchronize_canvas_mode, "mode")
 
+    def synchronize_create_kind(change: dict[str, object]) -> None:
+        if toolbar.create_kind == "young":
+            toolbar.trace_enabled = False
+        update_canvas_children()
+        persist()
+
+    canvas_observe(toolbar, synchronize_create_kind, "create_kind")
+    canvas_observe(toolbar, lambda change: persist(), "pair_expression")
     def save_current_step(_button: object) -> None:
         if prompt_for_session and session is None:
             session_prompt.layout.display = "flex"
@@ -910,6 +957,12 @@ def projector_sum_widget(
             save_step.description = "Choose name…"
             return
         save_step.description = "Saving…"
+        if toolbar.create_kind == "young":
+            persist()
+            save_step.description = "Saved"
+            for callback in tuple(result._save_callbacks):
+                callback(result)
+            return
         pending = {
             editor: int(editor.save_command) + 1
             for editor in result._term_editors
@@ -1095,6 +1148,8 @@ def projector_canvas_from_session(
         restored_lines=restored,
         detangler=detangler,
         debug=debug,
+        pair_expression=document.get("pair_expression"),
+        create_kind=document.get("create_kind", "birdtracks"),
     )
 
 
@@ -1107,8 +1162,13 @@ def projector_widget(
     mode: str = "evaluate",
     group_id: str = "",
     debug: bool = False,
+    embedded: bool = False,
 ) -> object:
-    """Create one projector term within the shared canvas."""
+    """Create one projector term within the shared canvas.
+
+    Embedded whiteboard editors reserve only a small internal coefficient slot;
+    their prefactor is supplied by the surrounding whiteboard expression.
+    """
     if mode not in {"create", "evaluate"}:
         raise ValueError("projector widget mode must be 'create' or 'evaluate'")
     try:
@@ -1134,6 +1194,8 @@ def projector_widget(
         free_levels = traitlets.Dict().tag(sync=True)
         boundary_orders = traitlets.Dict().tag(sync=True)
         effective_coefficient = traitlets.Dict().tag(sync=True)
+        line_colors = traitlets.Dict().tag(sync=True)
+        prefactor_owned = traitlets.Bool(False).tag(sync=True)
         mode = traitlets.Unicode("evaluate").tag(sync=True)
         widget_role = traitlets.Unicode("editor").tag(sync=True)
         group_id = traitlets.Unicode().tag(sync=True)
@@ -1145,7 +1207,9 @@ def projector_widget(
         term_delete_request = traitlets.Int(0).tag(sync=True)
         expand_node_request = traitlets.Dict().tag(sync=True)
         save_request = traitlets.Int(0).tag(sync=True)
-        save_snapshot = traitlets.Dict().tag(sync=True)
+        # Some widget frontends send their uninitialized snapshot as null.
+        # It is a no-op until a complete save snapshot arrives.
+        save_snapshot = traitlets.Dict(allow_none=True).tag(sync=True)
         save_command = traitlets.Int(0).tag(sync=True)
         undo_request = traitlets.Int(0).tag(sync=True)
         local_undo_command = traitlets.Int(0).tag(sync=True)
@@ -1227,9 +1291,14 @@ def projector_widget(
                 configuration_graph,
                 snapshot,
             )
+            snapshot_colors = snapshot.get("line_colors")
+            if isinstance(snapshot_colors, dict):
+                self.line_colors = deepcopy(snapshot_colors)
             self.saved_revision = int(snapshot["revision"])
 
     configured_style = load_projector_style(style)
+    if embedded:
+        configured_style["coefficient_space"] = _EMBEDDED_COEFFICIENT_SPACE
     saved_state = configuration.state() if configuration is not None else None
     if saved_state is None:
         graph = widget_graph(projector, configured_style)
@@ -1282,6 +1351,11 @@ def projector_widget(
         free_levels=initial_free_levels,
         boundary_orders=initial_boundary_orders,
         effective_coefficient=initial_coefficient,
+        line_colors=(
+            saved_state.get("line_colors", {})
+            if saved_state is not None
+            else {}
+        ),
         mode=mode,
         group_id=group_id,
         term_sign=str(graph.get("term_sign", "")),
@@ -1320,6 +1394,53 @@ def _projector_toolbar_widget(group_id: str, mode: str) -> object:
         trace_enabled = traitlets.Bool(False).tag(sync=True)
         add_term_request = traitlets.Dict().tag(sync=True)
         undo_request = traitlets.Dict().tag(sync=True)
+        create_kind = traitlets.Enum(["birdtracks", "young"], default_value="birdtracks").tag(sync=True)
+        pair_expression = traitlets.Dict().tag(sync=True)
+        pair_drawing_state = traitlets.Dict().tag(sync=True)
+        pair_evaluation = traitlets.Dict().tag(sync=True)
+
+        @traitlets.default("pair_expression")
+        def _default_pair_expression(self) -> dict[str, object]:
+            from ..young_diagrams import PairExpression
+
+            return PairExpression().state()
+
+        @traitlets.validate("pair_expression")
+        def _validate_pair_expression(self, proposal: dict[str, object]) -> dict[str, object]:
+            from ..young_diagrams import PairExpression
+
+            try:
+                return PairExpression.from_state(proposal["value"]).state()
+            except ValueError as exc:
+                raise traitlets.TraitError(str(exc)) from exc
+
+        @traitlets.observe("mode", "create_kind", "pair_expression")
+        def _evaluate_pairs(self, change: dict[str, object]) -> None:
+            if self.create_kind != "young" or self.mode != "evaluate":
+                self.pair_evaluation = {}
+                return
+            from ..young_diagrams import PairExpression
+            from ..pair_evaluation import evaluate
+
+            try:
+                result = evaluate(PairExpression.from_state(self.pair_expression))
+            except (ValueError, ImportError) as exc:
+                result = {"lines": [], "error": str(exc)}
+            self.pair_evaluation = result
+
+        @traitlets.observe("pair_expression", "create_kind")
+        def _draw_pairs(self, change: dict[str, object]) -> None:
+            if self.create_kind != "young":
+                return
+            from ..young_diagrams import PairExpression
+
+            expression = PairExpression.from_state(self.pair_expression)
+            try:
+                drawings = [term.drawing() for term in expression.terms]
+            except ImportError:
+                # Creation remains available without the optional algebra package.
+                drawings = []
+            self.pair_drawing_state = {"expression": expression.state(), "drawings": drawings}
 
     toolbar = ProjectorToolbarWidget(group_id=group_id, mode=mode)
     toolbar.layout.width = "100%"
@@ -1431,6 +1552,7 @@ def _blank_creator_widget(
     style: str | PathLike[str] | None = None,
     group_id: str = "",
     debug: bool = False,
+    embedded: bool = False,
 ) -> object:
     """Return a genuinely empty editable term, not an identity strand."""
     from .projector import Projector
@@ -1441,6 +1563,7 @@ def _blank_creator_widget(
         mode="create",
         group_id=group_id,
         debug=debug,
+        embedded=embedded,
     )
     graph = dict(editor.graph)
     graph.update(
@@ -1470,6 +1593,7 @@ def _canvas_editor_state(editor: object) -> dict[str, object]:
             "port_orders": editor.port_orders,
             "free_levels": editor.free_levels,
             "boundary_orders": editor.boundary_orders,
+            "line_colors": editor.line_colors,
             "effective_coefficient": editor.effective_coefficient,
         }
     )
@@ -1484,6 +1608,7 @@ def _configuration_from_widget(editor: object) -> ProjectorConfiguration:
             "port_orders": editor.port_orders,
             "free_levels": editor.free_levels,
             "boundary_orders": editor.boundary_orders,
+            "line_colors": editor.line_colors,
             "effective_coefficient": editor.effective_coefficient,
         },
     )
@@ -1504,6 +1629,7 @@ def _configuration_from_state(
             "port_orders": snapshot["port_orders"],
             "free_levels": snapshot["free_levels"],
             "boundary_orders": snapshot["boundary_orders"],
+            "line_colors": snapshot.get("line_colors", {}),
             "effective_coefficient": snapshot["effective_coefficient"],
         },
     )
@@ -1579,6 +1705,8 @@ def _projector_from_state(
         ),
         input_boundary=input_boundary,
         output_boundary=output_boundary,
+        in_direction=graph.get("in_direction", "neutral"),
+        out_direction=graph.get("out_direction", "neutral"),
         port_orders={
             int(index): {
                 "input": tuple(orders["input"]),
@@ -1624,6 +1752,8 @@ def _node_from_data(item: Mapping[str, object]) -> object:
         return PermutationNode(
             Permutation(tuple(tuple(pair) for pair in mapping)),
             support=item["labels"],
+            in_direction=item.get("in_direction", "neutral"),
+            out_direction=item.get("out_direction", "neutral"),
         )
     node_type = Antisymmetriser if kind == "antisymmetriser" else Symmetriser
     return node_type(item["labels"])

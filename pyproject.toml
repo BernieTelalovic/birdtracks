@@ -4,25 +4,37 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "birdtracks"
-version = "0.1.3"
+version = "0.2.0"
 description = "Exact and extensible birdtrack algebra computations"
 readme = "README.md"
 license = "PolyForm-Noncommercial-1.0.0"
-requires-python = ">=3.10"
-dependencies = ["igraph>=0.11,<2"]
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    "igraph>=0.11,<2",
+    "pair_multiplication @ https://github.com/BernieTelalovic/pair_multiplication/archive/759e23cc6a01375d944a8687ee0f8a6b9639f408.tar.gz",
+]
 
 [project.scripts]
 birdtracks = "birdtracks.projectors.standalone:main"
 birdtracks-lab = "birdtracks.lab:main"
+birdtracks-whiteboard = "birdtracks.projectors.whiteboard.app:main"
 
 [project.optional-dependencies]
 compiled = ["Cython>=3,<4"]
 notebook = ["anywidget>=0.9,<1"]
-app = ["anywidget>=0.9,<1", "ipykernel>=6,<8", "voila>=0.5,<1"]
+app = [
+    "anywidget>=0.9,<1",
+    "ipykernel>=6,<8",
+    "pywebview>=5,<7; sys_platform != 'linux'",
+    "pywebview[qt]>=5,<7; sys_platform == 'linux'",
+    "voila>=0.5,<1",
+]
 coding = [
     "anywidget>=0.9,<1",
     "ipykernel>=6,<8",
     "jupyterlab>=4,<5",
+    "pywebview>=5,<7; sys_platform != 'linux'",
+    "pywebview[qt]>=5,<7; sys_platform == 'linux'",
     "voila>=0.5,<1",
 ]
 standalone = [
@@ -37,9 +49,13 @@ training = ["torch>=2.4"]
 [tool.setuptools.package-data]
 "birdtracks.projectors" = [
     "canvas_app.py",
+    "whiteboard_app.py",
+    "whiteboard/README.md",
     "projector-widget.yaml",
     "static/*.css",
     "static/*.js",
+    "static/*.svg",
+    "static/*.ico",
 ]
 
 [tool.setuptools.packages.find]

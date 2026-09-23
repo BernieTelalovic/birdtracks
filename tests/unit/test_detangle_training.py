@@ -311,6 +311,33 @@ def test_false_explicitly_disables_default_detangler(monkeypatch) -> None:
     assert canvas._learned_detangler is None  # type: ignore[attr-defined]
 
 
+def test_missing_training_extra_disables_automatic_detangler(
+    monkeypatch, tmp_path
+) -> None:
+    pytest.importorskip("anywidget")
+    from birdtracks.projectors import detangle_training
+
+    checkpoint = tmp_path / "detangler.pt"
+    monkeypatch.setattr(
+        detangle_training,
+        "default_detangler_checkpoint",
+        lambda: checkpoint,
+    )
+    monkeypatch.setattr(
+        detangle_training.LearnedDetangler,
+        "load",
+        classmethod(
+            lambda _cls, _checkpoint: (_ for _ in ()).throw(
+                ImportError("no torch")
+            )
+        ),
+    )
+
+    canvas = Projector([Symmetriser((1, 2))]).evaluate()
+
+    assert canvas._learned_detangler is None  # type: ignore[attr-defined]
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [

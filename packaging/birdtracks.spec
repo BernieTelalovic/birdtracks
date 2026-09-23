@@ -21,7 +21,15 @@ datas = [
 ]
 hiddenimports = []
 binaries = []
-for package in ("anywidget", "igraph", "ipykernel", "voila"):
+for package in (
+    "anywidget",
+    "igraph",
+    "ipykernel",
+    "numpy",
+    "pair_multiplication",
+    "scipy",
+    "voila",
+):
     package_datas, package_binaries, package_imports = collect_all(package)
     datas += package_datas
     binaries += package_binaries
@@ -64,4 +72,7 @@ exe = EXE(
     upx=True,
     console=False,
     disable_windowed_traceback=False,
+    icon=str(
+        project_root / "src/birdtracks/projectors/static/birdtracks-whiteboard.ico"
+    ),
 )

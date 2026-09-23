@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+  <title>Birdtracks S(1,2) A(2,3) S(1,2) projector</title>
+  <g fill="none" stroke="#000" stroke-linecap="butt" stroke-width="8">
+    <path d="M16 52h214M16 128h214M16 204h214"/>
+  </g>
+  <g stroke="#000" stroke-width="7">
+    <rect x="31" y="39" width="44" height="102" fill="#fff"/>
+    <rect x="106" y="115" width="44" height="102" fill="#000"/>
+    <rect x="181" y="39" width="44" height="102" fill="#fff"/>
+  </g>
+</svg>

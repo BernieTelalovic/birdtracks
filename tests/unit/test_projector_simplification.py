@@ -20,6 +20,7 @@ from birdtracks import (
     remove_multiply_connected_s_a_terms,
     simplify_step,
 )
+from birdtracks.projectors.simplification import collect_fully_expanded_permutations
 from birdtracks.projectors.layout import _detangle_score
 
 
@@ -140,6 +141,250 @@ def test_antisymmetriser_expansion_signs_match_each_permutation_parity() -> None
     for permutation, sign in expected.items():
         term = Projector([PermutationNode(permutation, support=support)])
         assert expanded.coefficient(term) == Fraction(sign, 6)
+
+
+def test_fully_expanded_permutations_collect_by_boundary_action() -> None:
+    """Permutation-layer history must not survive a completed expansion."""
+    layered = Projector(
+        [
+            PermutationNode(Permutation.from_cycle(1, 2)),
+            PermutationNode(Permutation.from_cycle(2, 3)),
+        ]
+    )
+    ((permutation, scalar),) = tuple(layered.collapse())
+    direct = Projector(
+        [PermutationNode(permutation, support=layered.support)]
+    )
+    unresolved = Projector([Symmetriser((4, 5))])
+    uncollected = ProjectorSum(
+        ((layered, Fraction(1, 3)), (direct, Fraction(1, 6)), unresolved)
+    )
+
+    assert len(uncollected) == 3
+    collected = collect_fully_expanded_permutations(uncollected)
+
+    assert len(collected) == 2
+    term, coefficient = next(
+        (term, coefficient)
+        for term, coefficient in collected
+        if all(isinstance(node, PermutationNode) for node in term.nodes)
+    )
+    assert term.nodes == (PermutationNode(permutation, support=(1, 2, 3)),)
+    assert coefficient == scalar * Fraction(1, 2)
+    assert collected.collapse() == uncollected.collapse()
+
+
+def test_projectors_collect_across_identity_permutation_presentations() -> None:
+    """An identity anchor must not distinguish the same free strand."""
+    first = Projector(
+        [
+            Symmetriser((1, 2)),
+            PermutationNode(Permutation.identity(), support=(1, 3)),
+        ]
+    )
+    second = Projector(
+        [
+            Symmetriser((1, 2)),
+            PermutationNode(Permutation.identity(), support=(2, 3)),
+        ]
+    )
+    permutation = Projector(
+        [PermutationNode(Permutation.from_cycle(1, 3), support=(1, 2, 3))]
+    )
+    value = ProjectorSum(
+        ((first, Fraction(2, 9)), (permutation, Fraction(-1, 6)), (second, Fraction(4, 9)))
+    )
+
+    collected = collect_fully_expanded_permutations(value)
+
+    assert len(value) == 3
+    assert len(collected) == 2
+    assert collected.coefficient(
+        Projector(
+            [
+                Symmetriser((1, 2)),
+                PermutationNode(Permutation.identity(), support=(3,)),
+            ]
+        )
+    ) == Fraction(2, 3)
+    assert collected.collapse() == value.collapse()
+
+
+def test_projectors_collect_across_symmetriser_port_permutations() -> None:
+    """Equivalent S/P wiring must collect with its exact prefactor."""
+    permutation = PermutationNode(Permutation.from_cycle(1, 3), support=(1, 3))
+    symmetriser = Symmetriser((1, 2))
+    first = Projector(
+        [permutation, symmetriser],
+        connections=[Connection(NodePort(1, 1), NodePort(0, 1))],
+        input_boundary={
+            1: NodePort(1, 1),
+            2: NodePort(1, 2),
+            3: NodePort(0, 3),
+        },
+        output_boundary={
+            1: NodePort(0, 1),
+            2: NodePort(0, 3),
+            3: NodePort(1, 2),
+        },
+        port_orders={
+            0: {"input": (1, 3), "output": (1, 3)},
+            1: {"input": (1, 2), "output": (1, 2)},
+        },
+    )
+    second = Projector(
+        [permutation, symmetriser],
+        connections=first.connections,
+        input_boundary=first.input_boundary,
+        output_boundary={
+            1: NodePort(0, 1),
+            2: NodePort(1, 2),
+            3: NodePort(0, 3),
+        },
+        port_orders={
+            0: {"input": (1, 3), "output": (1, 3)},
+            1: {"input": (1, 2), "output": (2, 1)},
+        },
+    )
+    value = ProjectorSum(((first, Fraction(-4, 9)), (second, Fraction(1, 9))))
+
+    collected = collect_fully_expanded_permutations(value)
+
+    assert first != second
+    assert first.collapse() == second.collapse()
+    assert len(collected) == 1
+    assert tuple(collected)[0][1] == Fraction(-1, 3)
+    assert collected.collapse() == value.collapse()
+
+
+def test_projectors_collect_across_different_mixed_node_shapes() -> None:
+    """Permutation absorption can change a projector's displayed shape."""
+    permutation = PermutationNode(Permutation.from_cycle(1, 3), support=(1, 3))
+    symmetriser = Symmetriser((1, 2))
+    with_permutation = Projector(
+        [permutation, symmetriser],
+        connections=[Connection(NodePort(1, 1), NodePort(0, 1))],
+        input_boundary={
+            1: NodePort(1, 1),
+            2: NodePort(1, 2),
+            3: NodePort(0, 3),
+        },
+        output_boundary={
+            1: NodePort(1, 2),
+            2: NodePort(0, 1),
+            3: NodePort(0, 3),
+        },
+        port_orders={
+            0: {"input": (1, 3), "output": (1, 3)},
+            1: {"input": (1, 2), "output": (2, 1)},
+        },
+    )
+    with_free_identity = Projector(
+        [PermutationNode(Permutation.identity(), support=(3,)), symmetriser],
+        input_boundary={
+            1: NodePort(1, 1),
+            2: NodePort(1, 2),
+            3: NodePort(0, 3),
+        },
+        output_boundary={
+            1: NodePort(1, 1),
+            2: NodePort(0, 3),
+            3: NodePort(1, 2),
+        },
+        port_orders={
+            0: {"input": (3,), "output": (3,)},
+            1: {"input": (1, 2), "output": (1, 2)},
+        },
+    )
+    value = ProjectorSum(
+        ((with_permutation, Fraction(1, 9)), (with_free_identity, Fraction(-4, 9)))
+    )
+
+    collected = collect_fully_expanded_permutations(value)
+
+    assert with_permutation.collapse() == with_free_identity.collapse()
+    assert len(collected) == 1
+    assert tuple(collected)[0][1] == Fraction(-1, 3)
+    assert collected.collapse() == value.collapse()
+
+
+def test_full_alternating_s_a_expansion_collects_equal_permutations() -> None:
+    """Regression for S(1,2)A(2,3)S(1,2)A(2,3)S(1,2)."""
+    value = ProjectorSum(
+        (
+            Projector(
+                [
+                    Symmetriser((1, 2)),
+                    Antisymmetriser((2, 3)),
+                    Symmetriser((1, 2)),
+                    Antisymmetriser((2, 3)),
+                    Symmetriser((1, 2)),
+                ]
+            ),
+        )
+    )
+    while True:
+        next_terms = []
+        expanded_any = False
+        for projector, coefficient in value:
+            node_index = next(
+                (
+                    index
+                    for index, node in enumerate(projector.nodes)
+                    if isinstance(node, (Symmetriser, Antisymmetriser))
+                ),
+                None,
+            )
+            if node_index is None:
+                next_terms.append((projector, coefficient))
+                continue
+            expanded_any = True
+            next_terms.extend(
+                (term, coefficient * factor)
+                for term, factor in expand_node(projector, node_index)
+            )
+        value = ProjectorSum(next_terms)
+        if not expanded_any:
+            break
+
+    collected = collect_fully_expanded_permutations(value)
+
+    assert len(value) == 8
+    assert len(collected) == 6
+    assert collected.collapse() == value.collapse()
+
+
+def test_canvas_collects_permutation_terms_after_the_final_expansion() -> None:
+    pytest.importorskip("anywidget")
+    layered = Projector(
+        [
+            PermutationNode(Permutation.from_cycle(1, 2)),
+            PermutationNode(Permutation.identity(), support=(1, 2)),
+        ]
+    )
+    direct = Projector([Symmetriser((1, 2))])
+    unresolved = Projector([Antisymmetriser((3, 4))])
+    canvas = ProjectorSum(
+        ((direct, 1), (layered, Fraction(1, 6)), unresolved)
+    ).evaluate(detangler=False)
+
+    selected = next(
+        index
+        for index, editor in enumerate(
+            canvas._term_editors  # type: ignore[attr-defined]
+        )
+        if isinstance(editor._source_projector.nodes[0], Symmetriser)
+    )
+    canvas._term_editors[selected].expand_node_request = {  # type: ignore[attr-defined]
+        "node": 0,
+        "revision": 1,
+    }
+
+    value = canvas.current_projector_sum  # type: ignore[attr-defined]
+    assert len(value) == 3
+    assert value.coefficient(
+        Projector([PermutationNode(Permutation.from_cycle(1, 2), support=(1, 2))])
+    ) == Fraction(2, 3)
 
 
 def test_simplify_step_exposes_canonical_orientation_in_term_prefactors() -> None:
