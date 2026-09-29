@@ -82,6 +82,44 @@ def test_projector_multiplication_is_associative_and_multiplies_coefficients() -
     assert (p * q).coefficient == Fraction(-2, 5)
 
 
+@pytest.mark.parametrize(
+    ("in_direction", "out_direction"),
+    [("left", "right"), ("right", "left")],
+)
+def test_directional_projector_products_chain_adjacent_boundaries(
+    in_direction: str, out_direction: str,
+) -> None:
+    projectors = tuple(
+        Projector(
+            [Symmetriser({1})],
+            in_direction=in_direction,
+            out_direction=out_direction,
+        )
+        for _ in range(3)
+    )
+
+    product = projectors[0] * projectors[1] * projectors[2]
+
+    assert product.connections == (
+        Connection(NodePort(1, 1), NodePort(0, 1)),
+        Connection(NodePort(2, 1), NodePort(1, 1)),
+    )
+    assert product.in_direction == in_direction
+    assert product.out_direction == out_direction
+
+
+def test_projector_product_does_not_implement_different_directions() -> None:
+    points_right = Projector(
+        [Symmetriser({1})], in_direction="left", out_direction="right"
+    )
+    points_left = Projector(
+        [Symmetriser({1})], in_direction="right", out_direction="left"
+    )
+
+    with pytest.raises(NotImplementedError, match="different directions"):
+        points_right * points_left
+
+
 def test_simplify_promotes_an_unchanged_projector_to_a_sum() -> None:
     projector = Projector([Symmetriser({1, 2})])
 

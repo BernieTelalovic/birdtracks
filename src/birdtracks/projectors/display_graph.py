@@ -71,11 +71,22 @@ def compile_display_graph(projector: Projector) -> DisplayGraph:
         for index, node in enumerate(projector.nodes)
         if not isinstance(node, PermutationNode) and len(node.support) > 1
     }
-    columns = tuple(
-        tuple(index for index in layer if index in operators)
-        for layer in projector.layers
-        if any(index in operators for index in layer)
-    )
+    # Hidden permutation nodes must not leave artificial gaps between visible
+    # operators. Repack the remaining S/A sequence into maximal disjoint sets.
+    columns_list: list[tuple[int, ...]] = []
+    column: list[int] = []
+    occupied: set[int] = set()
+    for index in sorted(operators):
+        support = set(projector.nodes[index].support)
+        if occupied & support:
+            columns_list.append(tuple(column))
+            column = []
+            occupied.clear()
+        column.append(index)
+        occupied.update(support)
+    if column:
+        columns_list.append(tuple(column))
+    columns = tuple(columns_list)
     connection_target = {
         connection.source: connection.target for connection in projector.connections
     }

@@ -308,6 +308,61 @@ def test_projectors_collect_across_different_mixed_node_shapes() -> None:
     assert collected.collapse() == value.collapse()
 
 
+def test_mixed_permutation_term_collects_with_pure_sa_term() -> None:
+    """One residual identity strand must not prevent final collection."""
+    pure = Projector(
+        [Symmetriser((1, 2)), Antisymmetriser((2, 3, 4)), Symmetriser((1, 2))],
+        connections=[
+            Connection(NodePort(1, 2), NodePort(0, 2)),
+            Connection(NodePort(2, 1), NodePort(0, 1)),
+            Connection(NodePort(2, 2), NodePort(1, 2)),
+        ],
+        input_boundary={
+            1: NodePort(2, 1), 2: NodePort(2, 2),
+            3: NodePort(1, 3), 4: NodePort(1, 4),
+        },
+        output_boundary={
+            1: NodePort(0, 1), 2: NodePort(0, 2),
+            3: NodePort(1, 3), 4: NodePort(1, 4),
+        },
+    )
+    mixed = Projector(
+        [
+            Symmetriser((1, 2)),
+            PermutationNode(Permutation.identity(), support=(1,)),
+            Antisymmetriser((2, 3, 4)),
+            Symmetriser((1, 2)),
+        ],
+        connections=[
+            Connection(NodePort(1, 1), NodePort(0, 1)),
+            Connection(NodePort(2, 2), NodePort(0, 2)),
+            Connection(NodePort(3, 1), NodePort(1, 1)),
+            Connection(NodePort(3, 2), NodePort(2, 2)),
+        ],
+        input_boundary={
+            1: NodePort(3, 1), 2: NodePort(3, 2),
+            3: NodePort(2, 3), 4: NodePort(2, 4),
+        },
+        output_boundary={
+            1: NodePort(0, 2), 2: NodePort(0, 1),
+            3: NodePort(2, 3), 4: NodePort(2, 4),
+        },
+        port_orders={
+            0: {"input": (1, 2), "output": (2, 1)},
+            1: {"input": (1,), "output": (1,)},
+            2: {"input": (2, 3, 4), "output": (2, 3, 4)},
+            3: {"input": (1, 2), "output": (1, 2)},
+        },
+    )
+    value = ProjectorSum(((pure, 2), (mixed, Fraction(2, 3))))
+
+    assert pure.collapse() == mixed.collapse()
+    collected = collect_fully_expanded_permutations(value)
+    assert len(collected) == 1
+    assert tuple(collected)[0][1] == Fraction(8, 3)
+    assert collected.collapse() == value.collapse()
+
+
 def test_full_alternating_s_a_expansion_collects_equal_permutations() -> None:
     """Regression for S(1,2)A(2,3)S(1,2)A(2,3)S(1,2)."""
     value = ProjectorSum(

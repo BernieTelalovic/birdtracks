@@ -171,6 +171,39 @@
 .birdtracks-latex-logo-a { vertical-align: 0.18em; }
 .birdtracks-latex-logo-e { margin-left: -0.08em; vertical-align: -0.12em; }
 
+.birdtracks-whiteboard-export-dialog {
+  width: min(28rem, calc(100vw - 2rem));
+  padding: 1.1rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.6rem;
+  color: #111827;
+  background: #fff;
+  box-shadow: 0 14px 35px #0f172a33;
+  font: 0.9rem/1.35 system-ui, sans-serif;
+}
+
+.birdtracks-whiteboard-export-dialog::backdrop { background: #0f172a4d; }
+.birdtracks-whiteboard-export-dialog h2 { margin: 0 0 0.9rem; font-size: 1.1rem; }
+.birdtracks-whiteboard-export-fields { display: grid; gap: 0.65rem; }
+.birdtracks-whiteboard-export-fields label {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.birdtracks-whiteboard-export-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+.birdtracks-whiteboard-export-actions button {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.4rem;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
 .birdtracks-whiteboard-paintbrush {
   display: inline-grid;
   width: 2.35rem;
@@ -332,6 +365,10 @@
   background: #9ca3af;
   pointer-events: none;
 }
+.birdtracks-whiteboard-block.calculation-read-only.connected-line:focus-within::before {
+  width: 3px;
+  background: #475569;
+}
 .birdtracks-whiteboard-block:not(:first-child):not(.continuation) {
   padding-top: 0.5em;
 }
@@ -449,6 +486,8 @@
   overflow: visible;
 }
 .birdtracks-whiteboard-embedded-pair .birdtracks-young-workspace {
+  width: max-content;
+  max-width: none;
   min-width: 0;
   margin: 0;
   padding: 0;
@@ -456,15 +495,21 @@
   background: transparent;
 }
 .birdtracks-whiteboard-embedded-pair {
+  width: max-content;
+  min-height: 0;
   margin-inline: 0;
+}
+.birdtracks-whiteboard-embedded-pair .birdtracks-young-terms {
+  width: max-content;
+  overflow-x: visible;
 }
 .birdtracks-whiteboard-embedded-projector .birdtracks-canvas-viewport > svg {
   display: block;
 }
-.birdtracks-whiteboard-embedded-projector:not(.topology-editing) .birdtracks-add-line-control,
-.birdtracks-whiteboard-embedded-projector:not(.topology-editing) .birdtracks-line-control,
-.birdtracks-whiteboard-embedded-projector:not(.topology-editing) .birdtracks-line-control-hit,
-.birdtracks-whiteboard-embedded-projector:not(.topology-editing) .birdtracks-direction-control {
+.calculation-read-only .birdtracks-whiteboard-embedded-projector:not(.topology-editing) .birdtracks-add-line-control,
+.calculation-read-only .birdtracks-whiteboard-embedded-projector:not(.topology-editing) .birdtracks-line-control,
+.calculation-read-only .birdtracks-whiteboard-embedded-projector:not(.topology-editing) .birdtracks-line-control-hit,
+.calculation-read-only .birdtracks-whiteboard-embedded-projector:not(.topology-editing) .birdtracks-direction-control {
   display: none;
 }
 .birdtracks-whiteboard-embedded-projector

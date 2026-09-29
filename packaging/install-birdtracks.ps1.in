@@ -18,9 +18,19 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $Whiteboard = Join-Path $BirdtracksBin "birdtracks-whiteboard.exe"
-$WhiteboardAsset = (& $Whiteboard --asset-path birdtracks-whiteboard-file.ico).Trim()
-$InstalledIcon = Join-Path $BirdtracksRoot "birdtracks-whiteboard-file-projector.ico"
-Copy-Item -LiteralPath $WhiteboardAsset -Destination $InstalledIcon -Force
+if (-not (Test-Path -LiteralPath $Whiteboard)) {
+    throw "Birdtracks Whiteboard launcher was not installed."
+}
+$null = & $Whiteboard --help
+if ($LASTEXITCODE -ne 0) {
+    throw "Birdtracks Whiteboard launcher failed its startup check."
+}
+$WhiteboardFileAsset = (& $Whiteboard --asset-path birdtracks-whiteboard-file.ico).Trim()
+$WhiteboardAppAsset = (& $Whiteboard --asset-path birdtracks-whiteboard.ico).Trim()
+$InstalledFileIcon = Join-Path $BirdtracksRoot "birdtracks-whiteboard-file.ico"
+$InstalledAppIcon = Join-Path $BirdtracksRoot "birdtracks-whiteboard.ico"
+Copy-Item -LiteralPath $WhiteboardFileAsset -Destination $InstalledFileIcon -Force
+Copy-Item -LiteralPath $WhiteboardAppAsset -Destination $InstalledAppIcon -Force
 $WhiteboardType = "Birdtracks.Whiteboard"
 New-Item -Path "HKCU:\Software\Classes\.whiteboard" -Force | Out-Null
 New-ItemProperty -Path "HKCU:\Software\Classes\.whiteboard" -Name "(default)" `
@@ -29,7 +39,7 @@ New-ItemProperty -Path "HKCU:\Software\Classes\.whiteboard" -Name "Content Type"
     -Value "application/x-birdtracks-whiteboard" -PropertyType String -Force | Out-Null
 New-Item -Path "HKCU:\Software\Classes\$WhiteboardType\DefaultIcon" -Force | Out-Null
 Set-ItemProperty -Path "HKCU:\Software\Classes\$WhiteboardType\DefaultIcon" `
-    -Name "(default)" -Value "`"$InstalledIcon`",0"
+    -Name "(default)" -Value "`"$InstalledFileIcon`",0"
 New-Item -Path "HKCU:\Software\Classes\$WhiteboardType\shell\open\command" -Force | Out-Null
 Set-ItemProperty -Path "HKCU:\Software\Classes\$WhiteboardType\shell\open\command" `
     -Name "(default)" -Value "`"$Whiteboard`" `"%1`""
@@ -44,7 +54,7 @@ New-Item -ItemType Directory -Path $BirdtracksPrograms -Force | Out-Null
 $WhiteboardShortcut = $Shell.CreateShortcut((Join-Path $BirdtracksPrograms "Birdtracks Whiteboard.lnk"))
 $WhiteboardShortcut.TargetPath = $Whiteboard
 $WhiteboardShortcut.WorkingDirectory = [Environment]::GetFolderPath("MyDocuments")
-$WhiteboardShortcut.IconLocation = "$InstalledIcon,0"
+$WhiteboardShortcut.IconLocation = "$InstalledAppIcon,0"
 $WhiteboardShortcut.Description = "Exact birdtrack projector whiteboard"
 $WhiteboardShortcut.Save()
 

@@ -28,6 +28,14 @@ def join(kind, children):
     return children[0] if len(children) == 1 else Node(kind, children)
 
 
+def _node_state(node):
+    """Serialize a displayed calculation node for notation-level export."""
+    if node.kind == 'pair':
+        drawing = node.drawing.as_dict() if hasattr(node.drawing, 'as_dict') else None
+        return {'kind': 'pair', 'term': node.term.state(), 'drawing': drawing}
+    return {'kind': node.kind, 'children': [_node_state(child) for child in node.children]}
+
+
 def parse(expression):
     """Tensor binds tighter than direct sum; brackets preserve explicit grouping."""
     tokens = expression.syntax or tuple(t for i in range(len(expression.terms))
@@ -337,7 +345,11 @@ def evaluate(expression, *, leading_equals=False, leading_assignment=None):
             leading_assignment=leading_assignment,
         )
         if not lines or lines[-1]['svg'] != svg:
-            lines.append({'svg': svg, 'caption': caption})
+            lines.append({
+                'svg': svg,
+                'caption': caption,
+                'expression_tree': _node_state(node),
+            })
 
     # Preserve the exact written bracket layout on the first line.
     original = []
@@ -354,6 +366,7 @@ def evaluate(expression, *, leading_equals=False, leading_assignment=None):
     lines.append({
         'svg': render_tokens(original or ['0'], leading_equals=leading_equals),
         'caption': 'Input',
+        'expression_tree': _node_state(root),
     })
     monomials = expand(root)
     current = [join('tensor', (atom(term) for term in group)) for group in monomials]
@@ -416,5 +429,9 @@ def evaluate(expression, *, leading_equals=False, leading_assignment=None):
         leading_assignment=leading_assignment,
     )
     if not lines or lines[-1]['svg'] != final_svg:
-        lines.append({'svg': final_svg, 'caption': 'Collect the final direct sum'})
+        lines.append({
+            'svg': final_svg,
+            'caption': 'Collect the final direct sum',
+            'expression_tree': _node_state(final_node),
+        })
     return {'lines': lines, 'result': final.state(), 'error': ''}

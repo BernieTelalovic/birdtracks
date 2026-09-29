@@ -117,6 +117,7 @@
 
 .birdtracks-young-term.dragging { cursor: grabbing; }
 .birdtracks-young-axis { stroke: #94a3b8; stroke-dasharray: 3 5; }
+.birdtracks-young-singleton-hit { cursor: pointer; }
 .birdtracks-young-grid { fill: #cbd5e1; pointer-events: none; }
 .birdtracks-young-box { fill: white; stroke: #17202a; stroke-width: 1.3; }
 .birdtracks-young-box.selected { fill: #e0f2fe; }
@@ -1018,3 +1019,9 @@
 .birdtracks-pair-next-step:hover { color: #0284c7; }
 .birdtracks-pair-evaluation .birdtracks-pair-evaluation-line { display: block; max-width: none; border: 0; background: transparent; color: #17202a; }
 .birdtracks-pair-evaluation-line [data-cell] > rect { pointer-events: all; }
+
+.ctrl-active .birdtracks-line-control {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: rotate(180deg);
+}

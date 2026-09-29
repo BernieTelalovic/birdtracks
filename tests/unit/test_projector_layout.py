@@ -477,11 +477,9 @@ def test_canvas_free_lines_reorder_both_directions_and_persist_levels() -> None:
         / "src/birdtracks/projectors/static/projector-widget.js"
     ).read_text()
 
-    assert (
-        "return movingUp ? insertionProbe <= centre : insertionProbe < centre;"
-        in source
-    )
-    assert "const requestedCentre = requestedLevel + (moving.width - 1) / 2" in source
+    assert "requestedEdge <= unit.start + unit.width - 1" in source
+    assert "requestedEdge < unit.start" in source
+    assert "requestedCentre" not in source
     assert "Math.ceil(relative - 0.5)" in source
     assert "Math.floor(relative + 0.5)" in source
     assert "function normalizeCreatorLayers()" in source
@@ -756,7 +754,7 @@ def test_calculator_draws_hoverable_tear_controls_without_removing_double_click(
     assert 'control.classList.add("active")' in source
     assert "nodeLayer, handles, annotations, interactions" in source
     assert "interactions.append(hitTarget, control)" in source
-    assert "saveProjector(node.index, edge)" in source
+    assert "saveProjector(node.index, node.labels.length === 2 ? null : edge)" in source
     assert "saveProjector(node.index);" in source
     css = (
         Path(__file__).parents[2]
@@ -1249,6 +1247,66 @@ def test_compiled_evaluate_renderer_aligns_sa_columns_and_hides_permutation_node
     assert '.filter((node) => node.kind !== "permutation")' in level_count
 
 
+def test_evaluate_renderer_separates_topology_from_presentation() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "src/birdtracks/projectors/static/projector-widget.js"
+    ).read_text()
+
+    initialization = source.split("function unwrapIdentityBoundaryNodes()", 1)[1].split(
+        "const lineColors", 1
+    )[0]
+    assert "remapDisplayNodeIndices" not in source
+    assert "\n  unwrapIdentityBoundaryNodes();" not in initialization
+
+    startup = source.split("model.on(\"change:line_colors\", syncLineColors);", 1)[1].split(
+        "setMode(widgetMode);", 1
+    )[0]
+    assert 'if (widgetMode === "create") prepareCreatorPresentation();' in startup
+    assert "collapseFreeLineLayers();" not in startup
+    assert "compactEmptyLayers();" not in startup
+    assert "normalizeCreatorLayers();" not in startup
+
+    compiled_display = source.split("function validateCompiledDisplay()", 1)[1].split(
+        "function displayColumn", 1
+    )[0]
+    assert "compiledDisplayValid === null" in compiled_display
+    assert "compiledDisplayValid = validateCompiledDisplay();" in compiled_display
+
+    packed_reorder = source.split("function reorderDisplayColumn(", 1)[1].split(
+        "function drawRouteHandle", 1
+    )[0]
+    assert "normalizeCreatorLayers();" not in packed_reorder
+
+    route_level = source.split("function routeLevel(", 1)[1].split(
+        "function routePoints", 1
+    )[0]
+    assert "connection.route[String(layer)] =" not in route_level
+
+    save = source.split("function saveProjector(", 1)[1].split(
+        "function updateModifier", 1
+    )[0]
+    assert save.count('if (interactionMode === "create") {') == 2
+
+
+def test_port_reorder_publishes_sign_during_preview_and_commits_once() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "src/birdtracks/projectors/static/projector-widget.js"
+    ).read_text()
+    reorder = source.split("function startPortReorder(", 1)[1].split(
+        "function displayStrandPosition", 1
+    )[0]
+    move = reorder.split("function move(", 1)[1].split("function finish()", 1)[0]
+    finish = reorder.split("function finish()", 1)[1]
+
+    assert "syncPortOrders({ save: false });" in move
+    assert finish.count("syncPortOrders();") == 1
+    assert "if (changed) syncPortOrders();" in finish
+    assert "saveProjector();" not in reorder
+    assert 'model.set("effective_coefficient", currentGraphCoefficient());' in source
+
+
 def test_compiled_free_strands_are_flat_across_each_bypassed_sa_column() -> None:
     source = (
         Path(__file__).parents[2]
@@ -1293,7 +1351,9 @@ def test_line_and_sa_drag_reordering_restore_origin_before_insertion() -> None:
     ).read_text()
 
     assert 'connection.route[String(layer)] = originLevel' in source
-    assert "Number(routed.boundaryLabel) === Number(display.strandLabel)" in source
+    assert "nodes = structuredClone(before.nodes)" in source
+    assert "connections = structuredClone(before.connections)" in source
+    assert 'display.displayColumn, "free", display.strandLabel' in source
     assert "reorderCreatorLayer(layer, connection, snappedLevel)" in source
     assert "const requestedLevel = node.level" in source
     assert "node.level = origin.level" in source
@@ -1302,6 +1362,39 @@ def test_line_and_sa_drag_reordering_restore_origin_before_insertion() -> None:
     assert "requestedLevel + moving.width - 1" in source
     assert "const requestedY = positions[String(node.index)].y" in source
     assert "positions[String(node.index)] = origin" in source
+
+
+def test_backend_term_capture_keeps_presentation_separate_from_value() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "src/birdtracks/projectors/static/whiteboard-widget.js"
+    ).read_text()
+
+    snapshot = source.split("function backendPresentationSnapshot", 1)[1].split(
+        "function captureState", 1
+    )[0]
+    assert 'child.get("graph")' in snapshot
+    assert 'child.get("positions")' in snapshot
+    assert 'child.get("free_levels")' in snapshot
+    assert 'child.get("port_orders")' in snapshot
+    assert 'child.get("effective_coefficient")' in snapshot
+    assert 'id.includes(":backend:")' in source
+    assert "updated.backend_presentations" in source
+
+
+def test_generated_row_enter_commits_backend_presentation_before_remount() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "src/birdtracks/projectors/static/whiteboard-widget.js"
+    ).read_text()
+
+    generated_enter = source.split(
+        'if (block.read_only && event.key === "Enter" && !event.shiftKey)', 1
+    )[1].split('if (event.key === "Backspace" && event.shiftKey)', 1)[0]
+
+    checkpoint = generated_enter.index("wrapper._birdtracksCommitEmbeddedState?.();")
+    insert = generated_enter.index("blocks.splice(index, 0")
+    assert checkpoint < insert
 
 
 def test_layer_reordering_groups_all_segments_of_each_logical_free_strand() -> None:

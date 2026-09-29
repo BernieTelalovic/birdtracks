@@ -147,9 +147,9 @@ bracket goes immediately before it. Thus ⊗ followed by `(` produces
 `… ⊗ ( [empty pair]`, ready to fill in. This also works after ⊕ and for nested
 opening brackets; closing brackets still append at the right end.
 
-Double-click the central symmetry line of an empty constructor to insert a
+Click the central symmetry line of an empty constructor to insert a
 singleton (the trivial pair, with empty barred and unbarred partitions). It is
 shown as a dot with construction guides still visible. Adding a box or antibox
-turns it back into a diagram. Double-click the dot to clear the singleton marker,
+turns it back into a diagram. Click the dot to clear the singleton marker,
 or use Undo. The singleton is preserved in saved documents and acts
 as the tensor-product identity, retaining its prefactor and N₀.

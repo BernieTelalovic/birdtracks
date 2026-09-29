@@ -17,7 +17,7 @@ _NUMBER = re.compile(r"\d+")
 _PAIR_TOKEN = re.compile(r"PAIR(?P<index>\d+)")
 _PAIR_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
 _ADJACENT_PREFACTOR = re.compile(
-    r"(?<![A-Za-z0-9_.])(?P<coefficient>\d+)(?:_(?P<n0>\d+))?\s*$"
+    r"(?P<coefficient>\d+)(?:_(?P<n0>\d+))?\s*$"
 )
 
 
@@ -99,6 +99,10 @@ def pair_prefactor_before(
         end -= 1
     match = _ADJACENT_PREFACTOR.search(source[:end])
     if match is None:
+        return None
+    before = source[:match.start()]
+    if (before and re.search(r"[A-Za-z0-9_.]$", before)
+            and not re.search(r"\\(?:oplus|otimes|def)$", before)):
         return None
     return int(match.group("coefficient")), int(match.group("n0") or 1)
 

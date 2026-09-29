@@ -1,15 +1,14 @@
 """Deterministic LaTeX export for the live whiteboard presentation state.
 
 This module intentionally consumes widget state rather than algebra objects.
-The browser renderer and this exporter therefore share the same source text,
-saved layout, endpoint colour keys, and Young-cell drawing coordinates.  It is
-also usable with a plain mapping, which keeps the exporter independent of the
-optional anywidget dependency.
+It translates saved projector topology and Young-pair content into the public
+``birdtracks.sty`` syntax, and is also usable with a plain mapping so that the
+exporter remains independent of the optional anywidget dependency.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import math
 import re
@@ -69,7 +68,9 @@ def _prefactor_before(source: str, marker_start: int) -> tuple[int, str] | None:
     if match is None:
         return None
     start = match.start()
-    if start > 0 and re.match(r"[A-Za-z0-9_./^]", prefix[start - 1]):
+    before = prefix[:start]
+    if (before and re.search(r"[A-Za-z0-9_./^]$", before)
+            and not re.search(r"\\(?:oplus|otimes|def)$", before)):
         return None
     return start, match.group(0)
 
@@ -77,10 +78,13 @@ def _prefactor_before(source: str, marker_start: int) -> tuple[int, str] | None:
 class _ColorRegistry:
     """Give CSS colours stable xcolor names."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, enabled: bool = True) -> None:
         self._names: dict[str, str] = {}
+        self.enabled = enabled
 
     def use(self, value: object, default: str = "black") -> str:
+        if not self.enabled:
+            return default
         raw = str(value or default).strip()
         if not raw:
             raw = default
@@ -176,6 +180,27 @@ def _style_options(
     return options
 
 
+def _semantic_style_options(
+    style: Mapping[str, object], colors: _ColorRegistry,
+) -> list[str]:
+    """Keep authored colours and stroke style, never whiteboard geometry."""
+    if not colors.enabled:
+        return []
+    options: list[str] = []
+    fill = _option_value(style, "fill", "fill_color", "background_color")
+    draw = _option_value(style, "draw", "stroke", "line_color", "stroke_color", "color")
+    if fill is not None and str(fill).lower() not in {"white", "#ffffff"}:
+        options.append(f"fill={colors.use(fill, 'white')}")
+    if draw is not None and str(draw).lower() not in {"black", "#000000", "#17202a"}:
+        options.append(f"draw={colors.use(draw)}")
+    line_style = _option_value(style, "line_style", "style", "stroke_style")
+    if line_style in {"solid", "dashed", "dotted", "dashdotted", "double"}:
+        options.append(str(line_style))
+    elif _option_value(style, "stroke_dasharray", "stroke-dasharray", "dash_array"):
+        options.append("dashed")
+    return options
+
+
 def _tikz_path(points: Sequence[tuple[float, float]]) -> str:
     if not points:
         return ""
@@ -233,6 +258,7 @@ def _cell_style(
     candidates = (
         f"{term_index}:{side}:{row}:{column}",
         f"{term_index}:{row}:{column}",
+        f"{term_index}:{cell.get('cell_index')}",
         f"{side}:{row}:{column}",
         f"{row}:{column}",
     )
@@ -248,74 +274,197 @@ def _pair_term_latex(
     term_index: int,
     styles: Mapping[str, object],
     colors: _ColorRegistry,
+    *,
+    pad_to_n0: bool,
+    drawing: Mapping[str, object] | None = None,
 ) -> str:
-    cells = _young_cells(term)
     barred = term.get("barred", [])
     unbarred = term.get("unbarred", [])
-    rows = max(1, len(barred) + len(unbarred))
-    body: list[str] = [
-        rf"\draw[dashed,draw={colors.use('#94a3b8')},line width=.35pt] "
-        rf"(0,.5) -- (0,-{_fmt(rows - .5)});"
-    ]
-    for cell in cells:
-        x = _number(cell.get("column"))
-        y = _number(cell.get("row"))
-        style = _cell_style(styles, term_index, cell)
-        options = _style_options(
-            style, colors, default_fill="white", default_draw="#17202a",
-            default_width=1.3,
+    barred = barred if isinstance(barred, list) else []
+    unbarred = unbarred if isinstance(unbarred, list) else []
+    labels = term.get("labels", [])
+    labels = labels if isinstance(labels, list) else []
+
+    def cell(side: str, row: int, column: int) -> str:
+        global_row = (
+            row if side == "unbarred"
+            else len(unbarred) + len(barred) - 1 - row
         )
-        body.append(
-            rf"\path[{', '.join(options)}] "
-            rf"({_fmt(x)},{_fmt(-y)}) rectangle ({_fmt(x + 1)},{_fmt(-y - 1)});"
-        )
-        label = next(
-            (
-                item for item in term.get("labels", [])
+        visual_column = column if side == "unbarred" else -1 - column
+        descriptor = {"side": side, "row": global_row, "column": visual_column}
+        descriptor["cell_index"] = next((
+            index for index, candidate in enumerate(_young_cells(term))
+            if candidate.get("side") == side
+            and candidate.get("row") == global_row
+            and candidate.get("column") == visual_column
+        ), None)
+        style = _cell_style(styles, term_index, descriptor)
+        options = _semantic_style_options(style, colors)
+        label = next((
+            item for item in labels
+            if isinstance(item, Mapping)
+            and item.get("side") == side
+            and item.get("row") == row
+            and item.get("column") == column
+        ), None)
+        value = "" if label is None else _tex_text(label.get("value", ""))
+        value_is_barred = False
+        if drawing is not None:
+            drawing_column = (
+                len(barred) and int(barred[0]) - 1 - column
+                if side == "barred" else (int(barred[0]) if barred else 0) + column
+            )
+            drawing_row = (
+                len(unbarred) + len(barred) - 1 - row
+                if side == "barred" else row
+            )
+            drawing_cell = next((
+                item for item in drawing.get("cells", [])
                 if isinstance(item, Mapping)
-                and item.get("side") == cell.get("side")
-                and item.get("row") == (
-                    len(unbarred) + len(barred) - 1 - int(cell.get("row", 0))
-                    if cell.get("side") == "barred" else cell.get("row")
-                )
-                and item.get("column") == (
-                    -1 - int(cell.get("column", 0))
-                    if cell.get("side") == "barred" else cell.get("column")
-                )
-            ),
-            None,
-        )
+                and item.get("row") == drawing_row
+                and item.get("column") == drawing_column
+            ), None)
+            drawing_labels = (
+                drawing_cell.get("labels", [])
+                if isinstance(drawing_cell, Mapping) else []
+            )
+            if isinstance(drawing_cell, Mapping) and drawing_cell.get("dashed"):
+                options.append("dashed")
+            texts = [
+                _tex_text(item.get("text", ""))
+                for item in drawing_labels if isinstance(item, Mapping)
+            ]
+            text_barred = [
+                bool(item.get("barred"))
+                for item in drawing_labels if isinstance(item, Mapping)
+            ]
+            if len(texts) >= 2:
+                split_texts = [
+                    rf"\overline{{{text}}}" if barred_text else text
+                    for text, barred_text in zip(texts[:2], text_barred[:2], strict=True)
+                ]
+                value = rf"\splitbox{{{split_texts[0]}}}{{{split_texts[1]}}}"
+            elif texts:
+                value = texts[0]
+                value_is_barred = text_barred[0]
+            elif isinstance(drawing_cell, Mapping) and drawing_cell.get("bullet"):
+                value = r"\bullet"
         if label is not None:
             text_color = _option_value(label, "text_color", "color")
-            label_options = ["inner sep=0pt", "anchor=center"]
             if text_color is not None:
-                label_options.append(f"text={colors.use(text_color)}")
-            body.append(
-                rf"\node[{', '.join(label_options)}] at "
-                rf"({_fmt(x + .5)},{_fmt(-y - .5)}) "
-                rf"{{\ensuremath{{{_tex_text(label.get('value', ''))}}}}};"
-            )
-            if cell.get("side") == "barred":
-                body.append(
-                    rf"\draw[draw={colors.use(_option_value(label, 'text_color', 'color') or '#17202a')},"
-                    rf"line width=.9pt] ({_fmt(x + .18)},{_fmt(-y - .18)}) -- "
-                    rf"({_fmt(x + .82)},{_fmt(-y - .18)});"
+                options.append(f"text={colors.use(text_color)}")
+        if (side == "barred" or value_is_barred) and value and not value.startswith(
+            (r"\splitbox", r"\bullet")
+        ):
+            value = rf"\overline{{{value}}}"
+        if side == "barred" and not value:
+            value = r"\bullet"
+        if value and not value.startswith(r"\splitbox"):
+            value = rf"\ensuremath{{{value}}}"
+        return f"[{','.join(options)}] {value}"
+
+    covar_rows = [
+        " & ".join(cell("unbarred", row, column) for column in range(int(width)))
+        for row, width in enumerate(unbarred)
+    ]
+    convar_rows = [
+        " & ".join(cell("barred", row, column)
+                   for column in reversed(range(int(barred[row]))))
+        for row in reversed(range(len(barred)))
+    ]
+    drawing_hpad: int | None = None
+    drawing_cells = (
+        [item for item in drawing.get("cells", []) if isinstance(item, Mapping)]
+        if isinstance(drawing, Mapping) else []
+    )
+    if drawing_cells:
+        indexed_cells = list(enumerate(drawing_cells))
+        axis = int(barred[0]) if barred else 0
+
+        def drawing_cell(item: Mapping[str, object], index: int) -> str:
+            raw_style = styles.get(f"{term_index}:{index}", {})
+            style = raw_style if isinstance(raw_style, Mapping) else {}
+            options = _semantic_style_options(style, colors)
+            if item.get("dashed"):
+                options.append("dashed")
+            drawing_labels = [
+                label for label in item.get("labels", [])
+                if isinstance(label, Mapping)
+            ]
+            texts = [
+                (rf"\overline{{{_tex_text(label.get('text', ''))}}}"
+                 if label.get("barred") else _tex_text(label.get("text", "")))
+                for label in drawing_labels
+            ]
+            if len(texts) >= 2:
+                value = rf"\splitbox{{{texts[0]}}}{{{texts[1]}}}"
+            elif texts:
+                value = rf"\ensuremath{{{texts[0]}}}"
+            elif item.get("bullet"):
+                value = r"\ensuremath{\bullet}"
+            else:
+                value = ""
+            return f"[{','.join(options)}] {value}"
+
+        def drawing_rows(side: str) -> tuple[list[str], list[int]]:
+            on_side = [
+                (index, item) for index, item in indexed_cells
+                if (int(item.get("column", 0)) >= axis) == (side == "unbarred")
+            ]
+            row_numbers = sorted({int(item.get("row", 0)) for _, item in on_side})
+            rows = [
+                " & ".join(
+                    drawing_cell(item, index)
+                    for index, item in sorted(
+                        ((index, item) for index, item in on_side
+                         if int(item.get("row", 0)) == row),
+                        key=lambda candidate: int(candidate[1].get("column", 0)),
+                    )
                 )
-        elif cell.get("side") == "barred":
-            body.append(
-                rf"\fill[{colors.use('#17202a')}] ({_fmt(x + .5)},{_fmt(-y - .5)}) circle (.1);"
+                for row in row_numbers
+            ]
+            return rows, row_numbers
+
+        covar_rows, covar_row_numbers = drawing_rows("unbarred")
+        convar_rows, convar_row_numbers = drawing_rows("barred")
+        if convar_row_numbers:
+            drawing_hpad = max(
+                0,
+                convar_row_numbers[0]
+                - (covar_row_numbers[-1] + 1 if covar_row_numbers else 0),
             )
     # The coefficient is intentionally part of the pair fragment.  The
     # whiteboard renderer hides a numeric prefix before a \pair marker for the
     # same reason: it belongs to the editable pair term.
     coefficient = str(term.get("coefficient", "1"))
     n0 = str(term.get("n0", "0"))
-    prefactor = rf"\mathord{{{_tex_text(coefficient)}_{{{_tex_text(n0)}}}}}\,"
-    return prefactor + _picture(body, scale="1.15em")
+    prefactor = rf"{coefficient}_{{{_tex_text(n0)}}}\,"
+    body = [r"\begin{ydpair}"]
+    if covar_rows:
+        body.extend((r"  \covar{", "    " + r" \\".join(covar_rows), "  }"))
+    if pad_to_n0 and convar_rows and (covar_rows or drawing_hpad):
+        padding = drawing_hpad or 0
+        if drawing_hpad is None:
+            try:
+                padding = max(
+                    0,
+                    int(n0) - len(unbarred) - len(barred),
+                )
+            except ValueError:
+                padding = 0
+        body.append(rf"  \hpad{{{padding}}}")
+    if convar_rows:
+        body.extend((r"  \convar{", "    " + r" \\".join(convar_rows), "  }"))
+    body.append(r"\end{ydpair}")
+    return prefactor + "\n".join(body)
 
 
 def _pair_latex(
-    pair_widget: object, colors: _ColorRegistry, styles: Mapping[str, object]
+    pair_widget: object,
+    colors: _ColorRegistry,
+    styles: Mapping[str, object],
+    *,
+    pad_to_n0: bool,
 ) -> str:
     expression = _get(pair_widget, "pair_expression", pair_widget)
     if not isinstance(expression, Mapping):
@@ -334,16 +483,60 @@ def _pair_latex(
             term = terms[index]
             index += 1
             if isinstance(term, Mapping):
-                result.append(_pair_term_latex(term, index - 1, styles, colors))
+                result.append(_pair_term_latex(
+                    term, index - 1, styles, colors, pad_to_n0=pad_to_n0,
+                ))
         elif token == "sum":
-            result.append(r"\mathbin{\oplus}")
+            result.append(r"\oplus")
         elif token == "tensor":
-            result.append(r"\mathbin{\otimes}")
+            result.append(r"\otimes")
         elif token == "(":
             result.append(r"\left(")
         elif token == ")":
             result.append(r"\right)")
     return " ".join(result)
+
+
+def _pair_tree_latex(
+    tree: object,
+    colors: _ColorRegistry,
+    *,
+    pad_to_n0: bool,
+    styles: Mapping[str, object] | None = None,
+) -> str:
+    term_index = 0
+    styles = styles or {}
+
+    def render(node: object, parent: str | None = None) -> str:
+        nonlocal term_index
+        if not isinstance(node, Mapping):
+            return ""
+        kind = node.get("kind")
+        if kind == "pair":
+            term = node.get("term")
+            drawing = node.get("drawing")
+            if not isinstance(term, Mapping):
+                return ""
+            result = _pair_term_latex(
+                term,
+                term_index,
+                styles,
+                colors,
+                pad_to_n0=pad_to_n0,
+                drawing=drawing if isinstance(drawing, Mapping) else None,
+            )
+            term_index += 1
+            return result
+        children = node.get("children", [])
+        if not isinstance(children, list):
+            return ""
+        operator = (
+            r" \oplus " if kind == "sum" else r" \otimes "
+        )
+        value = operator.join(render(child, str(kind)) for child in children)
+        return rf"\left({value}\right)" if parent == "tensor" and kind == "sum" else value
+
+    return render(tree)
 
 
 @dataclass
@@ -686,6 +879,450 @@ class _ProjectorLatex:
         ]
 
     def render(self) -> str:
+        """Translate the saved topology into the public layer DSL."""
+        count = self._level_count()
+        visible = (
+            {index for column in self.columns for index in column}
+            if self.compiled else set(self.nodes)
+        )
+
+        def direction(value: object) -> str:
+            return "<" if value == "left" else ">" if value == "right" else ""
+
+        def options_for(key: str, legacy: str | None = None, arrow: str = "") -> str:
+            raw = self.line_colors.get(key)
+            if raw is None and legacy:
+                raw = self.line_colors.get(legacy)
+            style = raw if isinstance(raw, Mapping) else {"color": raw} if raw else {}
+            colour = _option_value(style, "draw", "stroke", "line_color", "color")
+            options: list[str] = []
+            if arrow:
+                options.append(arrow)
+            if self.colors.enabled and colour is not None and str(colour).lower() not in {
+                "black", "#000000", "#17202a",
+            }:
+                options.append(f"draw={self.colors.use(colour)}")
+            line_style = _option_value(style, "line_style", "style", "stroke_style")
+            if line_style in {"solid", "dashed", "dotted", "dashdotted", "double"}:
+                options.append(str(line_style))
+            elif _option_value(
+                style, "stroke_dasharray", "stroke-dasharray", "dash_array",
+            ):
+                options.append("dashed")
+            if not options:
+                return ""
+            if len(options) == 1:
+                return arrow if arrow else options[0]
+            return "{" + ",".join(options) + "}"
+
+        connections = self._connections()
+
+        def connection_label(
+            item: tuple[_Endpoint, _Endpoint, object],
+        ) -> object:
+            if item[2] is not None:
+                return item[2]
+            if item[0].label is not None:
+                return item[0].label
+            return item[1].label
+
+        def export_endpoint_layer(endpoint: _Endpoint) -> int:
+            if not self.compiled or endpoint.kind != "port":
+                return self._endpoint_layer(endpoint)
+            return self._display_column(endpoint.node or 0)
+
+        def connection_options(
+            predicate: Callable[[tuple[_Endpoint, _Endpoint, object]], bool],
+        ) -> str:
+            item = next((value for value in connections if predicate(value)), None)
+            if item is None:
+                return ""
+            key = f"{self._endpoint_key(item[0])}->{self._endpoint_key(item[1])}"
+            return options_for(key, f"strand:{connection_label(item)}")
+
+        def permutation_options(
+            node: Mapping[str, object], input_label: object, output_label: object,
+        ) -> str:
+            """Carry a strand style through an explicit permutation node."""
+            index = int(node.get("index", 0))
+            internal_key = (
+                f"input:{index}:{input_label}->output:{index}:{output_label}"
+            )
+            internal = options_for(internal_key)
+            if internal:
+                return internal
+            entering = connection_options(lambda item: (
+                item[1].kind == "port"
+                and item[1].node == index
+                and item[1].label == input_label
+            ))
+            if entering:
+                return entering
+            return connection_options(lambda item: (
+                item[0].kind == "port"
+                and item[0].node == index
+                and item[0].label == output_label
+            ))
+
+        def node_line_options(
+            node: Mapping[str, object], label: object, side: str,
+        ) -> str:
+            index = int(node.get("index", 0))
+            endpoint = 0 if side == "left" else 1
+            return connection_options(lambda item: (
+                item[endpoint].kind == "port"
+                and item[endpoint].node == index
+                and item[endpoint].label == label
+            ))
+
+        def level_options(layer: int, level: int) -> str:
+            assignments = self.free_levels.get(str(layer), {})
+            label = next((
+                int(raw_label) for raw_label, raw_level in assignments.items()
+                if int(raw_level) == level
+            ), None) if isinstance(assignments, Mapping) else None
+            if label is None:
+                labels = self.graph.get("boundary_labels", [])
+                label = labels[level] if isinstance(labels, list) and level < len(labels) else None
+            return connection_options(lambda item: (
+                connection_label(item) == label
+                and export_endpoint_layer(item[1]) <= layer
+                and layer < export_endpoint_layer(item[0])
+            ))
+
+        def optional(styles: list[str]) -> str:
+            return "[" + ",".join(styles) + "]" if any(styles) else ""
+
+        def operator_optionals(left: list[str], right: list[str]) -> str:
+            if left == right:
+                return optional(left)
+            return "[" + ",".join(left) + "][" + ",".join(right) + "]"
+
+        def permutation_layer(
+            targets: list[int] | None,
+            styles: list[str],
+            *,
+            omit_identity: bool = False,
+        ) -> str | None:
+            if targets is None or sorted(targets) != list(range(1, count + 1)):
+                return None
+            if omit_identity and targets == list(range(1, count + 1)):
+                return None
+            numbers = ",".join(map(str, range(1, count + 1)))
+            rendered_targets = ",".join(map(str, targets))
+            return (
+                "  \\layer{\\permute" + optional(styles)
+                + rf"{{{numbers}}}{{{rendered_targets}}}}}"
+            )
+
+        topology_connections = connections
+        if self.compiled:
+            display = self.graph.get("display", {})
+            strands = display.get("strands", []) if isinstance(display, Mapping) else []
+            topology_connections = [
+                (
+                    self._display_endpoint(strand.get("source", {})),
+                    self._display_endpoint(strand.get("target", {})),
+                    strand.get("strand_label"),
+                )
+                for strand in strands
+                if isinstance(strand, Mapping)
+                and isinstance(strand.get("source"), Mapping)
+                and isinstance(strand.get("target"), Mapping)
+            ]
+
+        def endpoint_level(endpoint: _Endpoint) -> int:
+            if endpoint.kind != "port":
+                return int(endpoint.level or 0)
+            node = self.nodes[endpoint.node or 0]
+            order = node[
+                "input_order" if endpoint.side == "input" else "output_order"
+            ]
+            return int(node.get("level", 0)) + list(order).index(endpoint.label)
+
+        def graph_layer(export_layer: int) -> int:
+            if not self.compiled:
+                return export_layer
+            column = self.columns[export_layer]
+            return int(self.nodes[column[0]].get("layer", export_layer))
+
+        def bypass_level(
+            item: tuple[_Endpoint, _Endpoint, object], export_layer: int,
+        ) -> int:
+            assignments = self.free_levels.get(str(graph_layer(export_layer)), {})
+            label = connection_label(item)
+            if isinstance(assignments, Mapping) and label is not None:
+                assigned = assignments.get(str(label))
+                if assigned is not None:
+                    return int(assigned)
+            source_layer = export_endpoint_layer(item[0])
+            target_layer = export_endpoint_layer(item[1])
+            if source_layer == target_layer:
+                return endpoint_level(item[1])
+            fraction = (
+                (source_layer - export_layer) / (source_layer - target_layer)
+            )
+            interpolated = (
+                endpoint_level(item[0])
+                + (endpoint_level(item[1]) - endpoint_level(item[0])) * fraction
+            )
+            return max(0, min(count - 1, round(interpolated)))
+
+        def cut_targets(cut: int) -> list[int] | None:
+            """Map physical levels across one exact left-to-right cut."""
+            targets: list[int | None] = [None] * count
+            for item in topology_connections:
+                source_layer = export_endpoint_layer(item[0])
+                target_layer = export_endpoint_layer(item[1])
+                if not target_layer <= cut < source_layer:
+                    continue
+                left_level = (
+                    endpoint_level(item[1])
+                    if target_layer == cut
+                    else bypass_level(item, cut)
+                )
+                right_level = (
+                    endpoint_level(item[0])
+                    if source_layer == cut + 1
+                    else bypass_level(item, cut + 1)
+                )
+                if not (0 <= left_level < count and 0 <= right_level < count):
+                    return None
+                target = right_level + 1
+                if targets[left_level] not in {None, target}:
+                    return None
+                targets[left_level] = target
+            if 0 <= cut < self.layers - 1:
+                left_free = self.free_levels.get(str(graph_layer(cut)), {})
+                right_free = self.free_levels.get(str(graph_layer(cut + 1)), {})
+                if isinstance(left_free, Mapping) and isinstance(right_free, Mapping):
+                    for label in left_free.keys() & right_free.keys():
+                        left_level = int(left_free[label])
+                        target = int(right_free[label]) + 1
+                        if targets[left_level] not in {None, target}:
+                            return None
+                        if target in targets and targets[left_level] != target:
+                            return None
+                        targets[left_level] = target
+            # Older saved graphs may omit straight pass-through connection
+            # records.  The only safe inference for an unmatched level is an
+            # unmatched level at the same position; never invent a crossing.
+            used = {target for target in targets if target is not None}
+            for level, target in enumerate(targets):
+                if target is None and level + 1 not in used:
+                    targets[level] = level + 1
+                    used.add(level + 1)
+            if any(target is None for target in targets):
+                return None
+            return [int(target) for target in targets]
+
+        def left_boundary_options(level: int) -> str:
+            item = next((value for value in connections if (
+                value[1].kind == "left-anchor" and value[1].level == level
+            )), None)
+            if item is None:
+                return ""
+            key = f"{self._endpoint_key(item[0])}->{self._endpoint_key(item[1])}"
+            return options_for(key, f"strand:{connection_label(item)}")
+
+        def face_options(
+            nodes: list[dict[str, object]], side: str, layer: int, level: int,
+        ) -> str:
+            for node in nodes:
+                top = int(node.get("level", 0))
+                order = list(node.get(f"{side}_order", node.get("labels", [])))
+                if not top <= level < top + len(order):
+                    continue
+                label = order[level - top]
+                index = int(node.get("index", 0))
+                endpoint_index = 1 if side == "input" else 0
+                item = next((value for value in connections if (
+                    value[endpoint_index].kind == "port"
+                    and value[endpoint_index].node == index
+                    and value[endpoint_index].label == label
+                )), None)
+                if item is None:
+                    return ""
+                key = (
+                    f"{self._endpoint_key(item[0])}->"
+                    f"{self._endpoint_key(item[1])}"
+                )
+                return options_for(key, f"strand:{connection_label(item)}")
+            return level_options(layer, level)
+
+        start_options: list[str] = []
+        end_options: list[str] = []
+        boundary_arrow = direction(self.graph.get("out_direction"))
+        for level in range(count):
+            left = next((item for item in connections
+                         if item[1].kind == "left-anchor" and item[1].level == level), None)
+            right = next((item for item in connections
+                          if item[0].kind == "right-anchor" and item[0].level == level), None)
+            if left:
+                key = f"{self._endpoint_key(left[0])}->{self._endpoint_key(left[1])}"
+                start_options.append(options_for(
+                    key, f"strand:{left[2]}", boundary_arrow,
+                ))
+            else:
+                start_options.append(boundary_arrow)
+            if right:
+                key = f"{self._endpoint_key(right[0])}->{self._endpoint_key(right[1])}"
+                end_options.append(options_for(
+                    key, f"strand:{right[2]}", boundary_arrow,
+                ))
+            else:
+                end_options.append(boundary_arrow)
+
+        if self.compiled:
+            layer_groups = [
+                sorted(
+                    (self.nodes[index] for index in column if index in visible),
+                    key=lambda node: int(node.get("level", 0)),
+                )
+                for column in self.columns
+            ]
+        else:
+            layer_groups = [
+                sorted(
+                    (node for index, node in self.nodes.items()
+                     if index in visible and int(node.get("layer", 0)) == layer),
+                    key=lambda node: int(node.get("level", 0)),
+                )
+                for layer in range(self.layers)
+            ]
+
+        rendered_layers: list[str] = []
+        first_layer = next((
+            (index, nodes) for index, nodes in enumerate(layer_groups) if nodes
+        ), None)
+        # Boundary permutations are side-specific topology.  Resolve the
+        # output boundary only against the first operator face; never infer it
+        # from, or move it from, the input boundary on the right.
+        if first_layer is not None and any(
+            node.get("kind") in {"symmetriser", "antisymmetriser"}
+            for node in first_layer[1]
+        ):
+            boundary_permutation = permutation_layer(
+                cut_targets(-1),
+                [left_boundary_options(level) for level in range(count)],
+                omit_identity=True,
+            )
+            if boundary_permutation is not None:
+                rendered_layers.append(boundary_permutation)
+        for layer_index, nodes in enumerate(layer_groups):
+            permutation = next(
+                (node for node in nodes if node.get("kind") == "permutation"), None,
+            )
+            if permutation is not None:
+                target = list(range(1, count + 1))
+                styles = ["" for _level in range(count)]
+                top = int(permutation.get("level", 0))
+                inputs = list(permutation.get("input_order", []))
+                outputs = list(permutation.get("output_order", []))
+                for mapping in permutation.get("mapping", []):
+                    if isinstance(mapping, list) and len(mapping) == 2:
+                        source_level = top + inputs.index(mapping[0])
+                        target[source_level] = top + outputs.index(mapping[1]) + 1
+                        styles[source_level] = permutation_options(
+                            permutation, mapping[0], mapping[1],
+                        )
+                numbers = ",".join(map(str, range(1, count + 1)))
+                targets = ",".join(map(str, target))
+                for level in range(count):
+                    if not styles[level]:
+                        styles[level] = level_options(layer_index, level)
+                rendered_layers.append(
+                    "  \\layer{\\permute" + optional(styles)
+                    + rf"{{{numbers}}}{{{targets}}}}}",
+                )
+                continue
+
+            commands: list[str] = []
+            cursor = 0
+            for node in nodes:
+                top = int(node.get("level", 0))
+                if top > cursor:
+                    styles = [level_options(layer_index, level) for level in range(cursor, top)]
+                    commands.append(
+                        "\\freelines" + optional(styles) + rf"{{{top - cursor}}}",
+                    )
+                labels = list(node.get("labels", []))
+                size = len(labels)
+                command = (
+                    "antisymmetriser"
+                    if node.get("kind") == "antisymmetriser"
+                    else "symmetriser"
+                )
+                left_styles = [
+                    node_line_options(node, label, "left") for label in labels
+                ]
+                right_styles = [
+                    node_line_options(node, label, "right") for label in labels
+                ]
+                commands.append(
+                    "\\" + command
+                    + operator_optionals(left_styles, right_styles)
+                    + rf"{{{size}}}",
+                )
+                cursor = top + size
+            if cursor < count:
+                styles = [
+                    level_options(layer_index, level)
+                    for level in range(cursor, count)
+                ]
+                commands.append(
+                    "\\freelines" + optional(styles) + rf"{{{count - cursor}}}",
+                )
+            rendered_layers.append("  \\layer{" + "".join(commands) + "}")
+
+            next_nodes = (
+                layer_groups[layer_index + 1]
+                if layer_index + 1 < len(layer_groups)
+                else []
+            )
+            if (
+                any(node.get("kind") in {"symmetriser", "antisymmetriser"}
+                    for node in nodes)
+                and any(node.get("kind") in {"symmetriser", "antisymmetriser"}
+                        for node in next_nodes)
+            ):
+                layer_permutation = permutation_layer(
+                    cut_targets(layer_index),
+                    [face_options(nodes, "input", layer_index, level)
+                     for level in range(count)],
+                )
+                if layer_permutation is not None:
+                    rendered_layers.append(layer_permutation)
+
+        last_layer = next((
+            (index, nodes) for index, nodes in reversed(list(enumerate(layer_groups)))
+            if nodes
+        ), None)
+        # Likewise, the input-boundary permutation belongs after the final
+        # operator and cannot be exchanged with an output-boundary crossing.
+        if last_layer is not None and any(
+            node.get("kind") in {"symmetriser", "antisymmetriser"}
+            for node in last_layer[1]
+        ):
+            boundary_permutation = permutation_layer(
+                cut_targets(self.layers - 1),
+                [face_options(last_layer[1], "input", last_layer[0], level)
+                 for level in range(count)],
+                omit_identity=True,
+            )
+            if boundary_permutation is not None:
+                rendered_layers.append(boundary_permutation)
+
+        body = [
+            r"\begin{projector}",
+            "  \\startnodes[" + ",".join(start_options) + "]",
+            *rendered_layers,
+            "  \\endnodes[" + ",".join(end_options) + "]",
+            r"\end{projector}",
+        ]
+        return "\n".join(body)
+
+    def _render_legacy_tikz(self) -> str:
         body: list[str] = []
         direction = self.graph.get("in_direction")
         arrows = direction in {"left", "right"}
@@ -992,6 +1629,9 @@ def whiteboard_latex(
     document: object,
     *,
     include_preamble: bool = False,
+    include_colors: bool = True,
+    pad_to_n0: bool = False,
+    include_equation_alignment: bool = False,
 ) -> str:
     """Render a whiteboard widget or state mapping as LaTeX.
 
@@ -1012,8 +1652,12 @@ def whiteboard_latex(
     projectors = dict(zip(map(str, projector_ids), projector_widgets, strict=False))
     pairs = dict(zip(map(str, pair_ids), pair_widgets, strict=False))
     backends = dict(zip(map(str, backend_ids), backend_widgets, strict=False))
-    colors = _ColorRegistry()
+    colors = _ColorRegistry(enabled=include_colors)
     rendered_blocks: list[str] = []
+
+    def equation_source(value: str) -> str:
+        value = re.sub(r"\\def\b", "=", value)
+        return value.replace("=", "=&") if include_equation_alignment else value
 
     for block in blocks:
         if not isinstance(block, Mapping):
@@ -1022,6 +1666,20 @@ def whiteboard_latex(
         block_id = str(block.get("id", ""))
         calculation_svg = block.get("calculation_svg")
         if isinstance(calculation_svg, str) and calculation_svg:
+            pair_tree = block.get("pair_expression_tree")
+            if isinstance(pair_tree, Mapping):
+                styles = block.get("calculation_cell_styles", {})
+                styles = styles if isinstance(styles, Mapping) else {}
+                rendered_blocks.append(
+                    equation_source(source)
+                    + _pair_tree_latex(
+                        pair_tree,
+                        colors,
+                        pad_to_n0=pad_to_n0,
+                        styles=styles,
+                    )
+                )
+                continue
             styles = block.get("calculation_cell_styles", {})
             styles = styles if isinstance(styles, Mapping) else {}
             rendered_blocks.append(_svg_latex(calculation_svg, colors, styles))
@@ -1041,7 +1699,11 @@ def whiteboard_latex(
                 start = prefactor[0]
             styles = _get(child, "pair_cell_styles", {})
             styles = styles if isinstance(styles, Mapping) else {}
-            replacements.append((start, match.end(), _pair_latex(child, colors, styles)))
+            replacements.append((
+                start,
+                match.end(),
+                _pair_latex(child, colors, styles, pad_to_n0=pad_to_n0),
+            ))
         terms = block.get("backend_terms", [])
         if isinstance(terms, list):
             for term in terms:
@@ -1059,13 +1721,14 @@ def whiteboard_latex(
         for start, end, replacement in replacements:
             if start < position:
                 continue
-            output.append(source[position:start])
+            output.append(equation_source(source[position:start]))
             output.append(replacement)
             position = end
-        output.append(source[position:])
+        output.append(equation_source(source[position:]))
         rendered_blocks.append("".join(output))
 
-    body = "\n".join(rendered_blocks)
+    separator = " \\\\\n" if include_equation_alignment else "\n"
+    body = separator.join(rendered_blocks)
     definitions = colors.definitions()
     if include_preamble:
         return "\n".join([

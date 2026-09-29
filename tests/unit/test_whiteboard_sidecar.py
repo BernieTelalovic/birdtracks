@@ -1,5 +1,6 @@
 """Tests for canonical whiteboard sidecar persistence."""
 
+from copy import deepcopy
 from fractions import Fraction
 import json
 
@@ -226,6 +227,7 @@ def test_standalone_whiteboard_restores_source_blocks(tmp_path) -> None:
         {"id": "text-1", "source": r"$$P_1 := \frac{1}{2}$$"},
         {"id": "text-2", "source": r"Inline $P_1$ text"},
     ]
+    document.recent_colors = ["#9141ac", "#ff0000"]  # type: ignore[attr-defined]
 
     raw = json.loads(
         (tmp_path / "formatted.whiteboard").read_text(encoding="utf-8")
@@ -233,10 +235,12 @@ def test_standalone_whiteboard_restores_source_blocks(tmp_path) -> None:
     assert raw["version"] == 2
     assert raw["document"]["title"] == "formatted"
     assert raw["document"]["blocks"] == document.blocks
+    assert raw["document"]["recent_colors"] == ["#9141ac", "#ff0000"]
 
     reopened = whiteboard(tmp_path / "formatted", debug=True)
     assert reopened.title == "formatted"  # type: ignore[attr-defined]
     assert reopened.blocks == document.blocks  # type: ignore[attr-defined]
+    assert reopened.recent_colors == ["#9141ac", "#ff0000"]  # type: ignore[attr-defined]
 
 
 def test_standalone_whiteboard_export_writes_neighbouring_tex_file(tmp_path) -> None:
@@ -248,7 +252,9 @@ def test_standalone_whiteboard_export_writes_neighbouring_tex_file(tmp_path) -> 
 
     export = tmp_path / "formatted.tex"
     assert export.exists()
-    assert "\\documentclass" in export.read_text(encoding="utf-8")
+    source = export.read_text(encoding="utf-8")
+    assert source == "x"
+    assert "\\begin{document}" not in source
 
 
 def test_whiteboard_materialises_projector_markers_as_embedded_editors(tmp_path) -> None:
@@ -319,6 +325,7 @@ def test_whiteboard_round_trips_embedded_projector_snapshot(tmp_path) -> None:
     restored = reopened.embedded_projectors[0]  # type: ignore[attr-defined]
     assert restored.projector == projector
     assert restored.line_colors == snapshot["line_colors"]
+    assert "{HTML}{FF0000}" in reopened.to_latex()  # type: ignore[attr-defined]
 
 
 def test_whiteboard_restores_saved_pair_definition_without_evaluating_it(
@@ -363,6 +370,9 @@ def test_whiteboard_round_trips_embedded_pair_snapshot(tmp_path) -> None:
         {"id": "text-1", "source": r"P \def \pair"},
     ]
     document.embedded_pairs[0].pair_expression = expression.state()  # type: ignore[attr-defined]
+    document.embedded_pairs[0].pair_cell_styles = {  # type: ignore[attr-defined]
+        "0:unbarred:0:0": {"fill": "#9141ac"},
+    }
 
     raw = json.loads((tmp_path / "pair-snapshot.whiteboard").read_text())
     assert raw["document"]["blocks"][0]["pair_snapshots"]["0"] == expression.state()
@@ -371,6 +381,10 @@ def test_whiteboard_round_trips_embedded_pair_snapshot(tmp_path) -> None:
     assert PairExpression.from_state(
         reopened.embedded_pairs[0].pair_expression  # type: ignore[attr-defined]
     ) == expression
+    assert reopened.embedded_pairs[0].pair_cell_styles == {  # type: ignore[attr-defined]
+        "0:unbarred:0:0": {"fill": "#9141ac"},
+    }
+    assert "{HTML}{9141AC}" in reopened.to_latex()  # type: ignore[attr-defined]
 
 
 def test_whiteboard_simplification_locks_and_restores_connected_lines(tmp_path) -> None:
@@ -476,6 +490,39 @@ def test_whiteboard_manual_expansion_appends_a_new_calculation_line(tmp_path) ->
     assert len(document.blocks[-1]["calculation_terms"]) > len(  # type: ignore[attr-defined]
         first_line["calculation_terms"]
     )
+
+
+def test_whiteboard_manual_expansion_discards_double_s_a_branch(tmp_path) -> None:
+    pytest.importorskip("anywidget")
+
+    document = whiteboard(tmp_path / "double-s-a-expansion", debug=True)
+    document.blocks = [  # type: ignore[attr-defined]
+        {"id": "text-1", "source": r"\birdtracks"},
+    ]
+    editor = document.embedded_projectors[0]  # type: ignore[attr-defined]
+    projector = Projector(
+        [
+            Symmetriser((2, 1)),
+            Antisymmetriser((2, 3)),
+            Antisymmetriser((1, 3)),
+        ]
+    )
+    editor._configured_projector = projector
+    editor.saved_revision = 1
+    document.simplify_request = {  # type: ignore[attr-defined]
+        "line_id": "text-1", "action": "evaluate", "revision": 1,
+    }
+
+    child = document.backend_projectors[0]  # type: ignore[attr-defined]
+    child.expand_node_request = {"node": 1, "revision": 1}
+
+    value = projector_codec.decode(  # type: ignore[attr-defined]
+        document.blocks[-1]["calculation_value"]
+    )
+    assert isinstance(value, ProjectorSum)
+    assert len(value) == 1
+    assert all(term.simplify() for term, _coefficient in value)
+    assert value.collapse() == projector.collapse()
 
 
 def test_whiteboard_full_expansion_collects_equal_permutations(tmp_path) -> None:
@@ -687,6 +734,60 @@ def test_shift_enter_snapshot_colors_reach_generated_projector(tmp_path) -> None
     assert child_by_id[generated_key].line_colors == colors
 
 
+def test_generated_term_presentation_survives_whiteboard_reopen(tmp_path) -> None:
+    pytest.importorskip("anywidget")
+
+    path = tmp_path / "generated-presentation"
+    document = whiteboard(path, debug=True)
+    document.blocks = [  # type: ignore[attr-defined]
+        {"id": "text-1", "source": r"X \def \birdtracks"},
+    ]
+    source_editor = document.embedded_projectors[0]  # type: ignore[attr-defined]
+    source_editor._configured_projector = Projector([Symmetriser((1, 2))])
+    source_editor.saved_revision = 1
+    document.simplify_request = {  # type: ignore[attr-defined]
+        "line_id": "text-1", "action": "evaluate", "revision": 1,
+    }
+
+    generated = deepcopy(document.blocks[-1])  # type: ignore[attr-defined]
+    generated_id = str(generated["id"])
+    child_by_id = dict(zip(
+        document.backend_projector_ids,  # type: ignore[attr-defined]
+        document.backend_projectors,  # type: ignore[attr-defined]
+        strict=True,
+    ))
+    child = child_by_id[f"{generated_id}:backend:0"]
+    positions = deepcopy(child.positions)
+    positions["0"]["y"] += 2.0
+    free_levels = deepcopy(child.free_levels)
+    free_levels.setdefault("0", {})["99"] = 3
+    presentation = {
+        "graph": deepcopy(child.graph),
+        "positions": positions,
+        "free_levels": free_levels,
+        "port_orders": deepcopy(child.port_orders),
+        "boundary_orders": deepcopy(child.boundary_orders),
+        "effective_coefficient": deepcopy(child.effective_coefficient),
+    }
+    generated["backend_presentations"] = {"0": presentation}
+    blocks = list(document.blocks)  # type: ignore[attr-defined]
+    blocks[-1] = generated
+    document.blocks = blocks  # type: ignore[attr-defined]
+
+    reopened = whiteboard(path, debug=True)
+    reopened_children = dict(zip(
+        reopened.backend_projector_ids,  # type: ignore[attr-defined]
+        reopened.backend_projectors,  # type: ignore[attr-defined]
+        strict=True,
+    ))
+    restored = reopened_children[f"{generated_id}:backend:0"]
+
+    assert restored.positions == positions
+    assert restored.free_levels == free_levels
+    assert restored.port_orders == presentation["port_orders"]
+    assert restored._source_projector == child._source_projector
+
+
 def test_whiteboard_rejects_non_sequential_equals_simplification(tmp_path, caplog) -> None:
     pytest.importorskip("anywidget")
 
@@ -842,6 +943,40 @@ def test_whiteboard_workspace_saves_new_document_beside_opened_session(tmp_path)
 
     assert document.session == tmp_path / "notes" / "follow-up.whiteboard"
     assert document.session.exists()
+
+
+def test_changed_calculation_term_replaces_reused_backend_editor(tmp_path) -> None:
+    """A stable term ID must not retain the previous expression's topology."""
+    pytest.importorskip("anywidget")
+
+    document = whiteboard(tmp_path / "changed-term", debug=True)
+    first = Projector([Symmetriser((1, 2))])
+    second = Projector([
+        Symmetriser((1, 2)),
+        Antisymmetriser((2, 3)),
+    ])
+
+    def block(projector: Projector) -> dict[str, object]:
+        return {
+            "id": "result",
+            "source": "= R",
+            "calculation_step": 1,
+            "calculation_terms": [{
+                "start": 2, "end": 3,
+                "value": projector_codec.encode(projector),
+            }],
+        }
+
+    document.blocks = [block(first)]
+    original = document.backend_projectors[0]
+    assert original._source_projector == first
+
+    document.blocks = [block(second)]
+
+    replacement = document.backend_projectors[0]
+    assert document.backend_projector_ids == ["result:backend:0"]
+    assert replacement is not original
+    assert replacement._source_projector == second
 
 
 def test_whiteboard_and_projector_canvas_have_independent_session_files(

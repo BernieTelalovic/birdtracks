@@ -96,6 +96,17 @@ def click_cell(page, row, column, double=False):
         page.mouse.click(p["x"], p["y"])
 
 
+def click_axis(page):
+    p = page.locator('.birdtracks-young-axis').evaluate("""line => {
+      const point = new DOMPoint(
+        Number(line.getAttribute('x1')),
+        (Number(line.getAttribute('y1')) + Number(line.getAttribute('y2'))) / 2,
+      ).matrixTransform(line.getScreenCTM());
+      return {x: point.x, y: point.y};
+    }""")
+    page.mouse.click(p['x'], p['y'])
+
+
 def test_create_label_undo_and_switch(page):
     young(page)
     assert page.get_by_role("button", name="Insert negative term", exact=True).is_hidden()
@@ -653,9 +664,9 @@ def test_pair_evaluation_reveals_one_clean_line_at_a_time(page):
     assert page.evaluate("model.get('pair_expression')") == expression.state()
 
 
-def test_double_click_axis_creates_singleton(page):
+def test_click_axis_creates_singleton(page):
     young(page)
-    page.locator('.birdtracks-young-axis').dispatch_event('dblclick')
+    click_axis(page)
     assert term(page)['singleton'] is True
     assert term(page)['barred'] == term(page)['unbarred'] == []
     assert page.locator('.birdtracks-young-singleton-control circle').count() == 1
@@ -664,15 +675,15 @@ def test_double_click_axis_creates_singleton(page):
     page.get_by_role('button', name='Undo', exact=True).click()
     assert 'singleton' not in term(page)
     assert page.locator('.birdtracks-young-grid').count() > 0
-    page.locator('.birdtracks-young-axis').dispatch_event('dblclick')
-    page.locator('.birdtracks-young-axis').dispatch_event('dblclick')
+    click_axis(page)
+    click_axis(page)
     assert 'singleton' not in term(page)
 
 
 @pytest.mark.parametrize('column,side', [(0, 'unbarred'), (-1, 'barred')])
 def test_singleton_can_grow_with_guides(page, column, side):
     young(page)
-    page.locator('.birdtracks-young-axis').dispatch_event('dblclick')
+    click_axis(page)
     click_cell(page, 0, column)
     assert term(page)[side] == [1]
     assert 'singleton' not in term(page)

@@ -780,9 +780,15 @@ function renderYoungCreator({ model, el, visible = false }) {
           "aria-label": term.singleton ? "Singleton pair" : "Create singleton pair" });
         if (term.singleton) singletonControl.appendChild(svgElement("circle", {
           cx: axis, cy: height / 2, r: 4, fill: "currentColor" }));
-        axisLine.setAttribute("role", "button");
-        axisLine.setAttribute("aria-label", singletonControl.getAttribute("aria-label"));
-        axisLine.addEventListener("dblclick", event => {
+        const singletonHit = svgElement("line", {
+          x1: axis, y1: top - box / 2,
+          x2: axis, y2: top + pairRows * box + box / 2,
+          class: "birdtracks-young-singleton-hit", stroke: "currentColor",
+          "stroke-opacity": 0.001, "stroke-width": 2,
+          "pointer-events": "stroke", role: "button",
+          "aria-label": singletonControl.getAttribute("aria-label"),
+        });
+        singletonHit.addEventListener("click", event => {
           event.preventDefault(); event.stopPropagation();
           cancelPendingCellClick(); activate();
           const next = { ...term };
@@ -791,9 +797,9 @@ function renderYoungCreator({ model, el, visible = false }) {
           replaceTerm(next);
         });
         svg.appendChild(singletonControl);
-        // Keep only the visible divider above the cell hit targets. The old
-        // invisible eight-pixel control made the highlighted cell edges inert.
-        svg.appendChild(axisLine);
+        // Two pixels makes the dashed divider reliable without restoring the
+        // old eight-pixel dead zone over the adjacent grid cells.
+        svg.append(axisLine, singletonHit);
       }
       svg.appendChild(ghost);
       function location(event) {
@@ -1423,6 +1429,8 @@ function renderCreator({ model, el }) {
     `birdtracks-projector-${widgetMode}`,
   );
   const template = model.get("graph");
+  // Python supplies this read-only plan for evaluate mode. Creator cleanup
+  // operates on the live graph only and never rewrites compiled display data.
   const displayGraph = template.display || {};
   const geometry = template.geometry;
   const spacing = geometry.level_spacing;
@@ -1566,7 +1574,6 @@ function renderCreator({ model, el }) {
     }
   }
 
-  unwrapIdentityBoundaryNodes();
   if (!nodes.length && !connections.length) connections = [{
     source: { type: "right-anchor", level: 0 },
     target: { type: "left-anchor", level: 0 },
@@ -1633,6 +1640,8 @@ function renderCreator({ model, el }) {
   let lastNodePointerDown = null;
   let suppressCanvasDoubleClickUntil = 0;
   let interactionMode = widgetMode;
+  let creatorPresentationPrepared = false;
+  let compiledDisplayValid = null;
   let zoom = Number(model.get("zoom") || 1);
   const undoStack = [];
 
@@ -1664,11 +1673,14 @@ function renderCreator({ model, el }) {
     if ((model.get("term_sign") === "-") !== previous.termNegative) {
       setTermNegative(previous.termNegative);
     }
-    compactEmptyLayers();
-    normalizeCreatorLayers();
+    if (interactionMode === "create") {
+      compactEmptyLayers();
+      normalizeCreatorLayers();
+    }
     syncPortOrders();
     redraw();
-    saveProjector();
+    if (interactionMode === "create") saveProjector();
+    else persistPresentation();
     // Synchronising the exact value is not a mode transition. Reassert the
     // live mode so toolbar operator actions remain enabled after create undo.
     interactionMode = modeBeforeUndo;
@@ -1855,7 +1867,10 @@ function renderCreator({ model, el }) {
   canvasViewport.appendChild(svg);
   const activateEditor = (event) => {
     activeEditorByGroup.set(groupId, editorId);
-    if (model.get("mode") === "create") interactionMode = "create";
+    if (model.get("mode") === "create") {
+      prepareCreatorPresentation();
+      interactionMode = "create";
+    }
     else if (model.get("mode") === "evaluate") interactionMode = "evaluate";
     document.dispatchEvent(new CustomEvent("birdtracks-projector-selected", {
       detail: { groupId, editorId },
@@ -1949,6 +1964,8 @@ function renderCreator({ model, el }) {
       ? (mode === "create" ? "create" : "evaluate")
       : (model.get("active_line") ? mode : "evaluate");
     const previousMode = interactionMode;
+    if (permittedMode === "create") prepareCreatorPresentation();
+    if (permittedMode !== previousMode) compiledDisplayValid = null;
     interactionMode = permittedMode;
     el.dataset.mode = permittedMode;
     if (model.get("mode") !== permittedMode) model.set("mode", permittedMode);
@@ -2120,17 +2137,13 @@ function renderCreator({ model, el }) {
     );
     if (movingIndex < 0) return;
     const [moving] = units.splice(movingIndex, 1);
-    const originalCentre = moving.start + (moving.width - 1) / 2;
-    const requestedCentre = requestedLevel + (moving.width - 1) / 2;
-    const movingHalfSpan = (moving.width - 1) / 2;
-    const movingUp = requestedCentre < originalCentre;
-    const insertionProbe = movingUp
-      ? requestedCentre - movingHalfSpan
-      : requestedCentre + movingHalfSpan;
-    const insertion = units.findIndex((unit) => {
-      const centre = unit.start + (unit.width - 1) / 2;
-      return movingUp ? insertionProbe <= centre : insertionProbe < centre;
-    });
+    const movingUp = requestedLevel < moving.start;
+    const requestedEdge = movingUp
+      ? requestedLevel
+      : requestedLevel + moving.width - 1;
+    const insertion = units.findIndex((unit) => movingUp
+      ? requestedEdge <= unit.start + unit.width - 1
+      : requestedEdge < unit.start);
     units.splice(insertion < 0 ? units.length : insertion, 0, moving);
     assignLayerLevels(layer, units);
   }
@@ -2316,6 +2329,16 @@ function renderCreator({ model, el }) {
     }
   }
 
+  function prepareCreatorPresentation() {
+    if (creatorPresentationPrepared) return;
+    unwrapIdentityBoundaryNodes();
+    collapseFreeLineLayers();
+    compactEmptyLayers();
+    normalizeCreatorLayers();
+    creatorPresentationPrepared = true;
+    compiledDisplayValid = false;
+  }
+
   function levelCount() {
     if (usesCompiledDisplay()) {
       return Math.max(
@@ -2346,9 +2369,8 @@ function renderCreator({ model, el }) {
       && nodes.every((node) => node.kind === "permutation");
   }
 
-  function usesCompiledDisplay() {
+  function validateCompiledDisplay() {
     if (template.creator
-        || interactionMode !== "evaluate"
         || !Array.isArray(displayGraph.strands)) {
       return false;
     }
@@ -2382,6 +2404,14 @@ function renderCreator({ model, el }) {
     return validStrands
       && live.length === planned.size
       && live.every((index) => planned.has(index));
+  }
+
+  function usesCompiledDisplay() {
+    if (interactionMode !== "evaluate") return false;
+    if (compiledDisplayValid === null) {
+      compiledDisplayValid = validateCompiledDisplay();
+    }
+    return compiledDisplayValid;
   }
 
   function displayColumn(nodeIndex) {
@@ -2484,19 +2514,17 @@ function renderCreator({ model, el }) {
   }
 
   function routeLevel(connection, layer) {
-    connection.route ||= {};
-    if (connection.route[String(layer)] === undefined) {
-      const start = coordinates(connection.source);
-      const end = coordinates(connection.target);
-      const startLayer = endpointLayer(connection.source);
-      const endLayer = endpointLayer(connection.target);
-      const fraction = (startLayer - layer) / (startLayer - endLayer);
-      const y = start.y + (end.y - start.y) * fraction;
-      connection.route[String(layer)] = Math.max(
-        0, Math.min(levelCount() - 1, Math.round((y - geometry.top_margin) / spacing)),
-      );
-    }
-    return connection.route[String(layer)];
+    const assigned = connection.route?.[String(layer)];
+    if (assigned !== undefined) return assigned;
+    const start = coordinates(connection.source);
+    const end = coordinates(connection.target);
+    const startLayer = endpointLayer(connection.source);
+    const endLayer = endpointLayer(connection.target);
+    const fraction = (startLayer - layer) / (startLayer - endLayer);
+    const y = start.y + (end.y - start.y) * fraction;
+    return Math.max(
+      0, Math.min(levelCount() - 1, Math.round((y - geometry.top_margin) / spacing)),
+    );
   }
 
   function routePoints(connection) {
@@ -2967,14 +2995,14 @@ function renderCreator({ model, el }) {
     redraw();
   }
 
-  function syncPortOrders() {
+  function syncPortOrders({ save = true } = {}) {
     const state = Object.fromEntries(nodes.map((node) => [String(node.index), {
       input: [...node.inputOrder],
       output: [...node.outputOrder],
     }]));
     model.set("port_orders", state);
     model.set("effective_coefficient", currentGraphCoefficient());
-    model.save_changes();
+    if (save) model.save_changes();
   }
 
   function startPortReorder(event, endpoint) {
@@ -3006,7 +3034,10 @@ function renderCreator({ model, el }) {
       }
       order.splice(current, 1);
       order.splice(desired, 0, endpoint.label);
-      syncPortOrders();
+      // Publish semantic orientation during the preview. The embedding
+      // whiteboard owns the surrounding term sign and reacts to this state;
+      // the projector renderer never edits the expression itself.
+      syncPortOrders({ save: false });
       redraw();
     }
 
@@ -3014,7 +3045,7 @@ function renderCreator({ model, el }) {
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", finish);
       document.removeEventListener("pointercancel", finish);
-      syncPortOrders();
+      if (changed) syncPortOrders();
       redraw();
     }
     document.addEventListener("pointermove", move);
@@ -3065,13 +3096,12 @@ function renderCreator({ model, el }) {
     if (movingIndex < 0) return;
     const [moving] = units.splice(movingIndex, 1);
     const movingUp = requestedLevel < originLevel;
-    const insertionProbe = movingUp
+    const requestedEdge = movingUp
       ? requestedLevel
       : requestedLevel + moving.width - 1;
-    const insertion = units.findIndex((unit) => {
-      const centre = unit.start + (unit.width - 1) / 2;
-      return movingUp ? insertionProbe <= centre : insertionProbe < centre;
-    });
+    const insertion = units.findIndex((unit) => movingUp
+      ? requestedEdge <= unit.start + unit.width - 1
+      : requestedEdge < unit.start);
     units.splice(insertion < 0 ? units.length : insertion, 0, moving);
     let cursor = 0;
     for (const unit of units) {
@@ -3083,10 +3113,9 @@ function renderCreator({ model, el }) {
       }
       cursor += unit.width;
     }
-    // Apply the same whole-layer seatbelt used by ordinary creator rows.
-    // This also canonicalizes legacy/first-row states whose logical strand
-    // segments may have arrived with duplicate levels.
-    normalizeCreatorLayers();
+    // The packed display column can contain operators from different exact
+    // layers. Its units were assigned above as one row, so exact-layer
+    // normalization here would immediately undo the requested move.
   }
 
   function drawRouteHandle(layerGroup, connection, layer, display = null) {
@@ -3138,11 +3167,15 @@ function renderCreator({ model, el }) {
           Math.min(levelCount() - 1, originLevel + steps),
         );
         if (display?.strandLabel !== undefined) {
-          for (const routed of connections) {
-            if (Number(routed.boundaryLabel) === Number(display.strandLabel)) {
-              routed.route[String(layer)] = snappedLevel;
-            }
-          }
+          // Repack from the drag origin on every preview. This moves the
+          // operator as soon as the free strand crosses its near edge, so the
+          // strand never sits underneath the operator waiting for pointerup.
+          nodes = structuredClone(before.nodes);
+          connections = structuredClone(before.connections);
+          reorderDisplayColumn(
+            display.displayColumn, "free", display.strandLabel,
+            originLevel, snappedLevel,
+          );
         } else {
           connection.route[String(layer)] = snappedLevel;
         }
@@ -3153,24 +3186,15 @@ function renderCreator({ model, el }) {
         document.removeEventListener("pointerup", finish);
         document.removeEventListener("pointercancel", finish);
         if (!moved) return;
-        // Reordering needs the pre-drag slot to determine direction. During
-        // pointermove the route is only a visual preview.
-        if (display?.displayColumn !== undefined) {
-          for (const routed of connections) {
-            if (Number(routed.boundaryLabel) === Number(display.strandLabel)) {
-              routed.route[String(layer)] = originLevel;
-            }
-          }
-          reorderDisplayColumn(
-            display.displayColumn, "free", display.strandLabel,
-            originLevel, snappedLevel,
-          );
-        } else {
+        // Ordinary creator routes are packed once on release. Compiled
+        // evaluate columns were already repacked from the origin on preview.
+        if (display?.displayColumn === undefined) {
           connection.route[String(layer)] = originLevel;
           reorderCreatorLayer(layer, connection, snappedLevel);
         }
         rememberEditorState(before);
         redraw();
+        persistPresentation();
       }
       document.addEventListener("pointermove", move);
       document.addEventListener("pointerup", finish);
@@ -3208,7 +3232,7 @@ function renderCreator({ model, el }) {
           : `M ${x - arm} ${y - half} L ${x + arm} ${y} L ${x - arm} ${y + half}`);
       };
       hit.addEventListener("pointerdown", (event) => {
-        if (!event.ctrlKey && !controlDown) return;
+        if (!event.ctrlKey) return;
         event.preventDefault();
         event.stopPropagation();
         directionMode = directionMode === "neutral"
@@ -3318,7 +3342,7 @@ function renderCreator({ model, el }) {
           : `M ${x - arm} ${y - half} L ${x + arm} ${y} L ${x - arm} ${y + half}`);
       };
       const cycle = (event) => {
-        if (!event.ctrlKey && !controlDown) return;
+        if (!event.ctrlKey) return;
         event.preventDefault();
         event.stopPropagation();
         directionMode = directionMode === "neutral"
@@ -3421,7 +3445,7 @@ function renderCreator({ model, el }) {
       for (const edge of ["top", "bottom"]) {
         const lineY = edge === "top" ? top : top + height;
         const recursiveControl = interactionMode === "evaluate";
-        const pointsUp = edge === "top" ? !controlDown : controlDown;
+        const pointsUp = edge === "top";
         const radius = Math.min(nodeWidth, spacing) * 0.085;
         const points = pointsUp
           ? `${centreX},${lineY - radius} ${centreX - radius},${lineY + radius} ${centreX + radius},${lineY + radius}`
@@ -3431,10 +3455,10 @@ function renderCreator({ model, el }) {
           event.stopPropagation();
           if (recursiveControl) {
             if (node.labels.length >= 2) {
-              saveProjector(node.index, edge);
+              saveProjector(node.index, node.labels.length === 2 ? null : edge);
             }
           } else {
-            resizeNode(node, edge, controlDown ? -1 : 1);
+            resizeNode(node, edge, event.ctrlKey ? -1 : 1);
           }
         };
         const hitTarget = recursiveControl
@@ -3451,6 +3475,7 @@ function renderCreator({ model, el }) {
               r: Math.min(nodeWidth, spacing) * 0.28,
               class: "birdtracks-line-control-hit",
             });
+        if (!recursiveControl) hitTarget.dataset.controlEdge = edge;
         hitTarget.setAttribute("role", "button");
         hitTarget.setAttribute(
           "aria-label",
@@ -3702,8 +3727,10 @@ function renderCreator({ model, el }) {
       if (node.layer !== origin.layer || node.level !== origin.level) {
         rememberEditorState(before);
       }
-      compactEmptyLayers();
+      if (interactionMode === "create") compactEmptyLayers();
       redraw();
+      if (interactionMode === "create") saveProjector();
+      else persistPresentation();
     }
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", finish);
@@ -3964,12 +3991,14 @@ function renderCreator({ model, el }) {
   }
 
   function saveProjector(expandNode = null, recursiveEdge = null) {
-    // Normalize presentation first, then preserve it. Serialization needs
-    // concrete identity nodes for boundary-to-boundary strands, but those
-    // nodes must never leak back into the live first-row editor.
-    collapseFreeLineLayers();
-    compactEmptyLayers();
-    normalizeCreatorLayers();
+    // Creator topology is normalized only at the explicit serialization
+    // boundary. Evaluate mode already owns an exact graph and must not run
+    // creator cleanup merely because an expansion/save was requested.
+    if (interactionMode === "create") {
+      collapseFreeLineLayers();
+      compactEmptyLayers();
+      normalizeCreatorLayers();
+    }
     const livePresentation = snapshotEditorState();
     // Pure boundary-to-boundary strands need invisible identity nodes because
     // Python's exact graph represents boundaries through concrete node ports.
@@ -4011,9 +4040,11 @@ function renderCreator({ model, el }) {
         lineColors.set(edgeLineKey(leaving.source, leaving.target), inheritedColor);
       }
     }
-    collapseFreeLineLayers();
-    compactEmptyLayers();
-    normalizeCreatorLayers();
+    if (interactionMode === "create") {
+      collapseFreeLineLayers();
+      compactEmptyLayers();
+      normalizeCreatorLayers();
+    }
     const error = validationError();
     if (error) {
       message.textContent = error;
@@ -4219,6 +4250,31 @@ function renderCreator({ model, el }) {
     message.textContent = expandNode === null ? "Projector saved." : "Operator expanded.";
   }
 
+  // Presentation-only changes must not serialize, normalize, or rebuild the
+  // exact projector. They update the two synced traits used to seed the next
+  // render and leave algebra topology untouched.
+  function persistPresentation() {
+    const positions = structuredClone(model.get("positions") || {});
+    for (const node of nodes) {
+      const previous = positions[String(node.index)] || {};
+      positions[String(node.index)] = {
+        x: previous.x ?? xForLayer(node.layer),
+        y: yFor(node.level + (node.labels.length - 1) / 2),
+      };
+    }
+    const freeLevels = structuredClone(model.get("free_levels") || {});
+    for (const connection of connections) {
+      if (connection.boundaryLabel === undefined) continue;
+      for (const [layer, level] of Object.entries(connection.route || {})) {
+        freeLevels[layer] ||= {};
+        freeLevels[layer][String(connection.boundaryLabel)] = level;
+      }
+    }
+    model.set("positions", positions);
+    model.set("free_levels", freeLevels);
+    model.save_changes();
+  }
+
   function updateModifier(event) {
     if (controlDown === event.ctrlKey) return;
     controlDown = event.ctrlKey;
@@ -4226,6 +4282,10 @@ function renderCreator({ model, el }) {
     updateLocalControls();
   }
   function updateLocalControls() {
+    for (const control of svg.querySelectorAll("[data-control-edge]")) {
+      control.setAttribute("aria-label",
+        `${controlDown ? "Remove" : "Add"} ${control.dataset.controlEdge} line`);
+    }
     localUndo.classList.toggle("visible", controlDown && interactionMode === "evaluate");
     localMultiply.classList.toggle(
       "visible",
@@ -4236,8 +4296,7 @@ function renderCreator({ model, el }) {
     if (!controlDown) return;
     controlDown = false;
     svg.classList.remove("ctrl-active");
-    localUndo.classList.remove("visible");
-    localMultiply.classList.remove("visible");
+    updateLocalControls();
   }
   function applySharedTool(event) {
     if (event.detail.groupId !== groupId) return;
@@ -4257,8 +4316,10 @@ function renderCreator({ model, el }) {
       }
     }
   }
-  document.addEventListener("keydown", updateModifier);
-  document.addEventListener("keyup", updateModifier);
+  document.addEventListener("keydown", updateModifier, true);
+  document.addEventListener("keyup", updateModifier, true);
+  document.addEventListener("pointermove", updateModifier, true);
+  document.addEventListener("pointerdown", updateModifier, true);
   window.addEventListener("blur", clearModifier);
   document.addEventListener("birdtracks-projector-tool", applySharedTool);
   const saveFromPython = () => saveProjector();
@@ -4292,14 +4353,14 @@ function renderCreator({ model, el }) {
     ? null
     : new ResizeObserver(positionLocalUndo);
   localUndoResizeObserver?.observe(canvasViewport);
-  collapseFreeLineLayers();
-  compactEmptyLayers();
-  normalizeCreatorLayers();
+  if (widgetMode === "create") prepareCreatorPresentation();
   setMode(widgetMode);
   setZoom(1);
   return () => {
-    document.removeEventListener("keydown", updateModifier);
-    document.removeEventListener("keyup", updateModifier);
+    document.removeEventListener("keydown", updateModifier, true);
+    document.removeEventListener("keyup", updateModifier, true);
+    document.removeEventListener("pointermove", updateModifier, true);
+    document.removeEventListener("pointerdown", updateModifier, true);
     window.removeEventListener("blur", clearModifier);
     document.removeEventListener("birdtracks-projector-tool", applySharedTool);
     document.removeEventListener("pointerdown", closeLocalFractionOnOutsideClick);

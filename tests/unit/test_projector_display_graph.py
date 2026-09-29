@@ -1,5 +1,10 @@
 from birdtracks.permutations import Permutation
-from birdtracks.projectors import Antisymmetriser, PermutationNode, Projector
+from birdtracks.projectors import (
+    Antisymmetriser,
+    PermutationNode,
+    Projector,
+    Symmetriser,
+)
 from birdtracks.projectors.display_graph import compile_display_graph
 
 
@@ -48,6 +53,24 @@ def test_permutations_become_corridor_provenance_between_real_operators() -> Non
     ]
     assert len(middle) == 3
     assert all(strand.permutation_nodes == (1,) for strand in middle)
+
+
+def test_hidden_permutations_do_not_prevent_disjoint_operators_sharing_column() -> None:
+    projector = Projector(
+        [
+            Symmetriser((1, 2)),
+            Antisymmetriser((3, 4)),
+            PermutationNode(Permutation.identity(), support=(2,)),
+            PermutationNode(Permutation.from_cycle(2, 3), support=(2, 3, 4)),
+            Antisymmetriser((3, 4)),
+            PermutationNode(Permutation.identity(), support=(2,)),
+            Symmetriser((1, 2)),
+        ]
+    )
+
+    display = compile_display_graph(projector)
+
+    assert display.operator_columns == ((0, 1), (4, 6))
 
 
 def test_display_compilation_is_deterministic_and_does_not_change_projector() -> None:

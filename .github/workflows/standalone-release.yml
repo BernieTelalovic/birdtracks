@@ -61,6 +61,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          name: ${{ github.ref_name == 'v0.2.1' && 'Birdtracks Whiteboard with TeX Support' || github.ref_name }}
           files: |
             ${{ matrix.executable }}
             dist/Birdtracks Whiteboard${{ matrix.os == 'windows-latest' && '.exe' || '' }}
@@ -80,7 +81,11 @@ jobs:
       - name: Attach installers to GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          name: ${{ github.ref_name == 'v0.2.1' && 'Birdtracks Whiteboard with TeX Support' || github.ref_name }}
           files: |
             install-birdtracks.sh
             install-birdtracks.ps1
             install-birdtracks.cmd
+            latex/birdtracks.sty
+            latex/birdtracks-example.tex
+            latex/birdtracks-example.pdf

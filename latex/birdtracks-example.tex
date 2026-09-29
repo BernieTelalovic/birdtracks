@@ -1,0 +1,347 @@
+\documentclass{article}
+
+\usepackage{amsmath}
+\usepackage{multirow}
+
+
+% --- Configurable margins ---
+\usepackage[letterpaper]{geometry}
+\newlength{\MarginLeft}
+\newlength{\MarginRight}
+\newlength{\MarginTop}
+\newlength{\MarginBottom}
+
+\setlength{\MarginLeft}{1in}
+\setlength{\MarginRight}{1in}
+\setlength{\MarginTop}{1in}
+\setlength{\MarginBottom}{0.75in}
+
+\geometry{left=\MarginLeft,right=\MarginRight,top=\MarginTop,bottom=\MarginBottom}
+
+
+% Keep birdtracks.sty inside your project directory, or install it in your TeX search path.
+\usepackage{birdtracks}
+
+\birdtracksetup{
+  box size=1.5em,
+  operator width=1.6em,
+  line spacing=1em,
+  boundary length=.8em,
+  arrow_type=Latex
+}
+
+
+
+\begin{document}
+
+\section{Birdtrack projectors}
+
+The \texttt{projector} environment is set up with the structure that symmetrisers and antisymmetrisers can appear under each other, separated by any number of \texttt{freelines}, wrapped in a \texttt{layer}. In-between layers carrying symmetrisers, antisymmetrisers and the more agnostic \texttt{operator} rectangles, permutations between lines can be added in a layer, with a \texttt{permutation}.\\
+
+\begin{equation}\label{eq:projector}
+    \begin{projector}[permutation min width=1.75em]
+  \startnodes
+  \layer{
+    \symmetriser{4}
+    \antisymmetriser
+    []
+    [{draw=red,line width=1pt}]
+    {2}
+  }
+  \layer{
+    \permute
+    [<,<,<,,{>,draw=red,line width=1pt},]
+    {1,2,3,4,5,6}
+    {1,2,5,3,4,6}
+  }
+  \layer{
+    \symmetriser{3}
+    \freelines
+    [{>,draw=red,line width=1pt},<,>]
+    {3}
+  }
+  \layer{
+  \freelines{2}
+    \operator
+    [,{draw=red,line width=1pt}]
+    [{blue}]
+    {4}
+    {\(\displaystyle \, P\, P^\dagger\, \)}
+  }
+  \endnodes[,,{blue}]
+\end{projector}
+\end{equation}
+
+The projector in Eq.~\eqref{eq:projector} is rendered from the source code:
+\begin{verbatim}
+\begin{projector}[permutation min width=1.75em]
+  \startnodes                                       % short lines to the right/left
+  \layer{
+    \symmetriser{4}                                 % number of lines
+    \antisymmetriser
+    []                                              % left lines formatting
+    [{draw=red,line width=1pt}]                     % right lines formatting
+    {2}                                             % number of lines
+  }
+  \layer{
+    \permute
+    [<,<,<,,{>,draw=red,line width=1pt},]           % < and > are arrow directions
+    {1,2,3,4,5,6}                                   % permutation domain
+    {1,2,5,3,4,6}                                   % permutation image
+  }
+  \layer{
+    \symmetriser{3}
+    \freelines                                      % straight lines below the S
+    [{>,draw=red,line width=1pt},<,>]               % line formatting
+    {3}                                             % number of free lines
+  }
+  \layer{
+  \freelines{2}
+    \operator                                       % a rectangle that extends
+    [,{draw=red,line width=1pt}]                    % itself to the text written
+    [{blue}]                                        % inside.
+    {4}                                             % rectangle height
+    {\(\displaystyle \, P\, P^\dagger\, \)}         % text
+  }
+  \endnodes[,,{blue}]
+\end{projector}
+    \end{verbatim}
+
+\pagebreak
+
+\subsection{Traced projectors}
+
+We include the ability to draw a traced projector by breaking the object down into four components; a \texttt{leftconnect}, \texttt{topprojector}, \texttt{bottomprojector} and \texttt{rightconnect}. The top and bottom projectors are wrappers for regular projector objects. The top and bottom projectors can have different (anti)symmetriser widths, as well as different line spacings. Left- and right-connect layers will take care of merging the lines. On these connection layers, we can permute the lines to include line crossings. All lines can be typeset to have individually different colours, widths, arrows, etc.\\
+
+\begin{equation}\label{eq:traced_projector}
+\begin{tracedprojector}[
+  trace_gap=1em,
+  trace_reach=4em,
+  trace_turn=4em,
+  trace_lane_spacing=1.0em
+]
+  \leftconnect{
+    \permute[
+      ,
+      {draw=red,line width=.8pt},
+    ]{1,2,3}{3,2,1}
+  }
+  \topprojector[line_spacing=.8em]{
+    \begin{projector}
+      \layer{
+        \symmetriser{2}
+        \freelines{1}
+      }
+    \end{projector}
+  }
+  \bottomprojector[line_spacing=1.3em]{
+    \begin{projector}
+      \layer{
+        \antisymmetriser{2}
+        \freelines{1}
+      }
+      \layer{
+      \permute{1,2,3}{1,3,2}
+      }
+      \layer{
+      \freelines{1}
+      \symmetriser{2}
+      }
+    \end{projector}
+  }
+  \rightconnect{
+  \permute[
+    ,
+    {draw=blue,dashed},
+    {}
+  ]{1,2,3}{3,1,2}
+}
+\end{tracedprojector}
+\end{equation}
+Equation~\ref{eq:traced_projector} is typeset from the source code:
+
+\begin{verbatim}
+\begin{tracedprojector}[
+  trace_gap=1em,                            % gap between top and bottom projector
+  trace_reach=4em,                          % how far trace extends to the left/right
+  trace_turn=4em,                           % turn radius (higher is rounder)
+  trace_lane_spacing=1.0em                  % line spacing between lines on left/right-connect
+]
+  \leftconnect{                             % trace lines on the left
+    \permute
+    [,{draw=red,line width=.8pt},]
+    {1,2,3}{3,2,1}
+  }
+  \topprojector[line_spacing=.8em]{         % top projector (small line spacing)
+    \begin{projector}
+      \layer{
+        \symmetriser{2}\freelines{1}
+      }
+    \end{projector}
+  }
+  \bottomprojector[line_spacing=1.3em]{     % bottom projector (larger line spacing)
+    \begin{projector}                       % typeset like a regular projector
+      \layer{
+        \antisymmetriser{2}\freelines{1}
+      }
+      \layer{
+        \permute{1,2,3}{1,3,2}
+      }
+      \layer{
+        \freelines{1}
+        \symmetriser{2}
+      }
+    \end{projector}
+  }
+  \rightconnect{                            % trace lines to the right
+  \permute
+  [,{draw=blue,dashed},]
+  {1,2,3}{3,1,2}
+}
+\end{tracedprojector}
+\end{verbatim}
+
+\pagebreak
+\section{Young diagram pairs}
+
+
+Young diagrams and Young diagram pairs can be typeset in the \texttt{ydpair} environment. A \texttt{ydpair} can have either a \texttt{covar} (covariant) and/or a \texttt{convar} (contravariant) component. The distinction lies in the orientation; \texttt{covar} renders left- and top-aligned boxes, and \texttt{convar} renders bottom- and right-aligned boxes, following the pair-multiplication convention. Both parts can be padded by any integer number of boxes by the \texttt{hpad} command. Boxes can be typeset with arbitrary content, filling, line style and width.\\
+
+\begin{equation}\label{eq:pair}
+    \begin{ydpair}
+  \covar{
+    [] & [fill=red,dashed] \ensuremath{\overline{1}}\\
+    [fill=blue]
+  }
+  \hpad{1}
+  \convar{
+    [dashed] \splitbox{\overline{1}}{1} \\
+    [line width=0.2em] \ensuremath{\bullet} & [] \ensuremath{\bullet}
+  }
+\end{ydpair}
+\end{equation}
+
+Equation~\ref{eq:pair} has been typeset with the following code:
+\begin{verbatim}
+\begin{ydpair}
+  \covar{
+    [] & [fill=red,dashed] \ensuremath{\overline{1}}\\
+    [fill=blue]
+  }
+  \hpad{1}
+  \convar{
+    [dashed] \splitbox{\overline{1}}{1} \\
+    [line width=0.2em] \ensuremath{\bullet} & [] \ensuremath{\bullet}
+  }
+\end{ydpair}
+\end{verbatim}
+
+\pagebreak
+
+\section{Global configurations}
+
+In the preamble, \texttt{\string\birdtracksetup} admits parameters that set the document-wide style of birdtrack projectors and Young diagrams/pairs drawn with \texttt{birdtracks.sty}. The globally-configurable parameters are listed in Table~\ref{tab:globals}.
+
+\begin{table}[!h!]
+    \centering
+        \caption{Configurable global \texttt{birdtracks.sty} style variables.}
+   \begin{tabular}{@{}p{.28\linewidth}p{.18\linewidth}p{.46\linewidth}@{}}
+\hline
+Setting & Default & Description \\
+\hline
+\multicolumn{3}{c}{Projector settings}\\
+\hline
+\texttt{layer padding} & \texttt{0.25em} & Padding around composed layers \\
+\texttt{boundary length} & \texttt{0.1em} & Length of exposed boundary lines \\
+\texttt{permutation min width} & \texttt{0pt} & Minimum width of a permutation layer \\
+\texttt{stitch overlap} & \texttt{0.1pt} & Overlap used to hide connection seams \\
+\texttt{arrow type} & \texttt{Latex} & TikZ arrow-tip style \\
+\texttt{arrow size} & \texttt{1} & Arrow-tip scale \\
+\hline
+\multicolumn{3}{c}{Traced operator settings}\\
+\hline
+\texttt{trace gap} & \texttt{2em} & Gap between traced projectors \\
+\texttt{trace reach} & \texttt{1.5em} & Outward reach of trace paths \\
+\texttt{trace turn} & \texttt{0.75em} & Offset used at trace turns \\
+\texttt{trace lane spacing} & \texttt{0.55em} & Spacing between nested trace paths \\
+\hline
+\multicolumn{3}{c}{Custom global \texttt{operator} settings}\\
+\hline
+\texttt{operator width}& \texttt{1.25em} & Operator width \\
+\texttt{operator line separation} & \texttt{1.1em} & Space between operator lines \\
+\texttt{operator line length} & \texttt{1.1em} & Length of external operator lines \\
+\texttt{operator line width} & \texttt{0.5pt} & Operator line thickness \\
+\texttt{operator border width} & \texttt{0.5pt} & Operator border thickness \\
+\texttt{operator fill} & \texttt{white} & Operator background colour \\
+\texttt{operator line colour} & \texttt{black} & Operator line and border colour \\
+\texttt{operator text colour} & \texttt{black} & Operator label colour \\
+\texttt{operator top margin} & \texttt{0.35} & Top margin, in line separations \\
+\texttt{operator bottom margin} & \texttt{0.35} & Bottom margin, in line separations \\
+\texttt{operator options} & empty & Extra TikZ options for the operator \\
+\hline
+\multicolumn{3}{c}{Young diagram pair settings}\\
+\hline
+\texttt{box size}& \texttt{1.8em} & Sets the \texttt{ydpair} box size \\
+\texttt{pair line width} & \texttt{0.5pt} & \texttt{ydpair} border thickness \\
+\texttt{pair line colour} & \texttt{black} & \texttt{ydpair} border colour \\
+\texttt{pair fill} & \texttt{white} & \texttt{ydpair} background colour \\
+\texttt{pair text colour} & \texttt{black} & \texttt{ydpair} label colour \\
+\texttt{pair text size} & \texttt{\string\normalsize} & \texttt{ydpair} label size \\
+\hline\hline
+\end{tabular}
+    \label{tab:globals}
+\end{table}
+
+\pagebreak
+\section{Local configurations}
+
+Environment options apply only to the environment where they are set. The
+projector options can also be set on \texttt{topprojector} and
+\texttt{bottomprojector}. A \texttt{tracedprojector} accepts the global
+settings in Table~\ref{tab:globals} as local overrides.
+
+\begin{table}[!h!]
+    \centering
+    \caption{Configurable local \texttt{birdtracks.sty} settings.}
+    \small
+    \begin{tabular}{@{}p{.28\linewidth}p{.18\linewidth}p{.46\linewidth}@{}}
+\hline
+Setting & Scope & Description \\
+\hline
+\multicolumn{3}{c}{Projector environment settings}\\
+\hline
+\texttt{operator width} & \texttt{projector} & Minimum operator width \\
+\texttt{line spacing} & \texttt{projector} & Space between diagram lines \\
+\texttt{line width} & \texttt{projector} & Diagram-line thickness \\
+\texttt{layer padding} & \texttt{projector} & Padding around layers \\
+\texttt{permutation min width} & \texttt{projector} & Minimum permutation-layer width \\
+\texttt{arrow type}, \texttt{arrow size} & \texttt{projector} & Arrow-tip style and scale \\
+\texttt{stitch overlap} & \texttt{projector} & Hides seams between layers \\
+\texttt{boundary length} & \texttt{projector} & Exposed boundary-line length \\
+\texttt{operator border width} & \texttt{projector} & Operator border thickness \\
+\texttt{operator top margin} & \texttt{projector} & Top margin, in line spacings \\
+\texttt{operator bottom margin} & \texttt{projector} & Bottom margin, in line spacings \\
+\texttt{operator fill}, \texttt{operator line colour}, \texttt{operator text colour} & \texttt{projector} & Operator fill, line, and label colours \\
+\hline
+\multicolumn{3}{c}{Young diagram pair settings}\\
+\hline
+\texttt{box size} & \texttt{ydpair} & Size of each diagram box \\
+\texttt{line width} & \texttt{ydpair} & Box-border thickness \\
+\texttt{line colour} & \texttt{ydpair} & Box-border colour \\
+\texttt{fill} & \texttt{ydpair} & Default box fill \\
+\texttt{text colour} & \texttt{ydpair} & Default label colour \\
+\texttt{text size} & \texttt{ydpair} & Default label size \\
+\hline
+\multicolumn{3}{c}{Entry and command-level styles}\\
+\hline
+\multirow{2}{*}{TikZ node options} & \multirow{2}{*}{\texttt{ydpair}} & Style each \texttt{\string\covar} or \texttt{\string\convar} box independently, e.g., \texttt{[fill=blue!10]} \\\hline
+\texttt{\string\hpad\{n\}} & & Fractional box-size gap between the diagrams \\\hline
+TikZ line options & \multirow{2}{*}{Projector layer} & Used by \texttt{\string\freelines}, \texttt{\string\permute}, \texttt{\string\startnodes}, and \texttt{\string\endnodes}; a leading $<$ or $>$ adds an arrow \\\hline
+Up to two line-option lists & & Used by \texttt{\string\symmetriser}, \texttt{\string\antisymmetriser}, and \texttt{\string\operator} for left- and right-side lines \\
+\hline\hline
+    \end{tabular}
+    \label{tab:locals}
+\end{table}
+
+
+\end{document}

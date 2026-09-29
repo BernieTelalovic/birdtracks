@@ -4,11 +4,11 @@
 % package.  It provides presentation primitives only.
 
 \NeedsTeXFormat{LaTeX2e}
-\ProvidesPackage{birdtracks}[2026/09/20 Birdtrack and Young-diagram notation]
+\ProvidesPackage{birdtracks}[2026/09/30 v0.2.1 Birdtrack and Young-diagram notation]
 
 \RequirePackage{tikz}
+\usetikzlibrary{arrows.meta,calc,decorations.markings}
 \RequirePackage{array}
-\RequirePackage{xparse}
 \RequirePackage{expl3}
 
 \makeatletter
@@ -17,13 +17,11 @@
 % Package configuration
 % --------------------------------------------------------------------------
 
-\newdimen\bt@cellwidth
-\newdimen\bt@cellheight
-\newdimen\bt@celllinewidth
-\newdimen\bt@pairsep
-\newdimen\bt@pairrowsep
 \newdimen\bt@boxwidth
 \newdimen\bt@boxheight
+\newdimen\bt@boxlinewidth
+\newdimen\bt@pairsep
+\newdimen\bt@pairrowsep
 \newdimen\bt@operatorwidth
 \newdimen\bt@operatorlineseparation
 \newdimen\bt@operatorlinelength
@@ -35,10 +33,18 @@
 \newdimen\bt@rightlineend
 \newdimen\bt@firstport
 \newdimen\bt@portheight
+\newdimen\bt@projectorlayerpadding
+\newdimen\bt@projectorboundarylength
+\newdimen\bt@permutationminwidth
+\newdimen\bt@stitchoverlap
+\newdimen\bt@ydboxsize
+\newdimen\bt@ydlinewidth
+\newdimen\bt@mathaxis
+\newdimen\bt@tracegap
+\newdimen\bt@tracereach
+\newdimen\bt@traceturn
+\newdimen\bt@tracelanespacing
 
-\def\bt@cellfill{white}
-\def\bt@celllinecolor{black}
-\def\bt@celltextcolor{black}
 \def\bt@boxfill{white}
 \def\bt@boxlinecolor{black}
 \def\bt@boxtextcolor{black}
@@ -49,25 +55,41 @@
 \def\bt@operatoroptions{}
 \def\bt@operatortop{1}
 \def\bt@operatorbottom{1}
+\def\bt@arrowtype{Latex}
+\def\bt@arrowsize{1}
+\def\bt@ydlinecolor{black}
+\def\bt@ydfill{white}
+\def\bt@ydtextcolor{black}
+\def\bt@ydtextsize{\normalsize}
+
+% PGF normally places an arrow's tip at a decoration mark. Shift by half of
+% the arrow's measured length so its visible extent is centred on the mark.
+\def\bt@centeredarrowright{%
+  \pgfarrowtotallength{\bt@arrowtype[scale=\bt@arrowsize]}%
+  \pgftransformxshift{.5\pgf@x}%
+  \arrow{\bt@arrowtype[scale=\bt@arrowsize]}%
+}
+\def\bt@centeredarrowleft{%
+  \pgfarrowtotallength{\bt@arrowtype[scale=\bt@arrowsize,reversed]}%
+  \pgftransformxshift{-.5\pgf@x}%
+  \arrowreversed{\bt@arrowtype[scale=\bt@arrowsize]}%
+}
 
 % Dimensions are intentionally ordinary TeX dimensions.  The two margin
 % settings are dimensionless numbers: 1 means one line separation.
 \pgfkeys{
   /birdtracks/.is family,
   /birdtracks,
-  cell width/.code = {\bt@cellwidth=#1\relax},
-  cell height/.code = {\bt@cellheight=#1\relax},
-  cell line width/.code = {\bt@celllinewidth=#1\relax},
-  cell separation/.code = {\bt@pairsep=#1\relax},
-  pair row separation/.code = {\bt@pairrowsep=#1\relax},
-  cell fill/.store in = \bt@cellfill,
-  cell line color/.store in = \bt@celllinecolor,
-  cell text color/.store in = \bt@celltextcolor,
   box width/.code = {\bt@boxwidth=#1\relax},
   box height/.code = {\bt@boxheight=#1\relax},
+  box line width/.code = {\bt@boxlinewidth=#1\relax},
+  box separation/.code = {\bt@pairsep=#1\relax},
+  pair row separation/.code = {\bt@pairrowsep=#1\relax},
   box fill/.store in = \bt@boxfill,
   box line color/.store in = \bt@boxlinecolor,
   box text color/.store in = \bt@boxtextcolor,
+  box size/.code = {\bt@boxwidth=#1\relax\bt@boxheight=#1\relax\bt@ydboxsize=#1\relax},
+  box_size/.code = {\bt@boxwidth=#1\relax\bt@boxheight=#1\relax\bt@ydboxsize=#1\relax},
   operator width/.code = {\bt@operatorwidth=#1\relax},
   operator line separation/.code = {\bt@operatorlineseparation=#1\relax},
   operator line length/.code = {\bt@operatorlinelength=#1\relax},
@@ -80,24 +102,53 @@
   operator bottom margin/.store in = \bt@operatorbottom,
   operator/.store in = \bt@operator,
   operator options/.store in = \bt@operatoroptions,
+  layer padding/.code = {\bt@projectorlayerpadding=#1\relax},
+  line spacing/.code = {\bt@operatorlineseparation=#1\relax},
+  line width/.code = {\bt@operatorlinewidth=#1\relax},
+  boundary length/.code = {\bt@projectorboundarylength=#1\relax},
+  operator_width/.code = {\bt@operatorwidth=#1\relax},
+  line_spacing/.code = {\bt@operatorlineseparation=#1\relax},
+  line_width/.code = {\bt@operatorlinewidth=#1\relax},
+  layer_padding/.code = {\bt@projectorlayerpadding=#1\relax},
+  permutation min width/.code = {\bt@permutationminwidth=#1\relax},
+  permutation_min_width/.code = {\bt@permutationminwidth=#1\relax},
+  arrow type/.store in = \bt@arrowtype,
+  arrow_type/.store in = \bt@arrowtype,
+  arrow size/.store in = \bt@arrowsize,
+  arrow_size/.store in = \bt@arrowsize,
+  stitch overlap/.code = {\bt@stitchoverlap=#1\relax},
+  stitch_overlap/.code = {\bt@stitchoverlap=#1\relax},
+  pair line width/.code = {\bt@ydlinewidth=#1\relax},
+  pair line color/.store in = \bt@ydlinecolor,
+  pair fill/.store in = \bt@ydfill,
+  pair text color/.store in = \bt@ydtextcolor,
+  pair text size/.store in = \bt@ydtextsize,
+  pair_line_width/.code = {\bt@ydlinewidth=#1\relax},
+  pair_line_color/.store in = \bt@ydlinecolor,
+  pair_fill/.store in = \bt@ydfill,
+  pair_text_color/.store in = \bt@ydtextcolor,
+  pair_text_size/.store in = \bt@ydtextsize,
+  trace gap/.code = {\bt@tracegap=#1\relax},
+  trace reach/.code = {\bt@tracereach=#1\relax},
+  trace turn/.code = {\bt@traceturn=#1\relax},
+  trace lane spacing/.code = {\bt@tracelanespacing=#1\relax},
+  trace_gap/.code = {\bt@tracegap=#1\relax},
+  trace_reach/.code = {\bt@tracereach=#1\relax},
+  trace_turn/.code = {\bt@traceturn=#1\relax},
+  trace_lane_spacing/.code = {\bt@tracelanespacing=#1\relax},
+  boundary_length/.code = {\bt@projectorboundarylength=#1\relax},
 }
 
 % Defaults are set before package options are processed.
 \pgfkeys{/birdtracks,
-  cell width=1.8em,
-  cell height=1.8em,
-  cell line width=.4pt,
-  cell separation=.15em,
+  box size=1.8em,
+  box line width=.4pt,
+  box separation=.15em,
   pair row separation=.15em,
-  cell fill=white,
-  cell line color=black,
-  cell text color=black,
-  box width=2.5em,
-  box height=2.5em,
   box fill=white,
   box line color=black,
   box text color=black,
-  operator width=2.0em,
+  operator width=1.25em,
   operator line separation=1.1em,
   operator line length=1.1em,
   operator line width=.5pt,
@@ -105,9 +156,24 @@
   operator fill=white,
   operator line color=black,
   operator text color=black,
-  operator top margin=1,
-  operator bottom margin=1,
+  operator top margin=.35,
+  operator bottom margin=.35,
   operator=S,
+  layer padding=0.25em,
+  boundary length=0.1em,
+  permutation min width=0pt,
+  arrow type=Latex,
+  arrow size=1,
+  stitch overlap=.1pt,
+  pair line width=.5pt,
+  pair line color=black,
+  pair fill=white,
+  pair text color=black,
+  pair text size=\normalsize,
+  trace gap=2em,
+  trace reach=1.5em,
+  trace turn=.75em,
+  trace lane spacing=.55em,
 }
 
 \DeclareOption*{\pgfkeys{/birdtracks/\CurrentOption}}
@@ -116,6 +182,7 @@
 % Change defaults after loading as well.  Settings inside a pair or
 % projector are grouped and therefore remain local to that object.
 \NewDocumentCommand{\btset}{m}{\pgfkeys{/birdtracks,#1}}
+\NewDocumentCommand{\birdtracksetup}{m}{\btset{#1}}
 
 % --------------------------------------------------------------------------
 % Young-diagram cells and pairs
@@ -123,13 +190,13 @@
 
 \tikzset{
   bt/cell/.style={
-    draw=\bt@celllinecolor,
-    fill=\bt@cellfill,
-    text=\bt@celltextcolor,
-    line width=\bt@celllinewidth,
-    minimum width=\bt@cellwidth,
-    minimum height=\bt@cellheight,
-    text width=\bt@cellwidth,
+    draw=\bt@boxlinecolor,
+    fill=\bt@boxfill,
+    text=\bt@boxtextcolor,
+    line width=\bt@boxlinewidth,
+    minimum width=\bt@boxwidth,
+    minimum height=\bt@boxheight,
+    text width=\bt@boxwidth,
     inner sep=0pt,
     outer sep=0pt,
     align=center,
@@ -138,22 +205,6 @@
   bt/line color/.style={draw=#1},
   bt/text color/.style={text=#1},
   bt/dotted cell/.style={bt/cell,dotted},
-  bt/box/.style={
-    draw=\bt@boxlinecolor,
-    fill=\bt@boxfill,
-    text=\bt@boxtextcolor,
-    minimum width=\bt@boxwidth,
-    minimum height=\bt@boxheight,
-    text width=\bt@boxwidth,
-    inner sep=2pt,
-    outer sep=0pt,
-    align=center,
-  },
-  bt/box width/.style={
-    minimum width=#1,
-    text width=#1,
-  },
-  bt/box height/.style={minimum height=#1},
   bt/divider/.style={},
 }
 
@@ -181,14 +232,14 @@
 % and to the diagonal (for example draw=blue or line width=1pt).
 \NewDocumentCommand{\btdivcell}{O{}mm}{%
   \begin{tikzpicture}[
-      x=\bt@cellwidth,
-      y=\bt@cellheight,
-      baseline=.5\bt@cellheight,
+      x=\bt@boxwidth,
+      y=\bt@boxheight,
+      baseline=.5\bt@boxheight,
       bt/cell,#1]
     \path (0,0) rectangle (1,1);
-    \node[inner sep=0pt, text width=.45\bt@cellwidth, align=center]
+    \node[inner sep=0pt, text width=.45\bt@boxwidth, align=center]
       at (.25,.5) {\ensuremath{#2}};
-    \node[inner sep=0pt, text width=.45\bt@cellwidth, align=center]
+    \node[inner sep=0pt, text width=.45\bt@boxwidth, align=center]
       at (.75,.5) {\ensuremath{#3}};
     \draw[bt/divider] (0,0) -- (1,1);
   \end{tikzpicture}%
@@ -207,24 +258,13 @@
 }
 
 % --------------------------------------------------------------------------
-% General content boxes
-% --------------------------------------------------------------------------
-
-% Unlike cells, the contents are not forced into math mode.  This makes the
-% box suitable for text, a formula, a pair, or any other LaTeX material.
-\NewDocumentCommand{\btbox}{O{}m}{%
-  \tikz[baseline=(btbox.base)]%
-    \node (btbox) [bt/box,#1] {#2};%
-}
-
-% --------------------------------------------------------------------------
 % Birdtrack symmetrisers and antisymmetrisers
 % --------------------------------------------------------------------------
 
 \tikzset{
   bt/every line/.style={
     line width=\bt@operatorlinewidth,
-    line cap=round,
+    line cap=butt,
   },
   bt/operator/.style={
     draw=\bt@operatorlinecolor,
@@ -293,7 +333,7 @@
           \pgfmathsetlength{\bt@portheight}{
             \the\bt@firstport - (##1 - 1) *
             \the\bt@operatorlineseparation}
-          \draw[bt/every line,##2]
+          \draw[bt/every~line,##2]
             (\the\bt@leftlineend,\the\bt@portheight) --
             (-\the\bt@halfoperatorwidth,\the\bt@portheight);
         }
@@ -302,7 +342,7 @@
           \pgfmathsetlength{\bt@portheight}{
             \the\bt@firstport - (##1 - 1) *
             \the\bt@operatorlineseparation}
-          \draw[bt/every line,##2]
+          \draw[bt/every~line,##2]
             (\the\bt@halfoperatorwidth,\the\bt@portheight) --
             (\the\bt@rightlineend,\the\bt@portheight);
         }
@@ -329,6 +369,963 @@
 \NewDocumentEnvironment{btSA}{O{S}O{}+b}
   {\begin{btprojector}[operator={#1},#2]#3\end{btprojector}}
   {}
+
+% --------------------------------------------------------------------------
+% Composable, layer-oriented projector notation
+% --------------------------------------------------------------------------
+
+\tikzset{
+  bt/symmetriser/.style={fill=white},
+  bt/antisymmetriser/.style={fill=black},
+  bt/general-operator/.style={},
+  bt/arrow-left/.style={
+    postaction={decorate},
+    decoration={markings,mark=at~position~.5~with~{\bt@centeredarrowleft}},
+  },
+  bt/arrow-right/.style={
+    postaction={decorate},
+    decoration={markings,mark=at~position~.5~with~{\bt@centeredarrowright}},
+  },
+}
+
+\pgfkeys{
+  /birdtracks/projector/.is~family,
+  /birdtracks/projector,
+  operator_width/.code={\bt@operatorwidth=#1\relax},
+  operator~width/.code={\bt@operatorwidth=#1\relax},
+  line_spacing/.code={\bt@operatorlineseparation=#1\relax},
+  line~spacing/.code={\bt@operatorlineseparation=#1\relax},
+  line_width/.code={\bt@operatorlinewidth=#1\relax},
+  line~width/.code={\bt@operatorlinewidth=#1\relax},
+  layer_padding/.code={\bt@projectorlayerpadding=#1\relax},
+  layer~padding/.code={\bt@projectorlayerpadding=#1\relax},
+  permutation_min_width/.code={\bt@permutationminwidth=#1\relax},
+  permutation~min~width/.code={\bt@permutationminwidth=#1\relax},
+  arrow_type/.store~in=\bt@arrowtype,
+  arrow~type/.store~in=\bt@arrowtype,
+  arrow_size/.store~in=\bt@arrowsize,
+  arrow~size/.store~in=\bt@arrowsize,
+  stitch_overlap/.code={\bt@stitchoverlap=#1\relax},
+  stitch~overlap/.code={\bt@stitchoverlap=#1\relax},
+  boundary_length/.code={\bt@projectorboundarylength=#1\relax},
+  boundary~length/.code={\bt@projectorboundarylength=#1\relax},
+  operator_border_width/.code={\bt@operatorborderwidth=#1\relax},
+  operator~border~width/.code={\bt@operatorborderwidth=#1\relax},
+  operator_top_margin/.store~in=\bt@operatortop,
+  operator~top~margin/.store~in=\bt@operatortop,
+  operator_bottom_margin/.store~in=\bt@operatorbottom,
+  operator~bottom~margin/.store~in=\bt@operatorbottom,
+  operator_fill/.store~in=\bt@operatorfill,
+  operator~fill/.store~in=\bt@operatorfill,
+  operator_line_color/.store~in=\bt@operatorlinecolor,
+  operator~line~color/.store~in=\bt@operatorlinecolor,
+  operator_text_color/.store~in=\bt@operatortextcolor,
+  operator~text~color/.store~in=\bt@operatortextcolor,
+}
+
+\seq_new:N \l_bt_projector_layers_seq
+\seq_new:N \l_bt_projector_layer_widths_seq
+\seq_new:N \l_bt_permutation_source_seq
+\seq_new:N \l_bt_permutation_target_seq
+\seq_new:N \l_bt_permutation_style_seq
+\seq_new:N \l_bt_command_style_seq
+\bool_new:N \l_bt_projector_start_bool
+\bool_new:N \l_bt_projector_end_bool
+\int_new:N \l_bt_projector_phase_int
+\int_new:N \l_bt_projector_lines_int
+\int_new:N \l_bt_layer_lines_int
+\int_new:N \l_bt_layer_cursor_int
+\int_new:N \l_bt_permutation_target_int
+\dim_new:N \l_bt_layer_left_dim
+\dim_new:N \l_bt_layer_right_dim
+\dim_new:N \l_bt_line_y_dim
+\dim_new:N \l_bt_target_y_dim
+\dim_new:N \l_bt_operator_y_dim
+\dim_new:N \l_bt_operator_height_dim
+\dim_new:N \l_bt_projector_right_dim
+\dim_new:N \l_bt_layer_content_width_dim
+\dim_new:N \l_bt_layer_width_dim
+\dim_new:N \l_bt_draw_left_dim
+\dim_new:N \l_bt_draw_right_dim
+\dim_new:N \l_bt_projector_strand_center_dim
+\dim_new:N \l_bt_projector_upper_extent_dim
+\dim_new:N \l_bt_projector_lower_extent_dim
+\dim_new:N \l_bt_projector_half_extent_dim
+\dim_new:N \l_bt_projector_left_endpoint_dim
+\dim_new:N \l_bt_projector_right_endpoint_dim
+\dim_new:N \l_bt_projector_endpoint_center_dim
+\dim_new:N \l_bt_projector_left_extent_dim
+\dim_new:N \l_bt_projector_right_extent_dim
+\dim_new:N \l_bt_projector_half_width_dim
+\dim_new:N \l_bt_projector_span_dim
+\int_new:N \g_bt_last_projector_lines_int
+\dim_new:N \g_bt_last_projector_spacing_dim
+\dim_new:N \g_bt_last_projector_span_dim
+\tl_new:N \l_bt_line_options_tl
+\tl_new:N \l_bt_start_options_tl
+\tl_new:N \l_bt_end_options_tl
+\box_new:N \l_bt_operator_content_box
+
+\cs_new_protected:Npn \bt_projector_error:n #1
+  {\PackageError{birdtracks}{#1}{Check the projector layer syntax.}}
+
+% A leading bare direction marker is notation rather than a raw TikZ key.
+% Everything after it remains ordinary TikZ draw options.
+\cs_new_protected:Npn \bt_prepare_line_options:n #1
+  {
+    \tl_set:Nn \l_bt_line_options_tl {#1}
+    % Accept the common math-mode spelling \> as well as the bare marker >.
+    \tl_replace_once:Nnn \l_bt_line_options_tl {\>} {>}
+    \regex_replace_once:nnN
+      {\A\s*<\s*,?} {bt/arrow-left,} \l_bt_line_options_tl
+    \regex_replace_once:nnN
+      {\A\s*>\s*,?} {bt/arrow-right,} \l_bt_line_options_tl
+    \tikzset{
+      bt/current-line/.style/.expanded={\l_bt_line_options_tl}
+    }
+  }
+
+\cs_new_protected:Npn \bt_count_lines:n #1
+  {\int_add:Nn \l_bt_layer_lines_int {#1}}
+
+\cs_new_protected:Npn \bt_measure_minimum_operator:
+  {
+    \dim_set:Nn \l_bt_layer_content_width_dim
+      {\dim_max:nn {\l_bt_layer_content_width_dim}{\bt@operatorwidth}}
+  }
+
+\cs_new_protected:Npn \bt_measure_operator_content:n #1
+  {
+    \hbox_set:Nn \l_bt_operator_content_box {#1}
+    \dim_set:Nn \l_bt_layer_content_width_dim
+      {
+        \dim_max:nn
+          {\l_bt_layer_content_width_dim}
+          {\dim_max:nn {\bt@operatorwidth}{\box_wd:N \l_bt_operator_content_box}}
+      }
+  }
+
+\cs_new_protected:Npn \bt_measure_permutation:
+  {
+    \dim_compare:nNnTF {\bt@permutationminwidth} > {0pt}
+      {\dim_set:Nn \l_bt_layer_content_width_dim {\bt@permutationminwidth}}
+      {\bt_measure_minimum_operator:}
+  }
+
+\cs_new_protected:Npn \bt_set_command_styles:nn #1#2
+  {
+    \int_compare:nNnTF {#1} = {1}
+      {
+        \seq_clear:N \l_bt_command_style_seq
+        \seq_put_right:Nn \l_bt_command_style_seq {#2}
+      }
+      {\seq_set_split:Nnn \l_bt_command_style_seq {,}{#2}}
+  }
+
+\cs_new_protected:Npn \bt_render_plain_lines:nn #1#2
+  {
+    \bt_set_command_styles:nn {#1}{#2}
+    \dim_set:Nn \l_bt_draw_left_dim
+      {\l_bt_layer_left_dim - \bt@stitchoverlap}
+    \dim_set:Nn \l_bt_draw_right_dim
+      {\l_bt_layer_right_dim + \bt@stitchoverlap}
+    \int_step_inline:nn {#1}
+      {
+        \tl_set:Nx \l_bt_line_options_tl
+          {\seq_item:Nn \l_bt_command_style_seq {##1}}
+        \exp_args:NV \bt_prepare_line_options:n \l_bt_line_options_tl
+        \dim_set:Nn \l_bt_line_y_dim
+          {-\bt@operatorlineseparation * (\l_bt_layer_cursor_int + ##1 - 2)}
+        \draw[bt/every~line,bt/current-line]
+          (\dim_use:N \l_bt_draw_left_dim,\dim_use:N \l_bt_line_y_dim) --
+          (\dim_use:N \l_bt_draw_right_dim,\dim_use:N \l_bt_line_y_dim);
+      }
+    \int_add:Nn \l_bt_layer_cursor_int {#1}
+  }
+
+\cs_new_protected:Npn \bt_render_split_lines:nnnn #1#2#3#4
+  {
+    \dim_set:Nn \l_bt_draw_left_dim
+      {(\l_bt_layer_left_dim + \l_bt_layer_right_dim - #4) / 2}
+    \dim_set:Nn \l_bt_draw_right_dim
+      {(\l_bt_layer_left_dim + \l_bt_layer_right_dim + #4) / 2}
+    \bt_set_command_styles:nn {#1}{#2}
+    \int_step_inline:nn {#1}
+      {
+        \tl_set:Nx \l_bt_line_options_tl
+          {\seq_item:Nn \l_bt_command_style_seq {##1}}
+        \exp_args:NV \bt_prepare_line_options:n \l_bt_line_options_tl
+        \dim_set:Nn \l_bt_line_y_dim
+          {-\bt@operatorlineseparation * (\l_bt_layer_cursor_int + ##1 - 2)}
+        \draw[bt/every~line,bt/current-line]
+          (\dim_eval:n {\l_bt_layer_left_dim - \bt@stitchoverlap},
+           \dim_use:N \l_bt_line_y_dim) --
+          (\dim_eval:n {\l_bt_draw_left_dim + \bt@stitchoverlap},
+           \dim_use:N \l_bt_line_y_dim);
+      }
+    \bt_set_command_styles:nn {#1}{#3}
+    \int_step_inline:nn {#1}
+      {
+        \tl_set:Nx \l_bt_line_options_tl
+          {\seq_item:Nn \l_bt_command_style_seq {##1}}
+        \exp_args:NV \bt_prepare_line_options:n \l_bt_line_options_tl
+        \dim_set:Nn \l_bt_line_y_dim
+          {-\bt@operatorlineseparation * (\l_bt_layer_cursor_int + ##1 - 2)}
+        \draw[bt/every~line,bt/current-line]
+          (\dim_eval:n {\l_bt_draw_right_dim - \bt@stitchoverlap},
+           \dim_use:N \l_bt_line_y_dim) --
+          (\dim_eval:n {\l_bt_layer_right_dim + \bt@stitchoverlap},
+           \dim_use:N \l_bt_line_y_dim);
+      }
+    \int_add:Nn \l_bt_layer_cursor_int {#1}
+  }
+
+\cs_new_protected:Npn \bt_render_operator_lines:nnnn #1#2#3#4
+  {
+    \bt_render_split_lines:nnnn {#2}{#3}{#4}{\bt@operatorwidth}
+    \pgfmathsetlength{\l_bt_operator_y_dim}{
+      -\the\bt@operatorlineseparation *
+      (2 * \int_use:N \l_bt_layer_cursor_int - #2 - 3
+       - \bt@operatortop + \bt@operatorbottom) / 2}
+    \pgfmathsetlength{\l_bt_operator_height_dim}{
+      \the\bt@operatorlineseparation *
+      (#2 - 1 + \bt@operatortop + \bt@operatorbottom)}
+    \str_if_eq:nnTF {#1}{S}
+      {\bt_render_operator_node:nn {bt/symmetriser}{}}
+      {\bt_render_operator_node:nn {bt/antisymmetriser}{}}
+  }
+
+\cs_new_protected:Npn \bt_render_general_operator:nnnn #1#2#3#4
+  {
+    \hbox_set:Nn \l_bt_operator_content_box {#4}
+    \dim_set:Nn \l_bt_layer_content_width_dim
+      {\dim_max:nn {\bt@operatorwidth}{\box_wd:N \l_bt_operator_content_box}}
+    \bt_render_split_lines:nnnn
+      {#1}{#2}{#3}{\l_bt_layer_content_width_dim}
+    \pgfmathsetlength{\l_bt_operator_y_dim}{
+      -\the\bt@operatorlineseparation *
+      (2 * \int_use:N \l_bt_layer_cursor_int - #1 - 3
+       - \bt@operatortop + \bt@operatorbottom) / 2}
+    \pgfmathsetlength{\l_bt_operator_height_dim}{
+      \the\bt@operatorlineseparation *
+      (#1 - 1 + \bt@operatortop + \bt@operatorbottom)}
+    \bt_render_operator_node:nn {bt/general-operator}{#4}
+  }
+
+\cs_new_protected:Npn \bt_render_operator_node:nn #1#2
+  {
+    \node[bt/operator,#1,
+          minimum~height=\dim_use:N \l_bt_operator_height_dim]
+      at ($
+        (\dim_use:N \l_bt_layer_left_dim,\dim_use:N \l_bt_operator_y_dim)!.5!
+        (\dim_use:N \l_bt_layer_right_dim,\dim_use:N \l_bt_operator_y_dim)
+      $) {#2};
+  }
+
+\NewDocumentCommand{\symmetriser}{o o m}
+  {
+    \int_case:nnF {\l_bt_projector_phase_int}
+      {
+        {1}{\bt_count_lines:n {#3}}
+        {2}{
+          \IfNoValueTF{#1}
+            {\bt_render_operator_lines:nnnn {S}{#3}{}{}}
+            {\IfNoValueTF{#2}
+              {\bt_render_operator_lines:nnnn {S}{#3}{#1}{#1}}
+              {\bt_render_operator_lines:nnnn {S}{#3}{#1}{#2}}}
+        }
+        {3}{\bt_measure_minimum_operator:}
+      }
+      {\bt_projector_error:n {\string\symmetriser\space must be inside \string\layer}}
+  }
+
+\NewDocumentCommand{\antisymmetriser}{o o m}
+  {
+    \int_case:nnF {\l_bt_projector_phase_int}
+      {
+        {1}{\bt_count_lines:n {#3}}
+        {2}{
+          \IfNoValueTF{#1}
+            {\bt_render_operator_lines:nnnn {A}{#3}{}{}}
+            {\IfNoValueTF{#2}
+              {\bt_render_operator_lines:nnnn {A}{#3}{#1}{#1}}
+              {\bt_render_operator_lines:nnnn {A}{#3}{#1}{#2}}}
+        }
+        {3}{\bt_measure_minimum_operator:}
+      }
+      {\bt_projector_error:n {\string\antisymmetriser\space must be inside \string\layer}}
+  }
+
+\NewDocumentCommand{\freelines}{O{}m}
+  {
+    \int_case:nnF {\l_bt_projector_phase_int}
+      {
+        {1}{\bt_count_lines:n {#2}}
+        {2}{\bt_render_plain_lines:nn {#2}{#1}}
+        {3}{}
+      }
+      {\bt_projector_error:n {\string\freelines\space must be inside \string\layer}}
+  }
+
+\NewDocumentCommand{\operator}{o o m m}
+  {
+    \int_case:nnF {\l_bt_projector_phase_int}
+      {
+        {1}{\bt_count_lines:n {#3}}
+        {2}{
+          \IfNoValueTF{#1}
+            {\bt_render_general_operator:nnnn {#3}{}{}{#4}}
+            {\IfNoValueTF{#2}
+              {\bt_render_general_operator:nnnn {#3}{#1}{#1}{#4}}
+              {\bt_render_general_operator:nnnn {#3}{#1}{#2}{#4}}}
+        }
+        {3}{\bt_measure_operator_content:n {#4}}
+      }
+      {\bt_projector_error:n {\string\operator\space must be inside \string\layer}}
+  }
+
+\cs_new_protected:Npn \bt_count_permutation:n #1
+  {
+    \seq_set_split:Nnn \l_bt_permutation_source_seq {,}{#1}
+    \int_add:Nn \l_bt_layer_lines_int
+      {\seq_count:N \l_bt_permutation_source_seq}
+  }
+
+\cs_new_protected:Npn \bt_render_permutation:nnn #1#2#3
+  {
+    \seq_set_split:Nnn \l_bt_permutation_style_seq {,}{#1}
+    \seq_set_split:Nnn \l_bt_permutation_source_seq {,}{#2}
+    \seq_set_split:Nnn \l_bt_permutation_target_seq {,}{#3}
+    \dim_set:Nn \l_bt_draw_left_dim
+      {\l_bt_layer_left_dim - \bt@stitchoverlap}
+    \dim_set:Nn \l_bt_draw_right_dim
+      {\l_bt_layer_right_dim + \bt@stitchoverlap}
+    \int_compare:nNnF
+      {\seq_count:N \l_bt_permutation_source_seq} =
+      {\seq_count:N \l_bt_permutation_target_seq}
+      {\bt_projector_error:n {Permutation lists must have equal lengths}}
+    \seq_map_indexed_inline:Nn \l_bt_permutation_source_seq
+      {
+        \dim_set:Nn \l_bt_line_y_dim
+          {-\bt@operatorlineseparation * (##1 - 1)}
+        \int_set:Nn \l_bt_permutation_target_int
+          {\seq_item:Nn \l_bt_permutation_target_seq {##1}}
+        \dim_set:Nn \l_bt_target_y_dim
+          {-\bt@operatorlineseparation * (\l_bt_permutation_target_int - 1)}
+        \tl_set:Nx \l_bt_line_options_tl
+          {\seq_item:Nn \l_bt_permutation_style_seq {##1}}
+        \exp_args:NV \bt_prepare_line_options:n \l_bt_line_options_tl
+        \draw[bt/every~line,bt/current-line]
+          (\dim_use:N \l_bt_draw_left_dim,\dim_use:N \l_bt_line_y_dim)
+          .. controls
+          ($ (\dim_use:N \l_bt_layer_left_dim,\dim_use:N \l_bt_line_y_dim)!.5!
+             (\dim_use:N \l_bt_layer_right_dim,\dim_use:N \l_bt_line_y_dim) $)
+          and
+          ($ (\dim_use:N \l_bt_layer_left_dim,\dim_use:N \l_bt_target_y_dim)!.5!
+             (\dim_use:N \l_bt_layer_right_dim,\dim_use:N \l_bt_target_y_dim) $)
+          ..
+          (\dim_use:N \l_bt_draw_right_dim,\dim_use:N \l_bt_target_y_dim);
+      }
+  }
+
+\NewDocumentCommand{\permute}{O{}mm}
+  {
+    \int_case:nnF {\l_bt_projector_phase_int}
+      {
+        {1}{\bt_count_permutation:n {#2}}
+        {2}{\bt_render_permutation:nnn {#1}{#2}{#3}}
+        {3}{\bt_measure_permutation:}
+        {4}{\bt_trace_collect_connector:nnn {#1}{#2}{#3}}
+      }
+      {\bt_projector_error:n {\string\permute\space must be inside \string\layer}}
+  }
+
+\NewDocumentCommand{\startnodes}{O{}}
+  {
+    \bool_set_true:N \l_bt_projector_start_bool
+    \tl_set:Nn \l_bt_start_options_tl {#1}
+  }
+
+\NewDocumentCommand{\endnodes}{O{}}
+  {
+    \bool_set_true:N \l_bt_projector_end_bool
+    \tl_set:Nn \l_bt_end_options_tl {#1}
+  }
+
+\cs_new_protected:Npn \bt_collect_layer:n #1
+  {
+    \int_set:Nn \l_bt_projector_phase_int {1}
+    \int_zero:N \l_bt_layer_lines_int
+    #1
+    \int_compare:nNnTF {\l_bt_layer_lines_int} > {0}
+      {
+        \int_compare:nNnTF {\l_bt_projector_lines_int} = {0}
+          {\int_set:Nn \l_bt_projector_lines_int {\l_bt_layer_lines_int}}
+          {
+            \int_compare:nNnF
+              {\l_bt_projector_lines_int} = {\l_bt_layer_lines_int}
+              {\bt_projector_error:n {Every layer must contain the same number of lines}}
+          }
+        \seq_put_right:Nn \l_bt_projector_layers_seq {#1}
+      }
+      {\bt_projector_error:n {A layer must contain at least one line}}
+    \int_zero:N \l_bt_projector_phase_int
+  }
+
+\NewDocumentCommand{\layer}{m}
+  {
+    \int_compare:nNnTF {\l_bt_projector_phase_int} = {0}
+      {\bt_collect_layer:n {#1}}
+      {\bt_projector_error:n {Layers cannot be nested}}
+  }
+
+\cs_new_protected:Npn \bt_render_boundary:nnn #1#2#3
+  {
+    \bt_set_command_styles:nn {\l_bt_projector_lines_int}{#3}
+    \dim_set:Nn \l_bt_draw_left_dim {#1 - \bt@stitchoverlap}
+    \dim_set:Nn \l_bt_draw_right_dim {#2 + \bt@stitchoverlap}
+    \int_step_inline:nn {\l_bt_projector_lines_int}
+      {
+        \tl_set:Nx \l_bt_line_options_tl
+          {\seq_item:Nn \l_bt_command_style_seq {##1}}
+        \exp_args:NV \bt_prepare_line_options:n \l_bt_line_options_tl
+        \dim_set:Nn \l_bt_line_y_dim
+          {-\bt@operatorlineseparation * (##1 - 1)}
+        \draw[bt/every~line,bt/current-line]
+          (\dim_use:N \l_bt_draw_left_dim,\dim_use:N \l_bt_line_y_dim) --
+          (\dim_use:N \l_bt_draw_right_dim,\dim_use:N \l_bt_line_y_dim);
+      }
+  }
+
+\cs_new_protected:Npn \bt_remove_collection_glue:
+  {
+    \ifdim\lastskip>0pt\relax
+      \unskip
+      \exp_after:wN \bt_remove_collection_glue:
+    \fi
+  }
+
+\cs_new_protected:Npn \bt_render_layered_projector:
+  {
+    \int_compare:nNnTF {\seq_count:N \l_bt_projector_layers_seq} > {0}
+      {
+        \seq_clear:N \l_bt_projector_layer_widths_seq
+        \int_set:Nn \l_bt_projector_phase_int {3}
+        \seq_map_inline:Nn \l_bt_projector_layers_seq
+          {
+            \dim_zero:N \l_bt_layer_content_width_dim
+            ##1
+            \dim_set:Nn \l_bt_layer_width_dim
+              {\l_bt_layer_content_width_dim + 2\bt@projectorlayerpadding}
+            \seq_put_right:Nx \l_bt_projector_layer_widths_seq
+              {\dim_use:N \l_bt_layer_width_dim}
+          }
+        \int_zero:N \l_bt_projector_phase_int
+        \dim_zero:N \l_bt_projector_right_dim
+        \seq_map_inline:Nn \l_bt_projector_layer_widths_seq
+          {\dim_add:Nn \l_bt_projector_right_dim {##1}}
+        % Layer collection and measurement execute the user's whitespace.
+        % Remove all trailing glue before emitting the actual picture.
+        \bt_remove_collection_glue:
+        \bt@mathaxis=\fontdimen22\textfont2\relax
+        \begin{tikzpicture}[
+            baseline={([yshift=-\bt@mathaxis]current~bounding~box.center)}]
+          \bool_if:NT \l_bt_projector_start_bool
+            {
+              \exp_args:NnnV \bt_render_boundary:nnn
+                {-\bt@projectorboundarylength}{0pt}
+                \l_bt_start_options_tl
+            }
+          \int_set:Nn \l_bt_projector_phase_int {2}
+          \dim_zero:N \l_bt_layer_left_dim
+          \seq_map_indexed_inline:Nn \l_bt_projector_layers_seq
+            {
+              \dim_set:Nn \l_bt_layer_right_dim
+                {
+                  \l_bt_layer_left_dim +
+                  \seq_item:Nn \l_bt_projector_layer_widths_seq {##1}
+                }
+              \int_set:Nn \l_bt_layer_cursor_int {1}
+              ##2
+              \dim_set:Nn \l_bt_layer_left_dim {\l_bt_layer_right_dim}
+            }
+          \int_zero:N \l_bt_projector_phase_int
+          \bool_if:NT \l_bt_projector_end_bool
+            {
+              \exp_args:NnnV \bt_render_boundary:nnn
+                {\dim_use:N \l_bt_projector_right_dim}
+                {\dim_eval:n
+                  {\l_bt_projector_right_dim + \bt@projectorboundarylength}}
+                \l_bt_end_options_tl
+            }
+          % Keep the picture's vertical centre on the centre of its strand
+          % bundle.  Operator arrangements can otherwise make the natural
+          % TikZ bounding box asymmetric and misalign traced endpoints.
+          \dim_set:Nn \l_bt_projector_strand_center_dim
+            {-\bt@operatorlineseparation * (\l_bt_projector_lines_int - 1) / 2}
+          \dim_set:Nn \l_bt_projector_upper_extent_dim
+            {\pgf@picmaxy - \l_bt_projector_strand_center_dim}
+          \dim_set:Nn \l_bt_projector_lower_extent_dim
+            {\l_bt_projector_strand_center_dim - \pgf@picminy}
+          \dim_set:Nn \l_bt_projector_half_extent_dim
+            {\dim_max:nn {\l_bt_projector_upper_extent_dim}
+                         {\l_bt_projector_lower_extent_dim}}
+          \path
+            (0pt,\dim_eval:n
+              {\l_bt_projector_strand_center_dim + \l_bt_projector_half_extent_dim})
+            (0pt,\dim_eval:n
+              {\l_bt_projector_strand_center_dim - \l_bt_projector_half_extent_dim});
+          % Likewise centre the picture horizontally on its actual strand
+          % boundaries, independently of operator borders and content.
+          \dim_set:Nn \l_bt_projector_left_endpoint_dim {-\bt@stitchoverlap}
+          \bool_if:NT \l_bt_projector_start_bool
+            {\dim_set:Nn \l_bt_projector_left_endpoint_dim
+              {-\bt@projectorboundarylength - \bt@stitchoverlap}}
+          \dim_set:Nn \l_bt_projector_right_endpoint_dim
+            {\l_bt_projector_right_dim + \bt@stitchoverlap}
+          \bool_if:NT \l_bt_projector_end_bool
+            {\dim_set:Nn \l_bt_projector_right_endpoint_dim
+              {\l_bt_projector_right_dim + \bt@projectorboundarylength
+               + \bt@stitchoverlap}}
+          \dim_set:Nn \l_bt_projector_span_dim
+            {\l_bt_projector_right_endpoint_dim
+             - \l_bt_projector_left_endpoint_dim}
+          \dim_gset_eq:NN \g_bt_last_projector_span_dim \l_bt_projector_span_dim
+          \dim_set:Nn \l_bt_projector_endpoint_center_dim
+            {(\l_bt_projector_left_endpoint_dim
+              + \l_bt_projector_right_endpoint_dim) / 2}
+          \dim_set:Nn \l_bt_projector_left_extent_dim
+            {\l_bt_projector_endpoint_center_dim - \pgf@picminx}
+          \dim_set:Nn \l_bt_projector_right_extent_dim
+            {\pgf@picmaxx - \l_bt_projector_endpoint_center_dim}
+          \dim_set:Nn \l_bt_projector_half_width_dim
+            {\dim_max:nn {\l_bt_projector_left_extent_dim}
+                         {\l_bt_projector_right_extent_dim}}
+          \path
+            (\dim_eval:n
+              {\l_bt_projector_endpoint_center_dim - \l_bt_projector_half_width_dim},0pt)
+            (\dim_eval:n
+              {\l_bt_projector_endpoint_center_dim + \l_bt_projector_half_width_dim},0pt);
+        \end{tikzpicture}
+      }
+      {\bt_projector_error:n {A projector needs at least one layer}}
+  }
+
+\NewDocumentEnvironment{projector}{O{}+b}
+  {
+    \group_begin:
+      \seq_clear:N \l_bt_projector_layers_seq
+      \bool_set_false:N \l_bt_projector_start_bool
+      \bool_set_false:N \l_bt_projector_end_bool
+      \tl_clear:N \l_bt_start_options_tl
+      \tl_clear:N \l_bt_end_options_tl
+      \int_zero:N \l_bt_projector_phase_int
+      \int_zero:N \l_bt_projector_lines_int
+      \pgfkeys{/birdtracks/projector,#1}
+      \ignorespaces #2\unskip
+      \bt_render_layered_projector:
+  }
+  {
+    \int_gset_eq:NN \g_bt_last_projector_lines_int \l_bt_projector_lines_int
+    \dim_gset:Nn \g_bt_last_projector_spacing_dim {\bt@operatorlineseparation}
+    \group_end:
+  }
+
+% --------------------------------------------------------------------------
+% Closed (traced) projector notation
+% --------------------------------------------------------------------------
+
+\box_new:N \l_bt_trace_top_box
+\box_new:N \l_bt_trace_bottom_box
+\tl_new:N \l_bt_trace_left_styles_tl
+\tl_new:N \l_bt_trace_left_source_tl
+\tl_new:N \l_bt_trace_left_target_tl
+\tl_new:N \l_bt_trace_right_styles_tl
+\tl_new:N \l_bt_trace_right_source_tl
+\tl_new:N \l_bt_trace_right_target_tl
+\tl_new:N \l_bt_trace_body_tl
+\tl_new:N \l_bt_trace_projector_body_tl
+\int_new:N \l_bt_trace_top_lines_int
+\int_new:N \l_bt_trace_bottom_lines_int
+\dim_new:N \l_bt_trace_top_spacing_dim
+\dim_new:N \l_bt_trace_bottom_spacing_dim
+\dim_new:N \l_bt_trace_top_span_dim
+\dim_new:N \l_bt_trace_bottom_span_dim
+\dim_new:N \l_bt_trace_separation_dim
+\dim_new:N \l_bt_trace_outer_x_dim
+\dim_new:N \l_bt_trace_source_y_dim
+\dim_new:N \l_bt_trace_target_y_dim
+\dim_new:N \l_bt_trace_lane_offset_dim
+\dim_new:N \l_bt_trace_lane_reach_dim
+\dim_new:N \l_bt_trace_half_width_dim
+\dim_new:N \l_bt_trace_effective_turn_dim
+\bool_new:N \l_bt_trace_left_bool
+
+\cs_new_protected:Npn \bt_trace_collect_connector:nnn #1#2#3
+  {
+    \bool_if:NTF \l_bt_trace_left_bool
+      {
+        \tl_set:Nn \l_bt_trace_left_styles_tl {#1}
+        \tl_remove_all:Nn \l_bt_trace_left_styles_tl {\par}
+        \tl_set:Nn \l_bt_trace_left_source_tl {#2}
+        \tl_set:Nn \l_bt_trace_left_target_tl {#3}
+      }
+      {
+        \tl_set:Nn \l_bt_trace_right_styles_tl {#1}
+        \tl_remove_all:Nn \l_bt_trace_right_styles_tl {\par}
+        \tl_set:Nn \l_bt_trace_right_source_tl {#2}
+        \tl_set:Nn \l_bt_trace_right_target_tl {#3}
+      }
+  }
+
+\NewDocumentCommand{\leftconnect}{+m}
+  {\bool_set_true:N \l_bt_trace_left_bool #1\bool_set_false:N \l_bt_trace_left_bool}
+
+\NewDocumentCommand{\rightconnect}{+m}
+  {\bool_set_false:N \l_bt_trace_left_bool #1}
+
+\NewDocumentCommand{\topprojector}{O{}+m}
+  {
+    \tl_set:Nn \l_bt_trace_projector_body_tl {#2}
+    \tl_trim_spaces:N \l_bt_trace_projector_body_tl
+    \hbox_set:Nn \l_bt_trace_top_box
+      {\begingroup\pgfkeys{/birdtracks/projector,#1}
+       \tl_use:N \l_bt_trace_projector_body_tl\endgroup}
+    \int_set_eq:NN \l_bt_trace_top_lines_int \g_bt_last_projector_lines_int
+    \dim_set_eq:NN \l_bt_trace_top_spacing_dim \g_bt_last_projector_spacing_dim
+    \dim_set_eq:NN \l_bt_trace_top_span_dim \g_bt_last_projector_span_dim
+  }
+
+\NewDocumentCommand{\bottomprojector}{O{}+m}
+  {
+    \tl_set:Nn \l_bt_trace_projector_body_tl {#2}
+    \tl_trim_spaces:N \l_bt_trace_projector_body_tl
+    \hbox_set:Nn \l_bt_trace_bottom_box
+      {\begingroup\pgfkeys{/birdtracks/projector,#1}
+       \tl_use:N \l_bt_trace_projector_body_tl\endgroup}
+    \int_set_eq:NN \l_bt_trace_bottom_lines_int \g_bt_last_projector_lines_int
+    \dim_set_eq:NN \l_bt_trace_bottom_spacing_dim \g_bt_last_projector_spacing_dim
+    \dim_set_eq:NN \l_bt_trace_bottom_span_dim \g_bt_last_projector_span_dim
+  }
+
+\cs_new_protected:Npn \bt_trace_render_connector:nnnn #1#2#3#4
+  {
+    \seq_set_split:Nnn \l_bt_permutation_style_seq {,}{#2}
+    \seq_set_split:Nnn \l_bt_permutation_source_seq {,}{#3}
+    \seq_set_split:Nnn \l_bt_permutation_target_seq {,}{#4}
+    \int_compare:nNnF {\seq_count:N \l_bt_permutation_source_seq}
+      = {\l_bt_trace_top_lines_int}
+      {\bt_projector_error:n {A trace connector must describe every line}}
+    \int_compare:nNnF {\seq_count:N \l_bt_permutation_target_seq}
+      = {\l_bt_trace_top_lines_int}
+      {\bt_projector_error:n {A trace connector permutation has unequal lists}}
+    \dim_set:Nn \l_bt_trace_half_width_dim
+      {\dim_max:nn {\l_bt_trace_top_span_dim}
+                   {\l_bt_trace_bottom_span_dim}/2}
+    \seq_map_indexed_inline:Nn \l_bt_permutation_source_seq
+      {
+        % Bottom source 1 is the innermost lane; successive source positions
+        % move outward.  Mapping in source order draws outer lanes last.
+        \dim_set:Nn \l_bt_trace_lane_offset_dim
+          {\bt@tracelanespacing * (\l_bt_trace_top_lines_int - ##1)}
+        \dim_set:Nn \l_bt_trace_lane_reach_dim
+          {\dim_max:nn {0pt}
+            {\bt@tracereach - \l_bt_trace_lane_offset_dim}}
+        \str_if_eq:nnTF {#1}{left}
+          {\dim_set:Nn \l_bt_trace_outer_x_dim
+            {-\l_bt_trace_half_width_dim - \l_bt_trace_lane_reach_dim}}
+          {\dim_set:Nn \l_bt_trace_outer_x_dim
+            {\l_bt_trace_half_width_dim + \l_bt_trace_lane_reach_dim}}
+        \int_set:Nn \l_bt_permutation_target_int
+          {\seq_item:Nn \l_bt_permutation_target_seq {##1}}
+        \dim_set:Nn \l_bt_trace_source_y_dim
+          {\l_bt_trace_bottom_spacing_dim *
+           (\l_bt_trace_bottom_lines_int + 1 - 2 * ##1) / 2}
+        \dim_set:Nn \l_bt_trace_target_y_dim
+          {\l_bt_trace_top_spacing_dim *
+           (\l_bt_trace_top_lines_int + 1 - 2 * \l_bt_permutation_target_int) / 2}
+        \dim_set:Nn \l_bt_trace_effective_turn_dim
+          {\dim_min:nn {\l_bt_trace_lane_reach_dim}
+            {\dim_min:nn {\bt@traceturn}
+              {(\l_bt_trace_separation_dim + \l_bt_trace_target_y_dim
+                - \l_bt_trace_source_y_dim) / 2}}}
+        \tl_set:Nx \l_bt_line_options_tl
+          {\seq_item:Nn \l_bt_permutation_style_seq {##1}}
+        \exp_args:NV \bt_prepare_line_options:n \l_bt_line_options_tl
+        \str_if_eq:nnTF {#1}{left}
+          {\bt_trace_draw_left:}
+          {\bt_trace_draw_right:}
+      }
+  }
+\cs_generate_variant:Nn \bt_trace_render_connector:nnnn {nVVV}
+
+\cs_new_protected:Npn \bt_trace_draw_left:
+  {
+    \dim_compare:nNnTF {\l_bt_trace_effective_turn_dim} = {0pt}
+    {
+      \draw[bt/every~line,bt/current-line]
+        ([xshift=\dim_eval:n {-\l_bt_trace_bottom_span_dim/2},
+          yshift=\l_bt_trace_source_y_dim]bttracebottom.center) --
+        ([xshift=\dim_eval:n {-\l_bt_trace_top_span_dim/2},
+          yshift=\l_bt_trace_target_y_dim]bttracetop.center);
+    }
+    {
+    \draw[bt/every~line,bt/current-line]
+      ([xshift=\dim_eval:n {-\l_bt_trace_bottom_span_dim/2},
+        yshift=\l_bt_trace_source_y_dim]bttracebottom.center)
+      .. controls +(-\l_bt_trace_effective_turn_dim,0pt)
+                  and +(0pt,-\l_bt_trace_effective_turn_dim) ..
+      (\l_bt_trace_outer_x_dim,
+       \dim_eval:n {-\l_bt_trace_separation_dim/2+\l_bt_trace_source_y_dim
+                    +\l_bt_trace_effective_turn_dim})
+      --
+      (\l_bt_trace_outer_x_dim,
+       \dim_eval:n {\l_bt_trace_separation_dim/2+\l_bt_trace_target_y_dim
+                    -\l_bt_trace_effective_turn_dim})
+      .. controls +(0pt,\l_bt_trace_effective_turn_dim)
+                  and +(-\l_bt_trace_effective_turn_dim,0pt) ..
+      ([xshift=\dim_eval:n {-\l_bt_trace_top_span_dim/2},
+        yshift=\l_bt_trace_target_y_dim]bttracetop.center);
+    }
+  }
+
+\cs_new_protected:Npn \bt_trace_draw_right:
+  {
+    \dim_compare:nNnTF {\l_bt_trace_effective_turn_dim} = {0pt}
+    {
+      \draw[bt/every~line,bt/current-line]
+        ([xshift=\dim_eval:n {\l_bt_trace_bottom_span_dim/2},
+          yshift=\l_bt_trace_source_y_dim]bttracebottom.center) --
+        ([xshift=\dim_eval:n {\l_bt_trace_top_span_dim/2},
+          yshift=\l_bt_trace_target_y_dim]bttracetop.center);
+    }
+    {
+    \draw[bt/every~line,bt/current-line]
+      ([xshift=\dim_eval:n {\l_bt_trace_bottom_span_dim/2},
+        yshift=\l_bt_trace_source_y_dim]bttracebottom.center)
+      .. controls +(\l_bt_trace_effective_turn_dim,0pt)
+                  and +(0pt,-\l_bt_trace_effective_turn_dim) ..
+      (\l_bt_trace_outer_x_dim,
+       \dim_eval:n {-\l_bt_trace_separation_dim/2+\l_bt_trace_source_y_dim
+                    +\l_bt_trace_effective_turn_dim})
+      --
+      (\l_bt_trace_outer_x_dim,
+       \dim_eval:n {\l_bt_trace_separation_dim/2+\l_bt_trace_target_y_dim
+                    -\l_bt_trace_effective_turn_dim})
+      .. controls +(0pt,\l_bt_trace_effective_turn_dim)
+                  and +(\l_bt_trace_effective_turn_dim,0pt) ..
+      ([xshift=\dim_eval:n {\l_bt_trace_top_span_dim/2},
+        yshift=\l_bt_trace_target_y_dim]bttracetop.center);
+    }
+  }
+
+\cs_new_protected:Npn \bt_render_traced_projector:
+  {
+    \int_compare:nNnF {\l_bt_trace_top_lines_int} = {\l_bt_trace_bottom_lines_int}
+      {\bt_projector_error:n {Top and bottom projectors must have the same number of lines}}
+    \dim_set:Nn \l_bt_trace_separation_dim
+      {(\box_ht:N \l_bt_trace_top_box + \box_dp:N \l_bt_trace_top_box
+       + \box_ht:N \l_bt_trace_bottom_box + \box_dp:N \l_bt_trace_bottom_box)/2
+       + \bt@tracegap}
+    \bt@mathaxis=\fontdimen22\textfont2\relax
+    \begin{tikzpicture}[baseline={([yshift=-\bt@mathaxis]current~bounding~box.center)}]
+      \node[inner~sep=0pt] (bttracetop)
+        at (0pt,\dim_eval:n {\l_bt_trace_separation_dim/2})
+        {\box_use:N \l_bt_trace_top_box};
+      \node[inner~sep=0pt] (bttracebottom)
+        at (0pt,\dim_eval:n {-\l_bt_trace_separation_dim/2})
+        {\box_use:N \l_bt_trace_bottom_box};
+      \bt_trace_render_connector:nVVV {left}
+        \l_bt_trace_left_styles_tl \l_bt_trace_left_source_tl \l_bt_trace_left_target_tl
+      \bt_trace_render_connector:nVVV {right}
+        \l_bt_trace_right_styles_tl \l_bt_trace_right_source_tl \l_bt_trace_right_target_tl
+    \end{tikzpicture}
+  }
+
+\NewDocumentEnvironment{tracedprojector}{O{}+b}
+  {
+    \group_begin:
+      \int_zero:N \l_bt_trace_top_lines_int
+      \int_zero:N \l_bt_trace_bottom_lines_int
+      \tl_clear:N \l_bt_trace_left_styles_tl
+      \tl_clear:N \l_bt_trace_right_styles_tl
+      \pgfkeys{/birdtracks,#1}
+      \int_set:Nn \l_bt_projector_phase_int {4}
+      \tl_set:Nn \l_bt_trace_body_tl {#2}
+      \tl_remove_all:Nn \l_bt_trace_body_tl {\par}
+      \tl_use:N \l_bt_trace_body_tl
+      \int_zero:N \l_bt_projector_phase_int
+      \bt_render_traced_projector:
+  }
+  {\group_end:}
+
+% --------------------------------------------------------------------------
+% Covariant/contravariant Young-diagram pairs
+% --------------------------------------------------------------------------
+
+\tikzset{
+  bt/yd-cell/.style={
+    draw=\bt@ydlinecolor,
+    fill=\bt@ydfill,
+    text=\bt@ydtextcolor,
+    font=\bt@ydtextsize,
+    line~width=\bt@ydlinewidth,
+    minimum~width=\bt@ydboxsize,
+    minimum~height=\bt@ydboxsize,
+    text~width=\bt@ydboxsize,
+    inner~sep=0pt,
+    outer~sep=0pt,
+    align=center,
+  },
+  text_size/.style={font=#1},
+  text~size/.style={font=#1},
+}
+
+\pgfkeys{
+  /birdtracks/ydpair/.is~family,
+  /birdtracks/ydpair,
+  box_size/.code={\bt@ydboxsize=#1\relax},
+  box~size/.code={\bt@ydboxsize=#1\relax},
+  line_width/.code={\bt@ydlinewidth=#1\relax},
+  line~width/.code={\bt@ydlinewidth=#1\relax},
+  line_color/.store~in=\bt@ydlinecolor,
+  line~color/.store~in=\bt@ydlinecolor,
+  fill/.store~in=\bt@ydfill,
+  text_color/.store~in=\bt@ydtextcolor,
+  text~color/.store~in=\bt@ydtextcolor,
+  text_size/.store~in=\bt@ydtextsize,
+  text~size/.store~in=\bt@ydtextsize,
+}
+
+\tl_new:N \l_bt_yd_covar_tl
+\tl_new:N \l_bt_yd_convar_tl
+\seq_new:N \l_bt_yd_covar_rows_seq
+\seq_new:N \l_bt_yd_convar_rows_seq
+\seq_new:N \l_bt_yd_cells_seq
+\fp_new:N \l_bt_yd_hpad_fp
+\int_new:N \l_bt_yd_covar_rows_int
+\int_new:N \l_bt_yd_convar_rows_int
+\int_new:N \l_bt_yd_row_cells_int
+\dim_new:N \l_bt_yd_cell_x_dim
+\dim_new:N \l_bt_yd_cell_y_dim
+\tl_new:N \l_bt_yd_cell_tl
+
+\NewDocumentCommand{\covar}{m}
+  {\tl_set:Nn \l_bt_yd_covar_tl {#1}}
+
+\NewDocumentCommand{\convar}{m}
+  {\tl_set:Nn \l_bt_yd_convar_tl {#1}}
+
+\NewDocumentCommand{\hpad}{m}
+  {\fp_set:Nn \l_bt_yd_hpad_fp {#1}}
+
+% Two labels separated by the same southwest-to-northeast diagonal used by
+% tableau multiplication.  This is intended as cell content inside ydpair.
+\NewDocumentCommand{\splitbox}{mm}
+  {
+    \begin{tikzpicture}[baseline=(bt~split.base),x=\bt@ydboxsize,y=\bt@ydboxsize]
+      \path[use~as~bounding~box] (-.5,-.5) rectangle (.5,.5);
+      \draw[draw=\bt@ydlinecolor,line~width=\bt@ydlinewidth]
+        (-.5,-.5) -- (.5,.5);
+      \node (bt~split)[inner~sep=0pt,anchor=center]
+        at (-.23,.18) {\ensuremath{#1}};
+      \node[inner~sep=0pt,anchor=center]
+        at (.23,-.18) {\ensuremath{#2}};
+    \end{tikzpicture}
+  }
+
+\cs_new_protected:Npn \bt_yd_prepare_rows:
+  {
+    \tl_if_blank:VTF \l_bt_yd_covar_tl
+      {\seq_clear:N \l_bt_yd_covar_rows_seq}
+      {\seq_set_split:NnV
+        \l_bt_yd_covar_rows_seq {\\} \l_bt_yd_covar_tl}
+    \tl_if_blank:VTF \l_bt_yd_convar_tl
+      {\seq_clear:N \l_bt_yd_convar_rows_seq}
+      {\seq_set_split:NnV
+        \l_bt_yd_convar_rows_seq {\\} \l_bt_yd_convar_tl}
+    \int_set:Nn \l_bt_yd_covar_rows_int
+      {\seq_count:N \l_bt_yd_covar_rows_seq}
+    \int_set:Nn \l_bt_yd_convar_rows_int
+      {\seq_count:N \l_bt_yd_convar_rows_seq}
+  }
+
+\cs_new_protected:Npn \bt_render_yd_cell:w
+  {\@ifnextchar[\bt_render_yd_cell_options:w{\bt_render_yd_cell_options:w[]}}
+
+\cs_new_protected:Npn \bt_render_yd_cell_options:w [#1]#2\q_stop
+  {
+    \node[bt/yd-cell,#1]
+      at (\dim_use:N \l_bt_yd_cell_x_dim,
+          \dim_use:N \l_bt_yd_cell_y_dim) {#2};
+  }
+
+\cs_new_protected:Npn \bt_render_yd_covar:
+  {
+    \seq_map_indexed_inline:Nn \l_bt_yd_covar_rows_seq
+      {
+        \seq_set_split:Nnn \l_bt_yd_cells_seq {&}{##2}
+        \seq_map_indexed_inline:Nn \l_bt_yd_cells_seq
+          {
+            \pgfmathsetlength{\l_bt_yd_cell_x_dim}{
+              \the\bt@ydboxsize * (####1 - .5)}
+            \pgfmathsetlength{\l_bt_yd_cell_y_dim}{
+              -\the\bt@ydboxsize * (##1 - .5)}
+            \tl_set:Nn \l_bt_yd_cell_tl {####2}
+            \tl_trim_spaces:N \l_bt_yd_cell_tl
+            \exp_after:wN \bt_render_yd_cell:w
+              \l_bt_yd_cell_tl \q_stop
+          }
+      }
+  }
+
+\cs_new_protected:Npn \bt_render_yd_convar:
+  {
+    \seq_map_indexed_inline:Nn \l_bt_yd_convar_rows_seq
+      {
+        \seq_set_split:Nnn \l_bt_yd_cells_seq {&}{##2}
+        \int_set:Nn \l_bt_yd_row_cells_int
+          {\seq_count:N \l_bt_yd_cells_seq}
+        \seq_map_indexed_inline:Nn \l_bt_yd_cells_seq
+          {
+            \pgfmathsetlength{\l_bt_yd_cell_x_dim}{
+              -\the\bt@ydboxsize *
+              (\int_use:N \l_bt_yd_row_cells_int - ####1 + .5)}
+            \pgfmathsetlength{\l_bt_yd_cell_y_dim}{
+              -\the\bt@ydboxsize *
+              (\int_use:N \l_bt_yd_covar_rows_int +
+               \fp_to_decimal:N \l_bt_yd_hpad_fp + ##1 - .5)}
+            \tl_set:Nn \l_bt_yd_cell_tl {####2}
+            \tl_trim_spaces:N \l_bt_yd_cell_tl
+            \exp_after:wN \bt_render_yd_cell:w
+              \l_bt_yd_cell_tl \q_stop
+          }
+      }
+  }
+
+\cs_new_protected:Npn \bt_render_ydpair:
+  {
+    \bt_yd_prepare_rows:
+    \bt@mathaxis=\fontdimen22\textfont2\relax
+    \begin{tikzpicture}[
+        baseline={([yshift=-\bt@mathaxis]current~bounding~box.center)}]
+      \path (0pt,0pt);
+      \bt_render_yd_covar:
+      \bt_render_yd_convar:
+    \end{tikzpicture}
+  }
+
+\NewDocumentEnvironment{ydpair}{O{}+b}
+  {
+    \group_begin:
+      \tl_clear:N \l_bt_yd_covar_tl
+      \tl_clear:N \l_bt_yd_convar_tl
+      \fp_zero:N \l_bt_yd_hpad_fp
+      \pgfkeys{/birdtracks/ydpair,#1}
+      #2
+      \bt_render_ydpair:
+  }
+  {\group_end:}
 
 \ExplSyntaxOff
 \makeatother

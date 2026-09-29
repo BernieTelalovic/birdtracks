@@ -77,6 +77,6 @@ exe = EXE(
     console=False,
     disable_windowed_traceback=False,
     icon=str(
-        project_root / "src/birdtracks/projectors/static/birdtracks-whiteboard-file.ico"
+        project_root / "src/birdtracks/projectors/static/birdtracks-whiteboard.ico"
     ),
 )
