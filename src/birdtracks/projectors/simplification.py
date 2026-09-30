@@ -604,20 +604,19 @@ def _collect_equivalent_mixed_projectors(value: ProjectorSum) -> ProjectorSum:
             mixed.append((projector, coefficient))
         else:
             terms.append((projector, coefficient))
-    if len(mixed) < 2:
+    if not mixed or len(value) < 2:
         return value
 
     equivalent: dict[object, tuple[Projector, Fraction]] = {}
-    for projector, coefficient in mixed:
+    for projector, coefficient in (*terms, *mixed):
         key = projector.collapse()
         representative, previous = equivalent.get(key, (projector, Fraction()))
         equivalent[key] = representative, previous + coefficient
-    terms.extend(
+    return ProjectorSum(
         (projector, coefficient)
         for projector, coefficient in equivalent.values()
         if coefficient
     )
-    return ProjectorSum(terms)
 
 
 def _normalize_identity_permutation_anchors(projector: Projector) -> Projector:

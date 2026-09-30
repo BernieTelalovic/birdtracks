@@ -608,3 +608,23 @@ def test_pair_cell_colours_are_isolated_by_marker_occurrence() -> None:
     assert document.embedded_pairs[0].pair_cell_styles == style
     assert document.embedded_pairs[1].pair_cell_styles == {}
     assert document.blocks[0]["pair_cell_styles"] == {"0": style}
+
+
+@pytest.mark.parametrize('operator', [r'\oplus', r'\otimes'])
+def test_prefactor_after_unspaced_operator_is_applied_once(operator):
+    source = r'\pair' + operator + r'2\pair'
+    marker = source.rindex(r'\pair')
+    second = pair_expression_with_prefactor(source, marker)
+    assert second.terms[0].coefficient == 2
+    expression = pair_expression_from_blocks(
+        [{'id': 'line', 'source': source}],
+        {'line:pair:0': Editor(PairExpression()), 'line:pair:1': Editor(second)},
+    )
+    assert expression.terms[-1].coefficient == 2
+
+
+@pytest.mark.parametrize('prefix', ['A2', '1.2', 'foo2'])
+def test_name_or_decimal_suffix_is_not_an_adjacent_integer_prefactor(prefix):
+    source = prefix + r'\pair'
+    expression = pair_expression_with_prefactor(source, len(prefix))
+    assert expression.terms[0].coefficient == 1

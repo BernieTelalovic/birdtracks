@@ -22,13 +22,10 @@ const COMMAND_VARIANTS = {
   mathbf: "bold",
 };
 const PROJECTOR_COMMAND = "birdtracks";
-const PROJECTOR_COMPLETION = "birdtracks";
 const PAIR_COMMAND = "pair";
 const DEFINITION_COMMAND = "def";
+const EXPORT_OPTIONS_STORAGE_KEY = "birdtracks.whiteboard.latex-export-options";
 const OPERATOR_SPACING = { lspace: "0.2em", rspace: "0.2em" };
-const PAIR_OPERATOR_SPACING = {
-  lspace: "0.1em", rspace: "0.1em", class: "birdtracks-pair-operator",
-};
 const DEFINITION_OPERATOR = {
   lspace: "0em", rspace: "0em", class: "birdtracks-whiteboard-definition-operator",
 };
@@ -52,8 +49,10 @@ function textElement(name, text, attributes = {}) {
 function pairOperatorElement(operation, sourceStart, sourceEnd) {
   const wrapper = document.createElement("span");
   wrapper.className = "birdtracks-whiteboard-pair-operator";
-  wrapper.dataset.sourceStart = String(sourceStart);
-  wrapper.dataset.sourceEnd = String(sourceEnd);
+  if (Number.isInteger(sourceStart) && Number.isInteger(sourceEnd)) {
+    wrapper.dataset.sourceStart = String(sourceStart);
+    wrapper.dataset.sourceEnd = String(sourceEnd);
+  }
   wrapper.setAttribute(
     "aria-label", operation === "sum" ? "Direct sum" : "Tensor product",
   );
@@ -268,15 +267,18 @@ class LatexParser {
     if (command === "quad" || command === "qquad") {
       return mathElement("space", [], { width: command === "quad" ? "1em" : "2em" });
     }
+    if (command === "oplus" || command === "otimes") {
+      // Use the same geometry inside groups, scripts and fractions as at
+      // top level. Font glyphs vary in spacing and do not meet the circle.
+      return mathElement("text", [pairOperatorElement(
+        command === "oplus" ? "sum" : "tensor",
+      )]);
+    }
     if (SYMBOLS[command]) {
       const value = SYMBOLS[command];
       return /[A-Za-zΑ-Ωα-ω]/.test(value)
         ? textElement("i", value)
-        : textElement(
-          "o", value,
-          command === "oplus" || command === "otimes"
-            ? PAIR_OPERATOR_SPACING : {},
-        );
+        : textElement("o", value);
     }
     throw new Error(`unsupported command \\${command}`);
   }
@@ -377,14 +379,15 @@ function splitMathSegments(source) {
 function projectorCommandSuggestion(source) {
   const match = source.match(/\\([A-Za-z]*)$/);
   if (!match) return null;
-  const command = PROJECTOR_COMMAND.startsWith(match[1])
-    ? PROJECTOR_COMMAND : PAIR_COMMAND.startsWith(match[1])
-      ? PAIR_COMMAND : DEFINITION_COMMAND.startsWith(match[1])
-        ? DEFINITION_COMMAND : null;
+  const commands = [PROJECTOR_COMMAND, PAIR_COMMAND, DEFINITION_COMMAND, "oplus", "otimes"];
+  const candidates = commands.filter(command => command.startsWith(match[1]));
+  // Keep the existing bare-backslash suggestion; wait for an unambiguous
+  // prefix for operators (\op versus \ot).
+  const command = match[1] === "" ? PROJECTOR_COMMAND
+    : candidates.length === 1 ? candidates[0] : null;
   if (!command) return null;
-  const completion = command === PROJECTOR_COMMAND
-    ? PROJECTOR_COMPLETION : command === PAIR_COMMAND
-      ? PAIR_COMMAND : DEFINITION_COMMAND;
+  const completion = command + ([DEFINITION_COMMAND, "oplus", "otimes"].includes(command)
+    ? " " : "");
   return {
     start: match.index,
     typed: match[0],
@@ -439,7 +442,8 @@ function numericPrefactorBefore(source, markerStart) {
   ) || prefix.match(/[+-]?\\frac\s*\{\s*\d+\s*\}\s*\{\s*\d+\s*\}$/);
   if (!match) return null;
   const start = match.index;
-  if (start > 0 && /[A-Za-z0-9_._^/]/.test(prefix[start - 1])) return null;
+  if (start > 0 && /[A-Za-z0-9_._^/]/.test(prefix[start - 1])
+      && !/\\(?:oplus|otimes|def)$/.test(prefix.slice(0, start))) return null;
   return {
     start,
     end,
@@ -466,6 +470,26 @@ export function flipNumericPrefactor(source, markerStart) {
   return source.slice(0, prefactor.start)
     + (flippedSign < 0 ? "-" : "")
     + source.slice(magnitudeStart);
+}
+
+export function flipProjectorTermSign(source, markerStart) {
+  const numeric = flipNumericPrefactor(source, markerStart);
+  if (numeric !== null) return numeric;
+  let signEnd = markerStart;
+  while (signEnd > 0 && /\s/.test(source[signEnd - 1])) signEnd -= 1;
+  const signIndex = signEnd - 1;
+  const sign = source[signIndex];
+  if (sign !== "+" && sign !== "-") {
+    return source.slice(0, markerStart) + "-" + source.slice(markerStart);
+  }
+  const before = source.slice(0, signIndex).trimEnd();
+  const unary = !before || /(?:[=({\[]|\\(?:def|oplus|otimes))$/.test(before);
+  if (unary && sign === "-") {
+    return source.slice(0, signIndex) + source.slice(signIndex + 1);
+  }
+  return source.slice(0, signIndex)
+    + (sign === "+" ? "-" : "+")
+    + source.slice(signIndex + 1);
 }
 
 function permutationIsOdd(order, initial) {
@@ -496,7 +520,7 @@ export function projectorOrientationSign(graph, portOrders) {
 
 function renderCommandSuggestion(source, target, sourceOffset = 0) {
   const suggestion = projectorCommandSuggestion(source);
-  if (!suggestion) return false;
+  if (!suggestion || suggestion.completion === " ") return false;
   const prefix = source.slice(0, suggestion.start);
   if (prefix) {
     const prefixTarget = document.createElement("span");
@@ -540,33 +564,6 @@ function renderLatexInto(source, target, sourceOffset, editingIndex) {
     }
     const segmentCaret = editingIndex === null
       ? null : editingIndex - segmentOffset;
-    const pairOperator = segment.source.match(/\\(oplus|otimes)\b/);
-    if (pairOperator) {
-      const operatorStart = pairOperator.index;
-      const operatorEnd = operatorStart + pairOperator[0].length;
-      if (operatorStart > 0) {
-        renderLatexInto(
-          segment.source.slice(0, operatorStart),
-          target,
-          segmentOffset,
-          editingIndex,
-        );
-      }
-      target.appendChild(pairOperatorElement(
-        pairOperator[1] === "oplus" ? "sum" : "tensor",
-        segmentOffset + operatorStart,
-        segmentOffset + operatorEnd,
-      ));
-      if (operatorEnd < segment.source.length) {
-        renderLatexInto(
-          segment.source.slice(operatorEnd),
-          target,
-          segmentOffset + operatorEnd,
-          editingIndex,
-        );
-      }
-      continue;
-    }
     const fraction = segmentCaret === null
       ? null : fractionRangeAt(segment.source, segmentCaret);
     if (fraction) {
@@ -745,7 +742,10 @@ function renderWhiteboard({ model, el, host, signal }) {
   const paintbrushState = {
     active: true,
     color: "#000000",
-    recent: [],
+    recent: (model.get("recent_colors") || [])
+      .filter((color) => /^#[0-9a-f]{6}$/i.test(color))
+      .map((color) => color.toLowerCase())
+      .slice(0, 5),
     record: null,
   };
   root._birdtracksPaintbrush = paintbrushState;
@@ -806,8 +806,7 @@ function renderWhiteboard({ model, el, host, signal }) {
   exportButton.type = "button";
   exportButton.className = "birdtracks-whiteboard-action birdtracks-whiteboard-export";
   exportButton.setAttribute("aria-label", "Export to LaTeX");
-  exportButton.disabled = true;
-  exportButton.title = "LaTeX export is not available in this release";
+  exportButton.title = "Export this whiteboard to LaTeX";
   exportButton.append("Export to ");
   const latexLogo = document.createElement("span");
   latexLogo.className = "birdtracks-latex-logo";
@@ -820,6 +819,55 @@ function renderWhiteboard({ model, el, host, signal }) {
   latexE.textContent = "E";
   latexLogo.append("L", latexA, "T", latexE, "X");
   exportButton.append(latexLogo);
+  const exportDialog = document.createElement("dialog");
+  exportDialog.className = "birdtracks-whiteboard-export-dialog";
+  exportDialog.setAttribute("aria-label", "LaTeX export options");
+  const exportForm = document.createElement("form");
+  exportForm.method = "dialog";
+  const exportHeading = document.createElement("h2");
+  exportHeading.textContent = "Export to LaTeX";
+  const exportFields = document.createElement("div");
+  exportFields.className = "birdtracks-whiteboard-export-fields";
+  const exportInputs = {};
+  for (const [name, labelText, checked] of [
+    ["include_preamble", "Include preamble", false],
+    ["include_colors", "Include all colour labels", true],
+    ["pad_to_n0", "Pad boxes and antiboxes to the term's N₀", false],
+    ["include_equation_alignment", "Include equation line alignment", false],
+  ]) {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.name = name;
+    input.checked = checked;
+    exportInputs[name] = input;
+    label.append(input, labelText);
+    exportFields.appendChild(label);
+  }
+  const restoreExportOptions = () => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(EXPORT_OPTIONS_STORAGE_KEY) || "null");
+      if (saved && typeof saved === "object") {
+        for (const [name, input] of Object.entries(exportInputs)) {
+          if (typeof saved[name] === "boolean") input.checked = saved[name];
+        }
+      }
+    } catch (_) {
+      // Storage can be unavailable in privacy-restricted browser contexts.
+    }
+  };
+  restoreExportOptions();
+  const exportActions = document.createElement("div");
+  exportActions.className = "birdtracks-whiteboard-export-actions";
+  const exportCancel = document.createElement("button");
+  exportCancel.type = "button";
+  exportCancel.textContent = "Cancel";
+  const exportConfirm = document.createElement("button");
+  exportConfirm.type = "submit";
+  exportConfirm.textContent = "Export";
+  exportActions.append(exportCancel, exportConfirm);
+  exportForm.append(exportHeading, exportFields, exportActions);
+  exportDialog.appendChild(exportForm);
   const colorPanel = document.createElement("div");
   colorPanel.className = "birdtracks-whiteboard-color-panel";
   colorPanel.hidden = true;
@@ -912,6 +960,8 @@ function renderWhiteboard({ model, el, host, signal }) {
     paintbrushTip.style.fill = normalized;
     if (remember) {
       paintbrushState.recent = [normalized, ...paintbrushState.recent.filter((item) => item !== normalized)].slice(0, 5);
+      model.set("recent_colors", [...paintbrushState.recent]);
+      model.save_changes();
       updateRecentColors();
     }
   }
@@ -936,8 +986,23 @@ function renderWhiteboard({ model, el, host, signal }) {
   setPaintbrushColor(paintbrushState.color);
   updateRecentColors();
 
+  function backendPresentationSnapshot(child) {
+    return {
+      graph: structuredClone(child.get("graph")),
+      positions: structuredClone(child.get("positions") || {}),
+      free_levels: structuredClone(child.get("free_levels") || {}),
+      port_orders: structuredClone(child.get("port_orders") || {}),
+      boundary_orders: structuredClone(child.get("boundary_orders") || {}),
+      effective_coefficient: structuredClone(
+        child.get("effective_coefficient") || {},
+      ),
+    };
+  }
+
   function captureState() {
-    const snapshots = {projectors: {}, pairs: {}};
+    const snapshots = {
+      projectors: {}, pairs: {}, pairStyles: {}, backend: {}, backendColors: {},
+    };
     for (const [id, child] of embeddedModels) {
       if (id.includes(":projector:")) {
         child.set("save_command", Number(child.get("save_command") || 0) + 1);
@@ -947,21 +1012,59 @@ function renderWhiteboard({ model, el, host, signal }) {
       } else if (id.includes(":pair:")) {
         const expression = child.get("pair_expression");
         if (expression) snapshots.pairs[id] = structuredClone(expression);
+        snapshots.pairStyles[id] = structuredClone(child.get("pair_cell_styles") || {});
+      } else if (id.includes(":backend:")) {
+        snapshots.backend[id] = backendPresentationSnapshot(child);
+        snapshots.backendColors[id] = structuredClone(child.get("line_colors") || {});
       }
     }
     const blocks = (model.get("blocks") || []).map((block) => {
       const updated = {...block};
+      for (const [field, pattern] of [
+        ["projector_snapshots", /\\birdtracks\b/g],
+        ["pair_snapshots", /\\pair\b(?!\s*\{)/g],
+        ["pair_cell_styles", /\\pair\b(?!\s*\{)/g],
+      ]) {
+        const stored = updated[field];
+        if (!stored || typeof stored !== "object") continue;
+        const count = [...String(block.source || "").matchAll(pattern)].length;
+        const retained = Object.fromEntries(Object.entries(stored)
+          .filter(([occurrence]) => Number(occurrence) < count));
+        if (Object.keys(retained).length) updated[field] = retained;
+        else delete updated[field];
+      }
       const projectorPrefix = `${block.id}:projector:`;
       const pairPrefix = `${block.id}:pair:`;
+      const backendPrefix = `${block.id}:backend:`;
       for (const [id, snapshot] of Object.entries(snapshots.projectors)) {
         if (!id.startsWith(projectorPrefix)) continue;
         updated.projector_snapshots = structuredClone(updated.projector_snapshots || {});
         updated.projector_snapshots[id.slice(projectorPrefix.length)] = snapshot;
+        if (snapshot.line_colors && typeof snapshot.line_colors === "object") {
+          updated.line_colors = structuredClone(snapshot.line_colors);
+        }
       }
       for (const [id, expression] of Object.entries(snapshots.pairs)) {
         if (!id.startsWith(pairPrefix)) continue;
         updated.pair_snapshots = structuredClone(updated.pair_snapshots || {});
         updated.pair_snapshots[id.slice(pairPrefix.length)] = expression;
+      }
+      for (const [id, styles] of Object.entries(snapshots.pairStyles)) {
+        if (!id.startsWith(pairPrefix)) continue;
+        updated.pair_cell_styles = structuredClone(updated.pair_cell_styles || {});
+        updated.pair_cell_styles[id.slice(pairPrefix.length)] = styles;
+      }
+      for (const [id, snapshot] of Object.entries(snapshots.backend)) {
+        if (!id.startsWith(backendPrefix)) continue;
+        updated.backend_presentations = structuredClone(
+          updated.backend_presentations || {},
+        );
+        updated.backend_presentations[id.slice(backendPrefix.length)] = snapshot;
+      }
+      for (const [id, colors] of Object.entries(snapshots.backendColors)) {
+        if (!id.startsWith(backendPrefix)) continue;
+        updated.backend_line_colors = structuredClone(updated.backend_line_colors || {});
+        updated.backend_line_colors[id] = colors;
       }
       return updated;
     });
@@ -975,7 +1078,33 @@ function renderWhiteboard({ model, el, host, signal }) {
     model.save_changes();
   }
 
+  function requestExport() {
+    captureState();
+    // Ensure an unchanged document still produces a model change and a fresh
+    // download on every click.
+    model.set("export_content", "");
+    model.set("export_request", Number(model.get("export_request") || 0) + 1);
+    model.save_changes();
+  }
+
   saveButton.addEventListener("click", requestSave);
+  exportButton.addEventListener("click", () => {
+    restoreExportOptions();
+    exportDialog.showModal();
+  });
+  exportCancel.addEventListener("click", () => exportDialog.close());
+  exportForm.addEventListener("submit", () => {
+    const options = Object.fromEntries(
+      Object.entries(exportInputs).map(([name, input]) => [name, input.checked]),
+    );
+    try {
+      localStorage.setItem(EXPORT_OPTIONS_STORAGE_KEY, JSON.stringify(options));
+    } catch (_) {
+      // Export still works when persistent browser storage is unavailable.
+    }
+    model.set("export_options", options);
+    requestExport();
+  });
   const downloadExport = () => {
     const source = model.get("export_content");
     if (typeof source !== "string" || !source) return;
@@ -992,7 +1121,7 @@ function renderWhiteboard({ model, el, host, signal }) {
   const list = document.createElement("div");
   list.className = "birdtracks-whiteboard-blocks";
   heading.append(paintbrushBar, title);
-  root.append(heading, list);
+  root.append(heading, list, exportDialog);
   el.replaceChildren(root);
   const view = root.ownerDocument.defaultView;
   let toolbarFrame = null;
@@ -1053,6 +1182,31 @@ function renderWhiteboard({ model, el, host, signal }) {
     }
   };
   document.addEventListener("pointerdown", closeColorPanel, true);
+  const focusNearestBlock = (event) => {
+    if (event.button !== 0) return;
+    const clickedBlock = event.target.closest?.(".birdtracks-whiteboard-block");
+    if (clickedBlock && event.target !== clickedBlock) return;
+    if (!clickedBlock) {
+      const bounds = list.getBoundingClientRect();
+      if (event.clientX < bounds.left || event.clientX > bounds.right
+          || event.clientY < bounds.top || event.clientY > bounds.bottom) return;
+    }
+    const editableBlocks = [...list.querySelectorAll(".birdtracks-whiteboard-block")]
+      .filter((block) => !block.classList.contains("calculation-read-only"));
+    const nearest = clickedBlock || editableBlocks
+      .map((block) => {
+        const box = block.getBoundingClientRect();
+        const distance = event.clientY < box.top
+          ? box.top - event.clientY
+          : Math.max(0, event.clientY - box.bottom);
+        return {block, distance};
+      })
+      .sort((left, right) => left.distance - right.distance)[0]?.block;
+    if (!nearest?._birdtracksFocusAtPoint) return;
+    event.preventDefault();
+    nearest._birdtracksFocusAtPoint(event.clientX, event.clientY);
+  };
+  document.addEventListener("pointerdown", focusNearestBlock, true);
   let feedbackTimer = null;
 
   function showCalculationFeedback() {
@@ -1155,15 +1309,35 @@ function renderWhiteboard({ model, el, host, signal }) {
     const renderScrollTop = renderScroller.scrollTop;
     const focusedId = document.activeElement?.closest?.('.birdtracks-whiteboard-block')?.dataset.blockId;
     const oldBlock = (model.get('blocks') || []).find(item => item.id === focusedId);
-    for (const renderedBlock of list.querySelectorAll(
-      ".birdtracks-whiteboard-rendered",
-    )) {
-      renderedBlock._birdtracksCleanupBlock?.();
+    const existing = new Map([...list.children].map((row) => [row.dataset.blockId, row]));
+    const retainedIds = new Set(displayBlocks.map((block) => block.id));
+    for (const [id, row] of existing) {
+      if (retainedIds.has(id)) continue;
+      row.querySelector(".birdtracks-whiteboard-rendered")?._birdtracksCleanupBlock?.();
+      row.remove();
     }
-    list.replaceChildren();
     for (const [index, block] of displayBlocks.entries()) {
-      renderBlock(block, index, displayBlocks);
+      let row = existing.get(block.id);
+      if (!row || row._birdtracksDisposed
+          || row._birdtracksRenderKey !== blockRenderKey(block)) {
+        row?.querySelector(".birdtracks-whiteboard-rendered")?._birdtracksCleanupBlock?.();
+        row?.remove();
+        renderBlock(block, index, displayBlocks);
+        row = list.lastElementChild;
+      }
+      // Keep unchanged canvases mounted, including their local drag/undo state.
+      const slot = list.children[index];
+      if (slot !== row) list.insertBefore(row, slot || null);
+      const group = connectionGroup(block);
+      row.classList.toggle("connected-line",
+        (index > 0 && connectionGroup(displayBlocks[index - 1]) === group)
+        || (index + 1 < displayBlocks.length
+          && connectionGroup(displayBlocks[index + 1]) === group));
+      row.classList.toggle("connection-break", index > 0
+        && connectionGroup(displayBlocks[index - 1]) !== group
+        && !isContinuationSource(block.source || ""));
     }
+    scheduleContinuationAlignment();
     let focusTarget = null;
     if (pendingRestoreBlockId !== null) {
       const targetId = pendingRestoreBlockId;
@@ -1349,6 +1523,10 @@ function renderWhiteboard({ model, el, host, signal }) {
     return anchorIndex === null ? null : sourceElementAt(rendered, anchorIndex);
   }
 
+  function unscrolledLeft(element, scroller) {
+    return element.getBoundingClientRect().left + scroller.scrollLeft;
+  }
+
   function alignContinuationBlocks() {
     const blocks = model.get("blocks") || [];
     const wrappers = [...list.querySelectorAll(".birdtracks-whiteboard-block")];
@@ -1368,7 +1546,7 @@ function renderWhiteboard({ model, el, host, signal }) {
           const current = rendered.querySelector('mo');
           if (anchor && current) rendered.style.paddingLeft = `${Math.max(0,
             (parseFloat(getComputedStyle(rendered).paddingLeft) || 0)
-            + anchor.getBoundingClientRect().left - current.getBoundingClientRect().left)}px`;
+            + unscrolledLeft(anchor, previous) - unscrolledLeft(current, rendered))}px`;
         }
         continue;
       }
@@ -1385,8 +1563,8 @@ function renderWhiteboard({ model, el, host, signal }) {
       );
       if (!previousAnchor || !currentAnchor) continue;
 
-      const shift = previousAnchor.getBoundingClientRect().left
-        - currentAnchor.getBoundingClientRect().left;
+      const shift = unscrolledLeft(previousAnchor, previousRendered)
+        - unscrolledLeft(currentAnchor, rendered);
       const basePadding = parseFloat(getComputedStyle(rendered).paddingLeft) || 0;
       const padding = Math.max(0, basePadding + shift);
       editor.style.paddingLeft = `${padding}px`;
@@ -1458,7 +1636,7 @@ function renderWhiteboard({ model, el, host, signal }) {
     }
     const editor = [...list.querySelectorAll("textarea")]
       .find((item) => item.dataset.blockId === blockId);
-    if (editor) {
+    if (editor && !editor.disabled) {
       editor.focus({preventScroll: true});
       const position = placeAtEnd ? editor.value.length : 0;
       editor.setSelectionRange(position, position);
@@ -1483,6 +1661,14 @@ function renderWhiteboard({ model, el, host, signal }) {
       });
       return;
     }
+    const rendered = editor?.closest(".birdtracks-whiteboard-block")
+      ?.querySelector(".birdtracks-whiteboard-rendered");
+    if (rendered) {
+      rendered.focus({preventScroll: true});
+      pendingFocusBlockId = null;
+      if (ensureVisible) keepBlockInView(rendered.closest('.birdtracks-whiteboard-block'));
+      return;
+    }
     if (attempt >= 5) {
       pendingFocusBlockId = null;
       return;
@@ -1494,8 +1680,18 @@ function renderWhiteboard({ model, el, host, signal }) {
     });
   }
 
+  function blockRenderKey(block) {
+    // Persistence acknowledgements do not change the row's rendered content.
+    const content = {...block};
+    for (const field of ["projector_snapshots", "pair_snapshots",
+      "backend_presentations", "line_colors", "backend_line_colors",
+      "pair_cell_styles"]) delete content[field];
+    return JSON.stringify(content);
+  }
+
   function renderBlock(block, blockIndex, displayBlocks) {
     const wrapper = document.createElement("div");
+    wrapper._birdtracksRenderKey = blockRenderKey(block);
     wrapper.className = "birdtracks-whiteboard-block";
     wrapper.classList.toggle("trailing-blank", Boolean(block._trailing_blank));
     wrapper.dataset.blockId = block.id;
@@ -1521,6 +1717,7 @@ function renderWhiteboard({ model, el, host, signal }) {
     editor.className = "birdtracks-whiteboard-source";
     editor.value = block.source || "";
     editor.disabled = Boolean(block.read_only);
+    if (block.read_only) editor.style.pointerEvents = "none";
     editor.dataset.blockId = block.id;
     editor.setAttribute("aria-label", "Whiteboard LaTeX source");
     editor.spellcheck = false;
@@ -1570,6 +1767,7 @@ function renderWhiteboard({ model, el, host, signal }) {
     rendered._birdtracksCleanupBlock = () => {
       if (disposed) return;
       disposed = true;
+      wrapper._birdtracksDisposed = true;
       for (const anchor of rendered.querySelectorAll(
         ".birdtracks-whiteboard-embedded-projector, .birdtracks-whiteboard-embedded-pair",
       )) {
@@ -1587,12 +1785,14 @@ function renderWhiteboard({ model, el, host, signal }) {
         if (!id.startsWith(`${block.id}:`)) continue;
         embeddedModels.delete(id);
         embeddedAnchors.delete(id);
-        embeddedProjectorSigns.delete(id);
+        // Retain orientation across remounts so changes while detached are
+        // reflected in the surrounding numeric prefactor.
       }
+      caretResizeObserver?.disconnect();
     };
 
     function saveEmbeddedState(items) {
-      const snapshots = {projectors: {}, pairs: {}};
+      const snapshots = {projectors: {}, pairs: {}, backend: {}};
       for (const item of items) {
         for (const [id, child] of embeddedModels) {
           if (id.startsWith(`${item.id}:projector:`)) {
@@ -1603,6 +1803,8 @@ function renderWhiteboard({ model, el, host, signal }) {
           } else if (id.startsWith(`${item.id}:pair:`)) {
             const expression = child.get("pair_expression");
             if (expression) snapshots.pairs[id] = structuredClone(expression);
+          } else if (id.startsWith(`${item.id}:backend:`)) {
+            snapshots.backend[id] = backendPresentationSnapshot(child);
           }
         }
       }
@@ -1613,11 +1815,14 @@ function renderWhiteboard({ model, el, host, signal }) {
       return blocks.map((item) => {
         const projectorPrefix = `${item.id}:projector:`;
         const pairPrefix = `${item.id}:pair:`;
+        const backendPrefix = `${item.id}:backend:`;
         const projectors = Object.entries(snapshots.projectors)
           .filter(([id]) => id.startsWith(projectorPrefix));
         const pairs = Object.entries(snapshots.pairs)
           .filter(([id]) => id.startsWith(pairPrefix));
-        if (!projectors.length && !pairs.length) return item;
+        const backend = Object.entries(snapshots.backend)
+          .filter(([id]) => id.startsWith(backendPrefix));
+        if (!projectors.length && !pairs.length && !backend.length) return item;
         const updated = {...item};
         if (projectors.length) {
           const stored = structuredClone(item.projector_snapshots || {});
@@ -1633,13 +1838,20 @@ function renderWhiteboard({ model, el, host, signal }) {
           }
           updated.pair_snapshots = stored;
         }
+        if (backend.length) {
+          const stored = structuredClone(item.backend_presentations || {});
+          for (const [id, snapshot] of backend) {
+            stored[id.slice(backendPrefix.length)] = snapshot;
+          }
+          updated.backend_presentations = stored;
+        }
         return updated;
       });
     }
 
     wrapper._birdtracksCommitEmbeddedState = () => {
       const currentBlocks = model.get("blocks") || [];
-      const snapshots = saveEmbeddedState(currentBlocks);
+      const snapshots = saveEmbeddedState(currentBlocks.filter((item) => item.id === block.id));
       const blocks = storeEmbeddedSnapshots(currentBlocks, snapshots);
       if (blocks.every((item, index) => item === currentBlocks[index])) return;
       locallyUpdatingBlockId = block.id;
@@ -1715,6 +1927,13 @@ function renderWhiteboard({ model, el, host, signal }) {
       model.save_changes();
     }
     wrapper._requestCalculation = requestCalculation;
+    wrapper.addEventListener("pointerdown", (event) => {
+      if (!block.read_only || event.button !== 0) return;
+      // Nested MathML and embedded presentations can otherwise retain focus,
+      // leaving the calculated row without its active-line indicator and
+      // without a reliable target for Shift+Backspace.
+      rendered.focus({preventScroll: true});
+    }, true);
     cancelCalculationButton.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -2007,24 +2226,26 @@ function renderWhiteboard({ model, el, host, signal }) {
       const activeIds = new Set(
         markers.map((marker, index) => marker.id || embeddedKey(index)),
       );
-      for (const [id, listener] of embeddedProjectorListeners) {
-        if (activeIds.has(id)) continue;
-        const anchor = embeddedAnchors.get(id);
+      for (const [id, anchor] of embeddedAnchors) {
+        if (!id.startsWith(`${block.id}:`) || activeIds.has(id)) continue;
         anchor?._birdtracksCleanup?.();
         if (anchor) {
           anchor._birdtracksCleanup = null;
           delete anchor._birdtracksProjectorReference;
         }
-        embeddedModels.get(id)?.off(
-          "change:port_orders change:graph change:boundary_orders", listener,
-        );
+        const listener = embeddedProjectorListeners.get(id);
+        if (listener) {
+          embeddedModels.get(id)?.off(
+            "change:port_orders change:graph change:boundary_orders", listener,
+          );
+        }
         embeddedModels.delete(id);
         embeddedAnchors.delete(id);
         embeddedProjectorListeners.delete(id);
         embeddedProjectorSigns.delete(id);
       }
       wrapper.classList.toggle("has-embedded-projector", markers.length > 0);
-      editor.style.pointerEvents = "auto";
+      editor.style.pointerEvents = block.read_only ? "none" : "auto";
       editor.style.zIndex = markers.length ? "0" : "2";
       if (!markers.length) {
         renderLatex(
@@ -2074,6 +2295,12 @@ function renderWhiteboard({ model, el, host, signal }) {
     }
 
     function sourceElementEdge(element, end) {
+      // Widget labels and controls are not text in the surrounding expression.
+      if (element.classList.contains("birdtracks-whiteboard-embedded-projector")
+          || element.classList.contains("birdtracks-whiteboard-pair-operator")) {
+        const box = element.getBoundingClientRect();
+        return end ? box.right : box.left;
+      }
       const textNodes = [];
       const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
       while (walker.nextNode()) textNodes.push(walker.currentNode);
@@ -2118,6 +2345,9 @@ function renderWhiteboard({ model, el, host, signal }) {
         .sort((left, right) => (
           (left.end - left.start) - (right.end - right.start)
         ));
+      if (ending[0]?.element.classList.contains("birdtracks-whiteboard-embedded-projector")) {
+        return sourceElementEdge(ending[0].element, true);
+      }
       if (ending.length && starting.length
           && ending[0].element.localName === "mo") {
         return sourceElementEdge(starting[0].element, false);
@@ -2148,8 +2378,8 @@ function renderWhiteboard({ model, el, host, signal }) {
       return box.left + box.width * fraction;
     }
 
-    function moveCaretAcrossRenderedSymbol(direction) {
-      if (editor.selectionStart !== editor.selectionEnd
+    function moveCaretAcrossRenderedSymbol(direction, extend = false) {
+      if ((!extend && editor.selectionStart !== editor.selectionEnd)
           || rendered.querySelector(".birdtracks-whiteboard-fraction-source")) {
         return false;
       }
@@ -2165,7 +2395,14 @@ function renderWhiteboard({ model, el, host, signal }) {
           Number.isInteger(start) && Number.isInteger(end) && end > start
         ))
         .sort((left, right) => left.start - right.start);
-      const index = editor.selectionStart;
+      const backward = editor.selectionDirection === "backward";
+      const index = extend && !backward ? editor.selectionEnd : editor.selectionStart;
+      const anchor = backward ? editor.selectionEnd : editor.selectionStart;
+      const select = position => {
+        if (extend) editor.setSelectionRange(Math.min(anchor, position),
+          Math.max(anchor, position), position < anchor ? "backward" : "forward");
+        else editor.setSelectionRange(position, position);
+      };
       const continuationLength = continuationPrefixLength(editor.value);
       let symbol;
       if (direction > 0) {
@@ -2174,13 +2411,13 @@ function renderWhiteboard({ model, el, host, signal }) {
           : symbols.find(({start, end}) => start <= index && index < end)
           || symbols.find(({start}) => start >= index);
         if (!symbol || symbol.end === index) return false;
-        editor.setSelectionRange(symbol.end, symbol.end);
+        select(symbol.end);
       } else {
         symbol = [...symbols].reverse().find(({start, end}) => (
           start < index && index <= end
         )) || [...symbols].reverse().find(({end}) => end <= index);
         if (!symbol || symbol.start === index) return false;
-        editor.setSelectionRange(symbol.start, symbol.start);
+        select(symbol.start);
       }
       caretNavigationDirection = 0;
       updateSelection();
@@ -2260,8 +2497,9 @@ function renderWhiteboard({ model, el, host, signal }) {
       );
     }
 
+    let caretResizeObserver = null;
     if (typeof ResizeObserver !== "undefined") {
-      const caretResizeObserver = new ResizeObserver(() => {
+      caretResizeObserver = new ResizeObserver(() => {
         reflowPairCalculation();
         if (document.activeElement !== editor) return;
         requestAnimationFrame(positionCaret);
@@ -2277,9 +2515,10 @@ function renderWhiteboard({ model, el, host, signal }) {
         updateSelection();
         return;
       }
+      const pointerEvents = editor.style.pointerEvents;
       editor.style.pointerEvents = "none";
       const visualTarget = document.elementFromPoint(event.clientX, event.clientY);
-      editor.style.pointerEvents = "auto";
+      editor.style.pointerEvents = pointerEvents;
       const atoms = [...rendered.querySelectorAll("[data-source-start]")];
       const fractions = [...rendered.querySelectorAll("mfrac")]
         .map((element) => ({element, box: element.getBoundingClientRect()}))
@@ -2323,7 +2562,7 @@ function renderWhiteboard({ model, el, host, signal }) {
           isTarget: element === visualSourceElement
             && !element.querySelector("[data-source-start]"),
         }))
-        .filter(({box}) => event.clientY >= box.top && event.clientY <= box.bottom)
+        .filter(({box}) => box.width || box.height)
         .sort((left, right) => {
           if (left.isTarget !== right.isTarget) return left.isTarget ? -1 : 1;
           const leftDistance = Math.max(
@@ -2348,10 +2587,25 @@ function renderWhiteboard({ model, el, host, signal }) {
       if (!Number.isInteger(start) || !Number.isInteger(end)) return;
       const box = candidate.box;
       const atEnd = event.clientX >= box.left + box.width / 2;
-      const sourceIndex = atEnd ? end : start;
+      let sourceIndex = atEnd ? end : start;
+      const text = atom.firstChild;
+      if (text?.nodeType === Node.TEXT_NODE && text.length === end - start) {
+        let distance = Infinity;
+        for (let offset = 0; offset <= text.length; offset += 1) {
+          const range = document.createRange();
+          range.setStart(text, offset);
+          range.collapse(true);
+          const delta = Math.abs(event.clientX - range.getBoundingClientRect().left);
+          if (delta < distance) {
+            distance = delta;
+            sourceIndex = start + offset;
+          }
+        }
+      }
       editor.setSelectionRange(sourceIndex, sourceIndex);
       caretPoint = {
-        x: sourceElementEdge(atom, atEnd),
+        x: sourceIndex === start || sourceIndex === end
+          ? sourceElementEdge(atom, sourceIndex === end) : sourceCaretX(sourceIndex),
         y: event.clientY,
         sourceIndex,
       };
@@ -2377,8 +2631,7 @@ function renderWhiteboard({ model, el, host, signal }) {
         const index = ids.indexOf(anchor.dataset.projectorId);
         const reference = index < 0 ? null : widgets[index];
         if (!reference || !host?.getWidget) {
-          anchor._birdtracksMounted = false;
-          anchor.replaceChildren();
+          if (!anchor._birdtracksProjectorReference) anchor._birdtracksMounted = false;
           continue;
         }
         if (anchor._birdtracksProjectorReference === reference) {
@@ -2386,12 +2639,22 @@ function renderWhiteboard({ model, el, host, signal }) {
           continue;
         }
         anchor._birdtracksCleanup?.();
+        anchor._birdtracksCleanup = null;
+        const previousListener = embeddedProjectorListeners.get(anchor.dataset.projectorId);
+        if (previousListener) {
+          embeddedModels.get(anchor.dataset.projectorId)?.off(
+            "change:port_orders change:graph change:boundary_orders", previousListener,
+          );
+          embeddedProjectorListeners.delete(anchor.dataset.projectorId);
+        }
         anchor.replaceChildren();
         anchor._birdtracksProjectorReference = reference;
         try {
           const childModel = await host.getModel(reference);
           if (disposed) return;
+          if (anchor._birdtracksProjectorReference !== reference) continue;
           embeddedModels.set(anchor.dataset.projectorId, childModel);
+          updateEmbeddedModesForCaret();
           const marker = sourceMarkers.find((item, markerIndex) => (
             (item.id || embeddedKey(markerIndex)) === anchor.dataset.projectorId
           ));
@@ -2401,7 +2664,43 @@ function renderWhiteboard({ model, el, host, signal }) {
               childModel.save_changes();
             }
             const child = await host.getWidget(reference);
-            anchor._birdtracksCleanup = await child.render({ el: anchor, signal });
+            if (disposed || anchor._birdtracksProjectorReference !== reference) continue;
+            const childCleanup = await child.render({ el: anchor, signal });
+            let sizeFrame = null;
+            const fitPairAnchor = () => {
+              sizeFrame = null;
+              const terms = anchor.querySelector(".birdtracks-young-terms");
+              const content = [...(terms?.children || [])]
+                .filter(item => !item.hidden && item.getClientRects().length);
+              if (!content.length) return;
+              const anchorLeft = anchor.getBoundingClientRect().left;
+              const contentRight = Math.max(...content.map(
+                item => item.getBoundingClientRect().right,
+              ));
+              anchor.style.width = `${Math.max(0, Math.ceil(contentRight - anchorLeft))}px`;
+              // The caret may already have been positioned while the widget
+              // host still occupied the full available row. Keep it tied to
+              // the fitted pair even when there is no following source token
+              // to trigger another render.
+              positionCaret();
+              scheduleContinuationAlignment();
+            };
+            const schedulePairFit = () => {
+              if (sizeFrame === null) sizeFrame = requestAnimationFrame(fitPairAnchor);
+            };
+            const pairObserver = new MutationObserver(schedulePairFit);
+            pairObserver.observe(anchor, {childList: true, subtree: true});
+            const pairResizeObserver = typeof ResizeObserver === "undefined"
+              ? null : new ResizeObserver(schedulePairFit);
+            const terms = anchor.querySelector(".birdtracks-young-terms");
+            if (terms) pairResizeObserver?.observe(terms);
+            anchor._birdtracksCleanup = () => {
+              pairObserver.disconnect();
+              pairResizeObserver?.disconnect();
+              if (sizeFrame !== null) cancelAnimationFrame(sizeFrame);
+              if (typeof childCleanup === "function") childCleanup();
+            };
+            fitPairAnchor();
             anchor._birdtracksMounted = true;
             positionCaret();
             continue;
@@ -2429,9 +2728,8 @@ function renderWhiteboard({ model, el, host, signal }) {
                 (marker.id || embeddedKey(index)) === projectorId
               ));
               const marker = markerIndex < 0 ? null : sourceMarkers[markerIndex];
-              if (marker?.kind === "pair" || !marker?.prefactor) return;
-              const nextSource = flipNumericPrefactor(editor.value, marker.start);
-              if (nextSource === null) return;
+              if (!marker || marker.kind === "pair") return;
+              const nextSource = flipProjectorTermSign(editor.value, marker.start);
               editor.value = nextSource;
               updateSource(nextSource);
             };
@@ -2459,13 +2757,15 @@ function renderWhiteboard({ model, el, host, signal }) {
             updateEmbeddedModesForCaret();
           });
           const child = await host.getWidget(reference);
+          if (disposed || anchor._birdtracksProjectorReference !== reference) continue;
           anchor._birdtracksCleanup = await child.render({ el: anchor, signal });
           anchor._birdtracksMounted = true;
           updateEmbeddedModesForCaret();
           positionCaret();
         } catch (error) {
           anchor._birdtracksMounted = true;
-          delete anchor.dataset.projectorReference;
+          if (disposed || anchor._birdtracksProjectorReference !== reference) continue;
+          delete anchor._birdtracksProjectorReference;
           anchor.textContent = error.message;
           anchor.classList.add("error");
         }
@@ -2536,6 +2836,9 @@ function renderWhiteboard({ model, el, host, signal }) {
             : item
         ));
       wrapper.classList.toggle("continuation", isContinuationSource(source));
+      wrapper._birdtracksRenderKey = blockRenderKey(
+        blocks.find((item) => item.id === block.id),
+      );
       locallyUpdatingBlockId = block.id;
       try {
         model.set("blocks", blocks);
@@ -2564,7 +2867,7 @@ function renderWhiteboard({ model, el, host, signal }) {
         ...pairMarkers(source),
       ].sort((left, right) => left.start - right.start || left.end - right.end);
       wrapper.classList.toggle("has-embedded-projector", markers.length > 0);
-      editor.style.pointerEvents = "auto";
+      editor.style.pointerEvents = block.read_only ? "none" : "auto";
       editor.style.zIndex = markers.length ? "0" : "2";
       const invalid = document.createElement("span");
       invalid.className = "birdtracks-whiteboard-invalid-source";
@@ -2632,12 +2935,13 @@ function renderWhiteboard({ model, el, host, signal }) {
     }
 
     function handleBackspace(event) {
-      if (event.key !== "Backspace") return;
+      if (!["Backspace", "Delete"].includes(event.key)) return;
       if (editor.selectionStart !== editor.selectionEnd) return;
-      const marker = sourceMarkers.find((item) => (
-        editor.selectionStart >= item.start
-        && editor.selectionStart <= item.end
-      ));
+      const index = editor.selectionStart;
+      const marker = sourceMarkers.find((item) => event.key === "Delete"
+        ? index >= item.start && index < item.end
+        : index > item.start && index <= item.end);
+
       if (!marker) return;
       event.preventDefault();
       editor.setRangeText("", marker.start, marker.end, "start");
@@ -2649,9 +2953,30 @@ function renderWhiteboard({ model, el, host, signal }) {
       if (editor.selectionStart !== 0 || editor.selectionEnd !== 0) return;
       const currentBlocks = model.get("blocks") || [];
       const blockIndex = currentBlocks.findIndex((item) => item.id === block.id);
-      if (blockIndex <= 0) return;
+      if (blockIndex < 0) {
+        if (editor.value || !currentBlocks.length) return;
+        event.preventDefault();
+        event.stopPropagation();
+        focusBlock(currentBlocks.at(-1).id, 0, true);
+        return;
+      }
       const previous = currentBlocks[blockIndex - 1];
-      if (previous.read_only) return;
+      if (!editor.value) {
+        const next = currentBlocks[blockIndex + 1];
+        const destination = previous && !previous.read_only
+          ? previous : next && !next.read_only
+            ? next : previous || next;
+        if (!destination) return;
+        const remaining = currentBlocks.filter((_item, index) => index !== blockIndex);
+        event.preventDefault();
+        event.stopPropagation();
+        activeEditorId = null;
+        model.set("blocks", remaining);
+        model.save_changes();
+        focusBlock(destination.id, 0, destination === previous);
+        return;
+      }
+      if (!previous || previous.read_only) return;
       const currentSource = editor.value;
       const continuationLength = continuationPrefixLength(currentSource);
       const mergedSource = (previous.source || "")
@@ -2703,7 +3028,7 @@ function renderWhiteboard({ model, el, host, signal }) {
         // Keep the typeset fraction available until pointerup maps the click
         // to its numerator or denominator. Keyboard/programmatic focus can
         // still reveal the source immediately.
-        if (caretPoint === null) renderSource(editor.value, editor.selectionStart);
+        if (caretPoint === null) renderEditingSelection();
         lastValidSource = editor.value;
       } catch (error) {
         renderInvalidSource(editor.value, error);
@@ -2714,11 +3039,36 @@ function renderWhiteboard({ model, el, host, signal }) {
     }
 
     editor.addEventListener("focus", showEditor);
+    let dragSelectionAnchor = null;
+    const extendPointerSelection = event => {
+      if (dragSelectionAnchor === null) return;
+      snapSelectionToRenderedPoint(event);
+      const index = editor.selectionStart;
+      editor.setSelectionRange(Math.min(dragSelectionAnchor, index),
+        Math.max(dragSelectionAnchor, index),
+        index < dragSelectionAnchor ? "backward" : "forward");
+      positionCaret();
+    };
     editor.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      // Resolve the visible geometry before focus can change the rendering.
+      // Prevent native textarea hit testing from overwriting that selection.
+      event.preventDefault();
+      const previousAnchor = editor.selectionDirection === "backward"
+        ? editor.selectionEnd : editor.selectionStart;
       caretPoint = { x: event.clientX, y: event.clientY };
-      requestAnimationFrame(positionCaret);
+      editor.focus({preventScroll: true});
+      snapSelectionToRenderedPoint(event);
+      dragSelectionAnchor = event.shiftKey ? previousAnchor : editor.selectionStart;
+      if (event.shiftKey) extendPointerSelection(event);
+      editor.setPointerCapture(event.pointerId);
+      positionCaret();
     });
-    editor.addEventListener("pointerup", snapSelectionToRenderedPoint);
+    editor.addEventListener("pointermove", event => {
+      if (event.buttons & 1) extendPointerSelection(event);
+    });
+    editor.addEventListener("pointerup", () => { dragSelectionAnchor = null; });
+    editor.addEventListener("pointercancel", () => { dragSelectionAnchor = null; });
     editor.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && event.shiftKey) {
         event.preventDefault();
@@ -2739,27 +3089,15 @@ function renderWhiteboard({ model, el, host, signal }) {
       caretPoint = null;
       if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
         caretNavigationDirection = event.key === "ArrowLeft" ? -1 : 1;
-        if (editor.selectionStart === editor.selectionEnd) {
-          const marker = markerContaining(editor.selectionStart);
-          const enteringRight = event.key === "ArrowRight"
-            && marker && editor.selectionStart >= marker.start
-            && editor.selectionStart < marker.end;
-          const enteringLeft = event.key === "ArrowLeft"
-            && marker && editor.selectionStart > marker.start
-            && editor.selectionStart <= marker.end;
-          if (enteringRight || enteringLeft) {
-            event.preventDefault();
-            const index = event.key === "ArrowLeft" ? marker.start : marker.end;
-            editor.setSelectionRange(index, index);
-            updateSelection();
-            return;
-          }
-        }
-        if (moveCaretAcrossRenderedSymbol(event.key === "ArrowLeft" ? -1 : 1)) {
+        if (moveCaretAcrossRenderedSymbol(event.key === "ArrowLeft" ? -1 : 1, event.shiftKey)) {
           event.preventDefault();
           event.stopPropagation();
           return;
         }
+      }
+      if (event.key === "Delete") {
+        handleBackspace(event);
+        if (event.defaultPrevented) return;
       }
       if (event.key === "Backspace") {
         handleBackspace(event);
@@ -2793,12 +3131,22 @@ function renderWhiteboard({ model, el, host, signal }) {
         });
       });
     });
+    function renderEditingSelection() {
+      // Moving through ordinary text does not change its presentation. Keep
+      // live widgets attached: detaching them can blur their controls mid-gesture.
+      const index = editor.selectionStart;
+      if (editor.value === lastValidSource && !activeFraction
+          && !fractionRangeAt(editor.value, index)
+          && !(index > 0 && fractionRangeAt(editor.value, index - 1))) return;
+      renderSource(editor.value, index);
+    }
+
     const updateSelection = () => {
       snapCaretOutOfProjector(caretNavigationDirection);
       caretNavigationDirection = 0;
       updateEmbeddedModesForCaret();
       try {
-        renderSource(editor.value, editor.selectionStart);
+        renderEditingSelection();
         rendered.classList.remove("error");
       } catch (error) {
         renderInvalidSource(editor.value, error);
@@ -2845,9 +3193,21 @@ function renderWhiteboard({ model, el, host, signal }) {
         rendered.focus();
         return;
       }
-      showEditor();
-      editor.focus();
+      caretPoint = { x: event.clientX, y: event.clientY };
+      editor.focus({preventScroll: true});
+      snapSelectionToRenderedPoint(event);
     });
+    wrapper._birdtracksFocusAtPoint = (clientX, clientY) => {
+      if (block.read_only) {
+        rendered.focus({preventScroll: true});
+        return;
+      }
+      const point = {clientX, clientY};
+      caretPoint = {x: clientX, y: clientY};
+      editor.focus({preventScroll: true});
+      snapSelectionToRenderedPoint(point);
+      positionCaret();
+    };
     rendered.addEventListener("keydown", (event) => {
       if (block.pair_calculation && event.key === "Enter" && !event.ctrlKey
           && !event.metaKey && !event.shiftKey) {
@@ -2859,6 +3219,11 @@ function renderWhiteboard({ model, el, host, signal }) {
       if (block.read_only && event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         event.stopPropagation();
+        // A generated row can contain presentation-only edits (operator and
+        // free-line ordering) which live in its embedded child until the
+        // whiteboard reaches a checkpoint. Persist them before inserting the
+        // new row, because the blocks update below remounts every child.
+        wrapper._birdtracksCommitEmbeddedState?.();
         const blocks = [...(model.get('blocks') || [])];
         const related = blocks.map((item, index) => ({item, index}))
           .filter(({item}) => item.calculation_group === block.calculation_group);
@@ -2911,10 +3276,6 @@ function renderWhiteboard({ model, el, host, signal }) {
 
   model.on("change:blocks", renderBlocks);
   const refreshEmbeddedProjectors = () => {
-    if (activeEditorId === null) {
-      renderBlocks();
-      return;
-    }
     for (const renderedBlock of list.querySelectorAll(
       ".birdtracks-whiteboard-rendered",
     )) {
@@ -2937,6 +3298,7 @@ function renderWhiteboard({ model, el, host, signal }) {
     }
     document.removeEventListener("pointerdown", selectProjector, true);
     document.removeEventListener("pointerdown", closeColorPanel, true);
+    document.removeEventListener("pointerdown", focusNearestBlock, true);
     document.removeEventListener("keydown", calculationShortcut, true);
     root.removeEventListener("birdtracks-operator-expansion", operatorExpansion);
     document.removeEventListener("scroll", queueToolbarPositionUpdate, true);

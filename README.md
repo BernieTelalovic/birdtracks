@@ -64,17 +64,16 @@ Inside the app:
 - Press `Shift+Backspace` to restore the source behind a generated result.
 - Use **Save** to write the board to a `.whiteboard` file and **Load** to open
   another board.
-
-The **Export to LaTeX** button remains visible but is disabled for the 0.2.0
-release.
+- The **Export to $\LaTeX$** button exports the expressions in the whiteboard
+  to a `.tex` file, typeset using the included `birdtracks.sty` file.
 
 See the [Birdtracks Whiteboard user manual](src/birdtracks/projectors/whiteboard/README.md)
 for every source command, keyboard shortcut, toolbar action, projector
-interaction, and Young-diagram interaction.
+interaction, and Young diagram interaction.
 
 ## Whiteboard expressions
 
-Use `A := expression` or `A \def expression` to give an expression a name.
+Use `A \def expression` to give an expression a name.
 Later lines can use that name. Start a line with `&` to continue the preceding
 logical line.
 
@@ -88,7 +87,57 @@ interactive result terms. Operators can then be expanded manually to build a
 calculation line by line. Evaluating a pair expression reveals its automatic
 representation calculation steps.
 
+## Export to LaTeX
+
+Click **Export to LaTeX**, choose the options listed below, then click **Export**.
+The app downloads `<whiteboard name>.tex`. The choices are shared by every
+whiteboard and reopen with the last exported configuration.
+
+- **Include preamble** produces a complete document. Leave it off to export a
+  fragment for an existing document.
+- **Include all colour labels** keeps line and box colours.
+- **Pad boxes and antiboxes to the term's N₀** keeps the whiteboard spacing in
+  Young-diagram pairs.
+- **Include equation line alignment** joins whiteboard rows with LaTeX line
+  breaks.
+
+Put [`birdtracks.sty`](latex/birdtracks.sty) inside your LaTeX working directory, then
+compile it with a normal LaTeX installation:
+
+```console
+pdflatex my-whiteboard.tex
+```
+
+### Use `birdtracks.sty` directly
+
+Load the package with `\usepackage{birdtracks}`. The main commands are:
+
+- `projector` for layered birdtrack diagrams;
+- `\symmetriser`, `\antisymmetriser`, `\freelines`, and `\permute` inside a
+  `\layer`;
+- `tracedprojector` for closed diagrams;
+- `ydpair`, `\covar`, and `\convar` for Young-diagram pairs;
+- `\birdtracksetup{...}` for shared sizes, colours, arrows, and line widths.
+
+Start with the complete
+[`birdtracks-example.tex`](latex/birdtracks-example.tex), or view the compiled
+[`birdtracks-example.pdf`](latex/birdtracks-example.pdf). The full option
+reference is in [`latex/README.md`](latex/README.md).
+
 ## Development installation
+
+Clear local caches, build products, and in-tree compiled extensions before a
+fresh check-and-fix cycle with:
+
+```bash
+birdtracks-clean
+```
+
+Use `birdtracks-clean --dry-run` to inspect the targets first. The command
+preserves `.venv`, `expressions`, exported TeX, checkpoints, and source files.
+It is also available before reinstalling updated entry points as
+`python -m birdtracks.clean`. Restart any running Birdtracks kernel or app
+after cleaning.
 
 This is optional. Most whiteboard users should use the Windows or Linux
 installer above. From a repository checkout, developers can run:

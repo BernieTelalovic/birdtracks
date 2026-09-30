@@ -26,7 +26,10 @@ opening a `.whiteboard` file launches the same application.
   line or a Young-diagram box to color it.
 - **Save** writes the current `.whiteboard` document.
 - **Load** opens a `.whiteboard`, `.whiteboard.json`, or JSON document.
-- **Export to LaTeX** is visible but disabled for the 0.2.0 release.
+- **Export to LaTeX** downloads the document using the public `projector` and
+  `ydpair` package syntax. Its dialog can include a complete preamble, retain
+  colour styling and definitions, and pad pair terms to `N_0` by row count.
+  These choices persist in the browser across whiteboards and folders.
 - The title field changes the document name.
 
 In a multi-document workspace, select a named tab to switch documents, **+**
@@ -46,6 +49,7 @@ creates a new document, and **×** closes the selected document.
 | `Backspace` at the start of a line | Merge it into the preceding editable line. |
 | Arrow keys at a line boundary | Move to the adjacent line. |
 | `Tab` after `\\b`, `\\p`, or `\\d` | Complete `\\birdtracks`, `\\pair`, or `\\def`. |
+| `Tab` after `\\op` or `\\ot` | Complete `\\oplus ` or `\\otimes `, including a trailing space. `\\def ` completion also adds a space. |
 | `Space` on focused rendered content | Edit the line. |
 
 Start a line with `&` to continue the preceding logical line. Define a named
@@ -53,6 +57,11 @@ expression with either `A := expression` or `A \\def expression`. Later lines
 can use that name. Adjacent projector names are ordered products. Parentheses,
 square brackets, and braces group calculations. `\\tr A` traces the next term;
 `\\tr(A + B)` traces the grouped expression.
+
+On editable lines, projector and pair controls remain available immediately after
+opening a document. Click the surrounding text or gaps to place the caret;
+arrow keys, Shift-selection, Backspace, and Delete treat each embedded object
+as one symbol. Mouse gestures inside an object continue to edit that object.
 
 ## Whiteboard source commands
 
@@ -125,7 +134,7 @@ while `(`, `[`, `)`, and `]` add pair-expression brackets.
   remove it, and drag it to another valid position.
 - Double-click a box to edit its integer tableau label. `Enter` or **Apply
   label** accepts the label; an empty label removes it; `Escape` cancels.
-- Double-click the central axis of an empty pair to toggle a singleton pair.
+- Click the central axis of an empty pair to toggle a singleton pair.
 - Drag a term by its prefactor to reorder it.
 - Double-click a prefactor to edit its integer value and `N₀`. `Enter` or
   **Apply** accepts the values; `Escape` cancels. `Ctrl+click`, `Ctrl+Enter`,

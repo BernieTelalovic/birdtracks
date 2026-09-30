@@ -586,16 +586,19 @@ def _validate_directions(in_direction: object, out_direction: object) -> None:
 def _validate_connection_directions(left: Projector, right: Projector) -> None:
     """Validate the right-to-left connection made by ``left * right``.
 
-    ``right`` supplies the source on its left boundary and ``left`` receives
-    it on its right boundary. Neutral boundaries retain the legacy behaviour.
+    ``right`` supplies its left boundary and ``left`` supplies its right
+    boundary. Chained products retain this orientation because their outer
+    boundary directions match those of their equally directed operands.
     """
-    if (right.out_direction, left.in_direction) not in {
-        ("neutral", "neutral"),
-        ("left", "left"),
-        ("right", "right"),
-    }:
-        raise ValueError(
-            "projector composition requires matching output and input sides"
+    if (
+        left.in_direction,
+        left.out_direction,
+    ) != (
+        right.in_direction,
+        right.out_direction,
+    ):
+        raise NotImplementedError(
+            "composition of birdtracks with different directions is not implemented"
         )
 
 

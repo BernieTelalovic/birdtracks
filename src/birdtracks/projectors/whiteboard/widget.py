@@ -281,6 +281,7 @@ def whiteboard_section_widget(
     blocks: list[dict[str, object]] | None = None,
     *,
     title: str = "",
+    recent_colors: list[str] | None = None,
     debug: bool = False,
 ) -> object:
     """Create the live-typeset whiteboard editor and its child canvases."""
@@ -328,7 +329,9 @@ def whiteboard_section_widget(
         save_request = traitlets.Int().tag(sync=True)
         load_document_request = traitlets.Dict().tag(sync=True)
         export_request = traitlets.Int().tag(sync=True)
+        export_options = traitlets.Dict().tag(sync=True)
         export_content = traitlets.Unicode().tag(sync=True)
+        recent_colors = traitlets.List(trait=traitlets.Unicode()).tag(sync=True)
 
         @property
         def latex(self) -> str:
@@ -338,12 +341,25 @@ def whiteboard_section_widget(
 
             return whiteboard_latex(self)
 
-        def to_latex(self, *, include_preamble: bool = False) -> str:
+        def to_latex(
+            self,
+            *,
+            include_preamble: bool = False,
+            include_colors: bool = True,
+            pad_to_n0: bool = False,
+            include_equation_alignment: bool = False,
+        ) -> str:
             """Export the current whiteboard, optionally as a TeX document."""
 
             from .latex import whiteboard_latex
 
-            return whiteboard_latex(self, include_preamble=include_preamble)
+            return whiteboard_latex(
+                self,
+                include_preamble=include_preamble,
+                include_colors=include_colors,
+                pad_to_n0=pad_to_n0,
+                include_equation_alignment=include_equation_alignment,
+            )
 
     initial_blocks = (
         deepcopy(blocks)
@@ -365,7 +381,9 @@ def whiteboard_section_widget(
         save_request=0,
         load_document_request={},
         export_request=0,
+        export_options={},
         export_content="",
+        recent_colors=list(recent_colors or []),
     )
     widget.layout.width = "100%"
     widget.debug = debug
@@ -435,7 +453,7 @@ def whiteboard(
     debug: bool = False,
     default_directory: Path | None = None,
     _loaded_state: (
-        tuple[WhiteboardStores, list[dict[str, object]] | None, str] | None
+        tuple[WhiteboardStores, list[dict[str, object]] | None, str, list[str]] | None
     ) = None,
 ) -> object:
     """Open a standalone persisted whiteboard document.
@@ -456,9 +474,9 @@ def whiteboard(
             if legacy.exists():
                 resolved = legacy
     if _loaded_state is not None:
-        stores, blocks, stored_title = _loaded_state
+        stores, blocks, stored_title, recent_colors = _loaded_state
     elif resolved is not None and resolved.exists():
-        stores, blocks, stored_title = _load_whiteboard_state(resolved)
+        stores, blocks, stored_title, recent_colors = _load_whiteboard_state(resolved)
     else:
         stores = WhiteboardStores(
             projectors=EvaluationEnvironment(projector_backend),
@@ -466,10 +484,12 @@ def whiteboard(
         )
         blocks = None
         stored_title = ""
+        recent_colors = []
 
     widget = whiteboard_section_widget(
         blocks,
         title=stored_title or _session_title(resolved),
+        recent_colors=recent_colors,
         debug=debug,
     )
 
@@ -532,9 +552,14 @@ def whiteboard(
             next_terms.extend((term, coefficient) for term, coefficient in stored_value.items()
                               if not term.nodes)
         next_value = ProjectorSum(next_terms)
-        from ..simplification import collect_fully_expanded_permutations
+        from ..simplification import (
+            collect_fully_expanded_permutations,
+            remove_multiply_connected_s_a_terms,
+        )
 
-        next_value = collect_fully_expanded_permutations(next_value)
+        next_value = collect_fully_expanded_permutations(
+            remove_multiply_connected_s_a_terms(next_value)
+        )
 
         parent_colors = selected.get("backend_line_colors", {})
         candidates: list[tuple[Projector, dict[str, object]]] = []
@@ -691,11 +716,34 @@ def whiteboard(
         requested: list[str] = []
         per_block_index: dict[str, int] = {}
         backend_terms: dict[str, list[dict[str, object]]] = {}
+
+        def discard_backend_editor(key: str) -> None:
+            editor = backend_embedded.pop(key, None)
+            if editor is None:
+                return
+            listener = backend_projector_listeners.pop(key, None)
+            if listener is not None:
+                editor.unobserve(listener, names="expand_node_request")
+            color_listener = backend_color_listeners.pop(key, None)
+            if color_listener is not None:
+                editor.unobserve(color_listener, names="line_colors")
+
         for term in terms:
             index = per_block_index.get(term.block_id, 0)
             per_block_index[term.block_id] = index + 1
             key = f"{term.block_id}:backend:{index}"
             requested.append(key)
+            source_block = next(
+                (block for block in widget.blocks
+                 if str(block.get("id") or "") == term.block_id),
+                None,
+            )
+            existing = backend_embedded.get(key)
+            if (
+                existing is not None
+                and getattr(existing, "_source_projector", None) != term.value
+            ):
+                discard_backend_editor(key)
             if key not in backend_embedded:
                 from ..widget import projector_widget
 
@@ -707,6 +755,27 @@ def whiteboard(
                 )
                 editor.widget_role = "embedded"
                 backend_embedded[key] = editor
+                stored_presentations = (
+                    source_block.get("backend_presentations", {})
+                    if isinstance(source_block, dict)
+                    and isinstance(source_block.get("backend_presentations"), dict)
+                    else {}
+                )
+                presentation = stored_presentations.get(str(index))
+                if (
+                    isinstance(presentation, dict)
+                    and presentation.get("graph") == editor.graph
+                ):
+                    for field in (
+                        "positions",
+                        "free_levels",
+                        "port_orders",
+                        "boundary_orders",
+                        "effective_coefficient",
+                    ):
+                        value = presentation.get(field)
+                        if isinstance(value, dict):
+                            setattr(editor, field, deepcopy(value))
 
                 def on_backend_expand(
                     change: dict[str, object],
@@ -759,11 +828,6 @@ def whiteboard(
 
                 backend_color_listeners[key] = on_backend_line_colors
                 editor.observe(on_backend_line_colors, names="line_colors")
-            source_block = next(
-                (block for block in widget.blocks
-                 if str(block.get("id") or "") == term.block_id),
-                None,
-            )
             stored_colors = (
                 source_block.get("backend_line_colors", {}).get(key, {})
                 if isinstance(source_block, dict)
@@ -790,15 +854,7 @@ def whiteboard(
 
         for key in tuple(backend_embedded):
             if key not in requested:
-                listener = backend_projector_listeners.pop(key, None)
-                if listener is not None:
-                    backend_embedded[key].unobserve(
-                        listener, names="expand_node_request"
-                    )
-                color_listener = backend_color_listeners.pop(key, None)
-                if color_listener is not None:
-                    backend_embedded[key].unobserve(color_listener, names="line_colors")
-                del backend_embedded[key]
+                discard_backend_editor(key)
         widget.backend_projector_ids = requested
         widget.backend_projectors = [backend_embedded[key] for key in requested]
 
@@ -1175,16 +1231,29 @@ def whiteboard(
             projector_codec=projector_codec,
             diagram_backend=diagram_backend,
             diagram_codec=diagram_codec,
-            document={"title": title, "blocks": deepcopy(widget.blocks)},
+            document={
+                "title": title,
+                "blocks": deepcopy(widget.blocks),
+                "recent_colors": list(widget.recent_colors),
+            },
         )
 
     widget.observe(persist, names="blocks")
     widget.observe(persist, names="title")
     widget.observe(persist, names="save_request")
+    widget.observe(persist, names="recent_colors")
 
     def export_latex(change: dict[str, object]) -> None:
         del change
-        content = widget.to_latex(include_preamble=True)
+        options = widget.export_options
+        content = widget.to_latex(
+            include_preamble=bool(options.get("include_preamble", False)),
+            include_colors=bool(options.get("include_colors", True)),
+            pad_to_n0=bool(options.get("pad_to_n0", False)),
+            include_equation_alignment=bool(
+                options.get("include_equation_alignment", False),
+            ),
+        )
         if resolved is not None:
             export_path = _latex_export_path(resolved)
             export_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1442,6 +1511,7 @@ def whiteboard(
                 "calculation_group": group_name,
                 "calculation_step": step,
                 "pair_calculation": calculation_state,
+                "pair_expression_tree": line.get("expression_tree"),
                 "calculation_svg": line["svg"],
                 "calculation_caption": line.get("caption", ""),
             }
@@ -1670,13 +1740,13 @@ def whiteboard_workspace(
         if not isinstance(content, str) or not isinstance(name, str):
             return
         loaded = _load_whiteboard_content(content)
-        stores, blocks, title = loaded
+        stores, blocks, title, recent_colors = loaded
         if not title:
             title = _session_title(Path(name))
         document = whiteboard(
             debug=debug,
             default_directory=Path.cwd(),
-            _loaded_state=(stores, blocks, title),
+            _loaded_state=(stores, blocks, title, recent_colors),
         )
         document.observe(load_document, names="load_document_request")
         documents = [*workspace.documents, document]
@@ -1691,7 +1761,7 @@ def whiteboard_workspace(
 
 def _load_whiteboard_state(
     path: Path,
-) -> tuple[WhiteboardStores, list[dict[str, object]] | None, str]:
+) -> tuple[WhiteboardStores, list[dict[str, object]] | None, str, list[str]]:
     """Load the typed format, migrating the earlier projector-only format."""
 
     state = json.loads(path.read_text(encoding="utf-8"))
@@ -1706,7 +1776,12 @@ def _load_whiteboard_state(
             diagram_codec=diagram_codec,
         )
         document = loaded.document
-        return loaded.stores, _blocks_from_document(document), _title_from_document(document)
+        return (
+            loaded.stores,
+            _blocks_from_document(document),
+            _title_from_document(document),
+            _recent_colors_from_document(document),
+        )
     if state.get("version") == 1:
         loaded = WhiteboardSidecar.load(
             path,
@@ -1718,13 +1793,18 @@ def _load_whiteboard_state(
             diagrams=EvaluationEnvironment(diagram_backend),
         )
         document = loaded.document
-        return stores, _blocks_from_document(document), _title_from_document(document)
+        return (
+            stores,
+            _blocks_from_document(document),
+            _title_from_document(document),
+            _recent_colors_from_document(document),
+        )
     raise ValueError("unsupported whiteboard sidecar version")
 
 
 def _load_whiteboard_content(
     content: str,
-) -> tuple[WhiteboardStores, list[dict[str, object]] | None, str]:
+) -> tuple[WhiteboardStores, list[dict[str, object]] | None, str, list[str]]:
     """Load uploaded sidecar text through the established file codecs."""
 
     with TemporaryDirectory(prefix="birdtracks-whiteboard-load-") as temporary:
@@ -1745,6 +1825,18 @@ def _blocks_from_document(document: dict[str, object]) -> list[dict[str, object]
 def _title_from_document(document: dict[str, object]) -> str:
     title = document.get("title", "")
     return title.strip() if isinstance(title, str) else ""
+
+
+def _recent_colors_from_document(document: dict[str, object]) -> list[str]:
+    colors = document.get("recent_colors", [])
+    if not isinstance(colors, list):
+        return []
+    valid = [
+        color.lower()
+        for color in colors
+        if isinstance(color, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color)
+    ]
+    return list(dict.fromkeys(valid))[:5]
 
 
 def _session_title(path: Path | None) -> str:

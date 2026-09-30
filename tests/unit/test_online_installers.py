@@ -38,4 +38,19 @@ def test_installers_register_the_whiteboard_with_its_document_icon() -> None:
 
     assert 'birdtracks-whiteboard-file.svg" "${ICON_ROOT}/scalable/apps/' in linux
     assert "Birdtracks Whiteboard.lnk" in windows
-    assert '$WhiteboardShortcut.IconLocation = "$InstalledIcon,0"' in windows
+    assert '$WhiteboardShortcut.TargetPath = $Whiteboard' in windows
+    assert '$WhiteboardShortcut.IconLocation = "$InstalledAppIcon,0"' in windows
+    assert '-Value "`"$InstalledFileIcon`",0"' in windows
+    assert '$null = & $Whiteboard --help' in windows
+
+
+def test_windows_launchers_use_the_application_icon() -> None:
+    installer = (PACKAGING / "install-birdtracks.ps1.in").read_text(
+        encoding="utf-8"
+    )
+    specification = (PACKAGING / "whiteboard.spec").read_text(encoding="utf-8")
+
+    assert "birdtracks-whiteboard.ico" in installer
+    assert "birdtracks-whiteboard-file.ico" in installer
+    assert 'static/birdtracks-whiteboard.ico"' in specification
+    assert 'static/birdtracks-whiteboard-file.ico"' not in specification
