@@ -1644,6 +1644,84 @@ function renderCreator({ model, el }) {
   let compiledDisplayValid = null;
   let zoom = Number(model.get("zoom") || 1);
   const undoStack = [];
+  let sharedState = model.get("editor_state")?.version === 1 ? model.get("editor_state") : null;
+  const requestPrefix = `${editorId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+  let requestSequence = 0;
+  let pendingEditorRequest = null;
+  const editorQueue = [];
+
+  function presentationSnapshot() {
+    return Object.fromEntries(["positions", "free_levels", "boundary_orders", "line_colors"]
+      .map(key => [key, structuredClone(model.get(key) || {})]));
+  }
+
+  function sendNextEditorRequest() {
+    if (!sharedState || pendingEditorRequest || !editorQueue.length) return;
+    pendingEditorRequest = editorQueue.shift();
+    const { after, ...command } = pendingEditorRequest;
+    model.set("editor_request", {
+      ...command, term_id: sharedState.term_id, base_revision: sharedState.revision,
+    });
+    model.save_changes();
+  }
+
+  function requestEditor(action, data = {}, after = null) {
+    if (!sharedState) return false;
+    editorQueue.push({action, ...data, after,
+      request_id: `${requestPrefix}:port-editor:${++requestSequence}`});
+    sendNextEditorRequest();
+    return true;
+  }
+
+  function applyEditorState() {
+    const next = model.get("editor_state");
+    if (!next?.version) { sharedState = null; redoPortButton.hidden = true; return; }
+    if (sharedState && next.revision < sharedState.revision) {
+      model.set("editor_state", structuredClone(sharedState));
+      return;
+    }
+    sharedState = structuredClone(next);
+    coefficientNumerator = BigInt(next.graph.coefficient.numerator);
+    coefficientDenominator = BigInt(next.graph.coefficient.denominator);
+    for (const node of nodes) {
+      const orders = next.port_orders[String(node.index)];
+      if (!orders) continue;
+      node.inputOrder = [...orders.input];
+      node.outputOrder = [...orders.output];
+      node.initialInputOrder = [...orders.input];
+      node.initialOutputOrder = [...orders.output];
+      const position = next.positions[String(node.index)];
+      if (position) node.level = Math.max(0,
+        (position.y - geometry.top_margin) / spacing - (node.labels.length - 1) / 2,
+      );
+    }
+    for (const connection of connections) {
+      if (connection.boundaryLabel === undefined) continue;
+      connection.route = Object.fromEntries(Object.entries(next.free_levels || {})
+        .filter(([_layer, levels]) => levels[String(connection.boundaryLabel)] !== undefined)
+        .map(([layer, levels]) => [layer, levels[String(connection.boundaryLabel)]]));
+    }
+    localUndo.disabled = !next.can_undo;
+    redoPortButton.disabled = !next.can_redo;
+    redoPortButton.hidden = !next.can_redo;
+    redraw();
+  }
+
+  function editorFeedback() {
+    const feedback = model.get("editor_feedback");
+    if (!pendingEditorRequest || feedback?.request_id !== pendingEditorRequest.request_id) return;
+    const completed = pendingEditorRequest;
+    pendingEditorRequest = null;
+    if (feedback.error) {
+      applyEditorState();
+      message.textContent = feedback.error;
+      editorQueue.length = 0;
+    } else {
+      message.textContent = completed.action === "save" ? "Projector saved." : "Port editor updated.";
+      completed.after?.();
+    }
+    sendNextEditorRequest();
+  }
 
   function snapshotEditorState() {
     return {
@@ -1662,6 +1740,7 @@ function renderCreator({ model, el }) {
   }
 
   function undoEditorOperation() {
+    if (sharedState) return requestEditor("undo");
     const previous = undoStack.pop();
     if (!previous) return false;
     const modeBeforeUndo = interactionMode;
@@ -1958,6 +2037,13 @@ function renderCreator({ model, el }) {
   });
   workspace.append(canvasViewport, localUndo, localMultiply, localFraction);
   el.append(workspace, save);
+  const redoPortButton = document.createElement("button");
+  redoPortButton.type = "button";
+  redoPortButton.textContent = "Redo port reorder";
+  redoPortButton.hidden = !sharedState?.can_redo;
+  redoPortButton.disabled = !sharedState?.can_redo;
+  redoPortButton.addEventListener("click", () => requestEditor("redo"));
+  el.appendChild(redoPortButton);
 
   function setMode(mode) {
     const permittedMode = embedded
@@ -2421,6 +2507,7 @@ function renderCreator({ model, el }) {
   }
 
   function xForNode(node) {
+    if (sharedState?.positions?.[String(node.index)]) return sharedState.positions[String(node.index)].x;
     const column = usesCompiledDisplay() ? displayColumn(node.index) : -1;
     if (column < 0) return xForLayer(node.layer);
     const corridorWidths = displayGraph.corridor_widths || [];
@@ -2443,6 +2530,9 @@ function renderCreator({ model, el }) {
       && Number.isFinite(displayGraph.corridor_width)
       ? geometry.left_boundary + displayGraph.corridor_width
       : geometry.first_layer_x + (layers - 1) * layerStep + geometry.step;
+    const preservedRightBoundary = sharedState
+      ? Math.max(rightBoundary, ...nodes.map(node => xForNode(node) + nodeWidth / 2 + geometry.step / 2))
+      : rightBoundary;
     // Fixed margins make a logical level occupy the same screen y-coordinate
     // in every term; cropping must not depend on where an S/A happens to sit.
     const contentTop = yFor(0) - geometry.operator_padding;
@@ -2460,15 +2550,15 @@ function renderCreator({ model, el }) {
     const edgePadding = embedded ? Math.min(nodeWidth, spacing) * 0.1 : 0;
     const left = embedded ? -edgePadding : 0;
     const right = usesCompiledDisplay()
-      ? rightBoundary
-      : rightBoundary + (embedded ? edgePadding : geometry.step / 2);
+      ? preservedRightBoundary
+      : preservedRightBoundary + (embedded ? edgePadding : geometry.step / 2);
     return {
       left,
       width: right - left,
       top,
       height: bottom - top,
       layers,
-      rightBoundary,
+      rightBoundary: preservedRightBoundary,
     };
   }
 
@@ -2946,6 +3036,7 @@ function renderCreator({ model, el }) {
   }
 
   function displayedTermSign() {
+    if (sharedState) return sharedState.display.sign;
     const initiallyNegative = model.get("term_sign") === "-";
     const negative = initiallyNegative !== portParityIsOdd();
     if (negative) return "-";
@@ -2961,6 +3052,7 @@ function renderCreator({ model, el }) {
   }
 
   function currentGraphCoefficient() {
+    if (sharedState) return sharedState.display.coefficient;
     const coefficient = {
       numerator: String(coefficientNumerator),
       denominator: String(coefficientDenominator),
@@ -2972,6 +3064,10 @@ function renderCreator({ model, el }) {
   }
 
   function multiplyCoefficient(numeratorValue, denominatorValue) {
+    if (sharedState) {
+      message.textContent = "Switch to Create mode to edit the prefactor.";
+      return;
+    }
     rememberEditorState();
     let multiplierTop = BigInt(numeratorValue);
     let multiplierBottom = BigInt(denominatorValue);
@@ -2996,6 +3092,7 @@ function renderCreator({ model, el }) {
   }
 
   function syncPortOrders({ save = true } = {}) {
+    if (sharedState) return;
     const state = Object.fromEntries(nodes.map((node) => [String(node.index), {
       input: [...node.inputOrder],
       output: [...node.outputOrder],
@@ -3007,6 +3104,7 @@ function renderCreator({ model, el }) {
 
   function startPortReorder(event, endpoint) {
     if (event.button !== 0) return;
+    if (sharedState && (pendingEditorRequest || editorQueue.length)) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -3015,6 +3113,7 @@ function renderCreator({ model, el }) {
     const origin = order.indexOf(endpoint.label);
     const before = snapshotEditorState();
     let changed = false;
+    let cancelled = false;
 
     function move(moveEvent) {
       const point = eventPoint(moveEvent);
@@ -3029,7 +3128,7 @@ function renderCreator({ model, el }) {
       const current = order.indexOf(endpoint.label);
       if (current === desired) return;
       if (!changed) {
-        rememberEditorState(before);
+        if (!sharedState) rememberEditorState(before);
         changed = true;
       }
       order.splice(current, 1);
@@ -3037,20 +3136,28 @@ function renderCreator({ model, el }) {
       // Publish semantic orientation during the preview. The embedding
       // whiteboard owns the surrounding term sign and reacts to this state;
       // the projector renderer never edits the expression itself.
-      syncPortOrders({ save: false });
+      if (!sharedState) syncPortOrders({ save: false });
       redraw();
     }
 
     function finish() {
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", finish);
-      document.removeEventListener("pointercancel", finish);
-      if (changed) syncPortOrders();
+      document.removeEventListener("pointercancel", cancel);
+      if (sharedState) {
+        if (cancelled) { applyEditorState(); return; }
+        if (changed) requestEditor("reorder", {
+          changes: {[sharedState.node_ids[node.index]]: {
+            input: [...node.inputOrder], output: [...node.outputOrder],
+          }}, presentation: presentationSnapshot(), selection: [sharedState.node_ids[node.index]],
+        });
+      } else if (changed) syncPortOrders();
       redraw();
     }
+    function cancel() { cancelled = true; finish(); }
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", finish);
-    document.addEventListener("pointercancel", finish);
+    document.addEventListener("pointercancel", cancel);
   }
 
   function displayStrandPosition(strand, column) {
@@ -3991,6 +4098,15 @@ function renderCreator({ model, el }) {
   }
 
   function saveProjector(expandNode = null, recursiveEdge = null) {
+    if (sharedState) {
+      requestEditor("save", {presentation: presentationSnapshot(),
+        save_revision: Number(model.get("save_command") || 0)}, expandNode === null ? null : () => {
+          model.set("expand_node_request", {node: expandNode,
+            ...(recursiveEdge === null ? {} : {recursive_edge: recursiveEdge}), revision: Date.now()});
+          model.save_changes();
+        });
+      return;
+    }
     // Creator topology is normalized only at the explicit serialization
     // boundary. Evaluate mode already owns an exact graph and must not run
     // creator cleanup merely because an expansion/save was requested.
@@ -4213,6 +4329,7 @@ function renderCreator({ model, el }) {
     // Display strands are derived from exact topology. Never persist the
     // template's potentially stale routing cache after editing the graph.
     delete savedGraph.display;
+    delete savedGraph.editor_value;
     const positions = Object.fromEntries(ordered.map((node, index) => [String(index), {
       x: geometry.first_layer_x + node.layer * layerStep,
       y: yFor(node.level + (node.labels.length - 1) / 2),
@@ -4272,6 +4389,10 @@ function renderCreator({ model, el }) {
     }
     model.set("positions", positions);
     model.set("free_levels", freeLevels);
+    if (sharedState) {
+      requestEditor("presentation", {presentation: presentationSnapshot()});
+      return;
+    }
     model.save_changes();
   }
 
@@ -4335,6 +4456,18 @@ function renderCreator({ model, el }) {
     redraw();
   };
   const redrawMode = () => setMode(model.get("mode"));
+  const sharedEditorKeyboard = (event) => {
+    if (!sharedState || activeEditorByGroup.get(groupId) !== editorId
+        || !(event.ctrlKey || event.metaKey) || event.target.closest?.("input, textarea")) return;
+    const key = event.key.toLowerCase();
+    if (key !== "z" && key !== "y") return;
+    event.preventDefault();
+    event.stopPropagation();
+    requestEditor(key === "y" || event.shiftKey ? "redo" : "undo");
+  };
+  model.on("change:editor_state", applyEditorState);
+  model.on("change:editor_feedback", editorFeedback);
+  document.addEventListener("keydown", sharedEditorKeyboard, true);
   model.on("change:save_command", saveFromPython);
   model.on("change:local_undo_command", localUndoFromPython);
   model.on("change:term_sign change:term_leading", redrawTermSign);
@@ -4356,7 +4489,11 @@ function renderCreator({ model, el }) {
   if (widgetMode === "create") prepareCreatorPresentation();
   setMode(widgetMode);
   setZoom(1);
+  if (sharedState) applyEditorState();
   return () => {
+    model.off("change:editor_state", applyEditorState);
+    model.off("change:editor_feedback", editorFeedback);
+    document.removeEventListener("keydown", sharedEditorKeyboard, true);
     document.removeEventListener("keydown", updateModifier, true);
     document.removeEventListener("keyup", updateModifier, true);
     document.removeEventListener("pointermove", updateModifier, true);

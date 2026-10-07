@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
+from fractions import Fraction
 from os import PathLike
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -51,6 +52,7 @@ def projector_sum_widget(
     detangler: str | PathLike[str] | object | None = None,
     prompt_for_session: bool = False,
     debug: bool = False,
+    shared_editor: bool = False,
     pair_expression: dict[str, object] | None = None,
     create_kind: str = "birdtracks",
     restored_lines: list[
@@ -70,6 +72,12 @@ def projector_sum_widget(
 
     from .projector_sum import ProjectorSum
     from .simplification import remove_multiply_connected_s_a_terms
+    shared_editor = shared_editor or bool(
+        initial_editor is not None and initial_editor.configuration.state().get("editor_state")
+    ) or bool(restored_lines and any(
+        editor.configuration.state().get("editor_state")
+        for _value, editors, _signs in restored_lines for editor in editors
+    ))
     learned_detangler = None
     automatic_detangler = detangler is None
     if detangler is None:
@@ -436,13 +444,23 @@ def projector_sum_widget(
             editor._canvas_base_width = base_width
             editor._canvas_leading = term_index == 0
             editor._canvas_equals = equals
+            if result.mode == "evaluate" and (shared_editor or editor.configuration.state().get("editor_state")):
+                from .editor_widget import attach_editor
+
+                attach_editor(editor, Fraction(line_signs[term_index] if line_signs is not None else sign))
+                sign = int(editor._editor_session.state.outer_factor)
             apply_editor_zoom(editor)
             row_children.append(editor)
             editors.append(editor)
-            signs.append(line_signs[term_index] if line_signs is not None else sign)
+            signs.append(sign if getattr(editor, "_editor_session", None) is not None
+                         else line_signs[term_index] if line_signs is not None else sign)
 
         editor_tuple = tuple(editors)
         sign_tuple = tuple(signs)
+        if any(getattr(editor, "_editor_session", None) is not None for editor in editors):
+            value = current_from(editor_tuple, sign_tuple)
+            result._history[-1] = value
+            result._saved_projector_sum = value
         row = ipywidgets.HBox(children=tuple(row_children))
         row.add_class("birdtracks-equation-row")
         row.layout = ipywidgets.Layout(
@@ -596,6 +614,9 @@ def projector_sum_widget(
                 signs[index] = -signs[index]
                 new_signs = tuple(signs)
                 value, row, editors, _old_signs = result._line_states[-1]
+                from .editor_widget import bridge_outer_factor
+
+                bridge_outer_factor(editor, Fraction(new_signs[index]))
                 new_value = current_from(editors, new_signs)
                 result._term_signs = new_signs
                 result._line_states[-1] = (
@@ -691,6 +712,9 @@ def projector_sum_widget(
                 }
                 if not change["new"] or editor not in known_editors:
                     return
+                if getattr(editor, "_editor_session", None) is not None and editor.editor_state.get("can_undo"):
+                    editor.local_undo_command += 1
+                    return
                 if len(result._line_states) <= 1:
                     editor.local_undo_command += 1
                     return
@@ -727,6 +751,8 @@ def projector_sum_widget(
                 persist()
 
             canvas_observe(editor, persist_saved_editor, "saved_revision")
+            if hasattr(editor, "editor_state"):
+                canvas_observe(editor, persist_saved_editor, "editor_state")
 
         for editor in editor_tuple:
             wire_editor(editor)
@@ -894,6 +920,10 @@ def projector_sum_widget(
                 )
                 editor._canvas_leading = index == 0
                 editor._canvas_equals = getattr(old_editor, "_canvas_equals", None)
+                if shared_editor:
+                    from .editor_widget import attach_editor
+
+                    attach_editor(editor, Fraction(sign))
                 result._wire_editor(editor)
                 rebuilt.append(editor)
 
@@ -1269,6 +1299,9 @@ def projector_widget(
         @traitlets.observe("save_snapshot")
         def _save_projector(self, change: dict[str, object]) -> None:
             snapshot = change["new"]
+            if getattr(self, "_editor_session", None) is not None:
+                self._last_error = ValueError("shared editor saves require a revisioned editor command")
+                return
             if not snapshot or not hasattr(self, "_source_projector"):
                 return
             assert isinstance(snapshot, dict)
@@ -1586,6 +1619,11 @@ def _blank_creator_widget(
 
 def _canvas_editor_state(editor: object) -> dict[str, object]:
     """Copy the complete synchronized state of one canvas term."""
+    from .editor_widget import shared_snapshot
+
+    snapshot = shared_snapshot(editor)
+    if snapshot is not None:
+        return snapshot
     return deepcopy(
         {
             "graph": editor.graph,
@@ -1641,6 +1679,14 @@ def _projector_from_state(
     boundary_orders: Mapping[str, list[int]],
 ) -> Projector:
     """Build an immutable algebraic snapshot of synchronized editor state."""
+    if "editor_value" in graph:
+        from .whiteboard.projector_codec import projector_codec
+        from .projector import Projector
+
+        value = projector_codec.decode(graph["editor_value"])
+        if not isinstance(value, Projector):
+            raise ValueError("shared canvas state requires an exact Projector")
+        return value
     from .projector import Connection, NodePort, Projector
     nodes = graph["nodes"]
     assert isinstance(nodes, list)
