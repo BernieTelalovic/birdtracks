@@ -59,6 +59,7 @@ def projector_sum_widget(
         tuple[ProjectorSum, tuple[object, ...], tuple[int, ...]]
     ]
     | None = None,
+    restored_redo_lines: list[dict[str, object]] | None = None,
 ) -> object:
     """Create the unified projector canvas in create or evaluate mode."""
     if mode not in {"create", "evaluate"}:
@@ -154,8 +155,10 @@ def projector_sum_widget(
         @property
         def current_projector_sum(self) -> ProjectorSum:
             """Return the sum represented by current synchronized canvas state."""
+            from .editor_rewrites import expression_value
+
             return remove_automatically_vanishing_terms(
-                ProjectorSum(
+                expression_value(
                     sign
                     * _projector_from_state(
                         editor.graph,
@@ -220,6 +223,7 @@ def projector_sum_widget(
     result._toolbar = toolbar
     result._rows = []
     result._line_states = []
+    result._redo_lines = list(restored_redo_lines or [])
     result._saved_projector_sum = projector_sum
     result._save_step_button = save_step
     result._session_name_prompt = session_prompt
@@ -276,14 +280,20 @@ def projector_sum_widget(
                     }
                     for _value, _row, editors, signs in result._line_states
                 ],
+                "redo_lines": [entry if isinstance(entry, dict) else {
+                    "terms":[{"sign":sign,"state":_canvas_editor_state(child)}
+                             for child, sign in zip(entry[2],entry[3],strict=True)]}
+                    for entry in result._redo_lines],
             },
         )
 
     def current_from(
         editors: tuple[object, ...], signs: tuple[int, ...]
     ) -> ProjectorSum:
+        from .editor_rewrites import expression_value
+
         return remove_automatically_vanishing_terms(
-            ProjectorSum(
+            expression_value(
                 sign
                 * _projector_from_state(
                     editor.graph, editor.port_orders, editor.boundary_orders
@@ -439,7 +449,8 @@ def projector_sum_widget(
             editor._canvas_base_width = base_width
             editor._canvas_leading = term_index == 0
             editor._canvas_equals = equals
-            if result.mode == "evaluate" and (shared_editor or editor.configuration.state().get("editor_state")):
+            editor._canvas_outer_factor = Fraction(line_signs[term_index] if line_signs is not None else sign)
+            if editor.projector.nodes and (shared_editor or editor.configuration.state().get("editor_state")):
                 from .editor_widget import attach_editor
 
                 attach_editor(editor, Fraction(line_signs[term_index] if line_signs is not None else sign))
@@ -488,6 +499,8 @@ def projector_sum_widget(
                     or editor not in editors
                 ):
                     return
+                if getattr(editor, "_editor_session", None) is not None:
+                    return  # Shared local/calculation rewrites publish provenance.
                 selected = editors.index(editor)
                 result.mode = "evaluate"
                 toolbar.mode = "evaluate"
@@ -528,6 +541,44 @@ def projector_sum_widget(
                 persist()
 
             canvas_observe(editor, expand_selection, "expand_node_request")
+
+            def insert_shared_rewrite(change, editor=editor):
+                rewrite = change["new"]
+                if not rewrite or editor not in result._term_editors:
+                    return
+                session = getattr(editor, "_editor_session", None)
+                if (session is None or rewrite["parent_term_id"] != session.state.term_id
+                        or rewrite["base_revision"] != session.state.revision):
+                    return
+                from dataclasses import replace
+                from uuid import uuid4
+                from .editor import EditorState
+                from .editor_widget import configuration_for_state
+
+                descendants = []
+                for current in result._term_editors:
+                    if current is editor:
+                        descendants.extend(EditorState.decode(s) for s in rewrite["states"])
+                    else:
+                        # Copy occurrences before collection, including manual
+                        # layout, exact scalar, selection, and concrete IDs.
+                        descendants.append(replace(current._editor_session.state, term_id=uuid4().hex, revision=0))
+                if rewrite.get("calculation") == "full":
+                    from .editor_rewrites import collect_calculated_occurrences
+                    descendants = collect_calculated_occurrences(tuple(descendants))
+                value = ProjectorSum(s.projector * s.outer_factor for s in descendants)
+                children = tuple(projector_widget(s.projector, style=style,
+                    configuration=configuration_for_state(s, editor.graph["geometry"]),
+                    group_id=group_id, debug=debug) for s in descendants)
+                result._history.append(value)
+                result._redo_lines.clear()
+                append_row(value, line_editors=children,
+                           line_signs=tuple(int(s.outer_factor) for s in descendants),
+                           display_items=tuple((s.projector, s.outer_factor) for s in descendants))
+                persist()
+
+            # Blank creation acquires these traits on its first valid Save.
+            canvas_observe(editor, insert_shared_rewrite, "editor_rewrite")
 
             def reorder_term(
                 change: dict[str, object], editor: object = editor
@@ -611,6 +662,7 @@ def projector_sum_widget(
                 value, row, editors, _old_signs = result._line_states[-1]
                 from .editor_widget import bridge_outer_factor
 
+                editor._canvas_outer_factor = Fraction(new_signs[index])
                 bridge_outer_factor(editor, Fraction(new_signs[index]))
                 new_value = current_from(editors, new_signs)
                 result._term_signs = new_signs
@@ -707,15 +759,15 @@ def projector_sum_widget(
                 }
                 if not change["new"] or editor not in known_editors:
                     return
-                if getattr(editor, "_editor_session", None) is not None and editor.editor_state.get("can_undo"):
+                if getattr(editor, "_editor_session", None) is not None and editor._editor_session._undo:
                     editor.local_undo_command += 1
                     return
                 if len(result._line_states) <= 1:
                     editor.local_undo_command += 1
                     return
-                _value, removed_row, removed_editors, _removed_signs = (
-                    result._line_states.pop()
-                )
+                removed_state = result._line_states.pop()
+                result._redo_lines.append(removed_state)
+                _value, removed_row, removed_editors, _removed_signs = removed_state
                 for removed in removed_editors:
                     removed.active_line = False
                 result._rows.pop()
@@ -728,17 +780,61 @@ def projector_sum_widget(
                     previous.active_line = True
                 result._term_editors = previous_editors
                 result._term_signs = previous_signs
+                for previous in previous_editors:
+                    if hasattr(previous, "_publish_editor"):
+                        previous._publish_editor()
                 result._trace_delimiters.pop(id(removed_row), None)
                 update_canvas_children()
                 persist()
 
             canvas_observe(editor, undo_equation_line, "undo_request")
 
+            def document_command(action, editor=editor):
+                if editor not in result._term_editors:
+                    return
+                if action == "undo":
+                    undo_equation_line({"new":True})
+                elif action == "redo" and result._redo_lines:
+                    entry = result._redo_lines.pop()
+                    if isinstance(entry, dict):
+                        from .configuration import ProjectorConfiguration
+                        children, signs = [], []
+                        for term in entry["terms"]:
+                            snapshot = term["state"]
+                            p = _projector_from_state(snapshot["graph"],snapshot["port_orders"],snapshot["boundary_orders"])
+                            children.append(projector_widget(p,configuration=ProjectorConfiguration.from_state(p,snapshot),
+                                                             style=style,group_id=group_id,debug=debug))
+                            signs.append(term["sign"])
+                        value = current_from(tuple(children),tuple(signs))
+                        result._history.append(value)
+                        append_row(value,line_editors=tuple(children),line_signs=tuple(signs))
+                    else:
+                        for child in result._term_editors:
+                            child.active_line = False
+                        result._line_states.append(entry)
+                        value, row, children, signs = entry
+                        result._rows.append(row)
+                        result._history.append(value)
+                        result._term_editors, result._term_signs = children, signs
+                        for child in children:
+                            child.active_line = True
+                        update_canvas_children()
+                    persist()
+
+            editor._editor_document_command = document_command
+            editor._editor_document_history = lambda editor=editor: (
+                editor in result._term_editors and len(result._line_states) > 1,
+                editor in result._term_editors and bool(result._redo_lines))
+
             def persist_saved_editor(
                 change: dict[str, object], editor: object = editor
             ) -> None:
                 if not change["new"]:
                     return
+                if (change.get("name") == "editor_state" and change.get("old")
+                        and change["new"].get("revision") != change["old"].get("revision")):
+                    result._redo_lines.clear()
+                    editor._publish_editor()
                 if editor in result._term_editors:
                     result._saved_projector_sum = current_from(
                         result._term_editors, result._term_signs
@@ -746,8 +842,9 @@ def projector_sum_widget(
                 persist()
 
             canvas_observe(editor, persist_saved_editor, "saved_revision")
+            canvas_observe(editor, persist_saved_editor, "editor_state")
             if hasattr(editor, "editor_state"):
-                canvas_observe(editor, persist_saved_editor, "editor_state")
+                editor._publish_editor()
 
         for editor in editor_tuple:
             wire_editor(editor)
@@ -828,6 +925,7 @@ def projector_sum_widget(
                 term_editor.term_sign = graph["term_sign"]
                 term_editor.term_leading = index == 0
                 term_editor._canvas_leading = index == 0
+                term_editor._canvas_outer_factor = Fraction(sign)
             result._wire_editor(new_editor)
             result._term_editors = new_editors
             result._term_signs = new_signs
@@ -890,6 +988,13 @@ def projector_sum_widget(
             for index, (old_editor, sign) in enumerate(
                 zip(old_editors, old_signs, strict=True)
             ):
+                if getattr(old_editor, "_editor_session", None) is not None:
+                    # Mode changes are views of the same accepted occurrence,
+                    # not imports that regenerate IDs, routes, or history.
+                    old_editor.mode = "evaluate"
+                    old_editor.active_line = True
+                    rebuilt.append(old_editor)
+                    continue
                 projector = _projector_from_state(
                     old_editor.graph,
                     old_editor.port_orders,
@@ -932,7 +1037,8 @@ def projector_sum_widget(
                 children[slot] = editor
             row.children = tuple(children)
             for editor in old_editors:
-                editor.active_line = False
+                if editor not in new_editors:
+                    editor.active_line = False
             new_value = current_from(new_editors, line_signs)
             result._term_editors = new_editors
             result._term_signs = line_signs
@@ -1121,6 +1227,7 @@ def projector_canvas_from_session(
         projectors: list[object] = []
         editors: list[object] = []
         signs: list[int] = []
+        shared_line = all(term.get("state", {}).get("editor_state") for term in line["terms"])
         for term in line["terms"]:
             if not isinstance(term, dict) or term.get("sign") not in {-1, 1}:
                 raise ValueError("projector canvas term must have sign -1 or 1")
@@ -1146,6 +1253,11 @@ def projector_canvas_from_session(
         value = ProjectorSum(projectors)
         display_items = _ordered_display_items(value, projectors)
         if len(display_items) != len(editors):
+            if shared_line:
+                # Shared occurrences deliberately survive collection. Never
+                # rebuild their widgets from an aggregate during reload.
+                restored.append((value, tuple(editors), tuple(signs)))
+                continue
             # Older sessions may contain multiple editor panels whose values
             # now share one canonical topology. Rebuild only that equation
             # line from the collected sum rather than replaying stale panels.
@@ -1172,6 +1284,7 @@ def projector_canvas_from_session(
         mode=mode,
         session=saved_session.path,
         restored_lines=restored,
+        restored_redo_lines=document.get("redo_lines", []),
         detangler=detangler,
         debug=debug,
         pair_expression=document.get("pair_expression"),
@@ -1287,6 +1400,28 @@ def projector_widget(
                 return
             assert isinstance(request, dict)
             session = getattr(self, "_editor_session", None)
+            if session is not None:
+                from .editor_rewrites import calculate_full_expansion
+                from .projector_sum import ProjectorSum
+                base_revision = request.get("base_revision", session.state.revision)
+                session._check_revision(base_revision)
+                if request.get("term_id", session.state.term_id) != session.state.term_id:
+                    raise ValueError("expansion calculation belongs to another occurrence")
+                node_id = request.get("node_id", session.state.node_ids[int(request["node"])])
+                if node_id not in session.state.node_ids:
+                    raise ValueError("expansion references an unknown operator")
+                if "recursive_edge" in request:
+                    branches = session.expand(node_id, base_revision=base_revision,
+                                              edge=request["recursive_edge"], geometry=self.graph["geometry"])
+                else:
+                    branches = calculate_full_expansion(session.state, node_id, geometry=self.graph["geometry"])
+                self._expanded_editor_states = branches
+                self._expanded_projector_sum = ProjectorSum(s.projector*s.outer_factor for s in branches)
+                self.editor_rewrite = {"request_id": f"calculation-{request['revision']}",
+                                       "base_revision":base_revision,"parent_term_id":session.state.term_id,
+                                       **({"calculation":"full"} if "recursive_edge" not in request else {}),
+                                       "states":[s.payload() for s in branches]}
+                return
             current = session.state.projector if session is not None else _projector_from_state(
                 self.graph, self.port_orders, self.boundary_orders
             )
@@ -1334,6 +1469,12 @@ def projector_widget(
             snapshot_colors = snapshot.get("line_colors")
             if isinstance(snapshot_colors, dict):
                 self.line_colors = deepcopy(snapshot_colors)
+            if getattr(self, "_shared_editor_enabled", False) and self.projector.nodes:
+                from .editor_widget import attach_editor
+
+                if hasattr(self, "_whiteboard_source_value"):
+                    self._whiteboard_source_value = self.projector
+                attach_editor(self, getattr(self, "_canvas_outer_factor", Fraction(1)))
             self.saved_revision = int(snapshot["revision"])
 
     configured_style = load_projector_style(style)
@@ -1407,6 +1548,7 @@ def projector_widget(
 
         editor._whiteboard_source_value = projector_codec.decode(saved_state["source_value"])
     editor._last_error = None
+    editor._shared_editor_enabled = shared_editor
     editor._configured_projector = projector
     editor._configuration = (
         configuration
@@ -1417,7 +1559,7 @@ def projector_widget(
         from .editor_widget import attach_editor
 
         def attach_on_evaluate(change=None):
-            if editor.mode == "evaluate":
+            if editor.mode == "evaluate" or editor.projector.nodes and not editor.graph.get("creator"):
                 attach_editor(editor)
 
         editor.observe(attach_on_evaluate, names="mode")

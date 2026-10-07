@@ -1,5 +1,10 @@
 # Shared port-reordering slice
 
+Historical first-stage guide. Movement, routing, connectivity, and local rewrites
+have since migrated too: see [the structural editor guide](editor-structural-slice.md).
+In particular, movement/routes are now undoable transactions, and complete
+Create diagrams retain their shared session across mode changes.
+
 Evaluate-mode canvases, projector widgets, and whiteboard diagrams now use the
 same Python-owned port editor by default. See
 [the cross-interface checklist](editor-port-migration.md) for this migration.

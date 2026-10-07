@@ -150,6 +150,10 @@ python -m pip install -e '.[app]'
 birdtracks-whiteboard
 ```
 
+The [shared structural editor guide](docs/editor-structural-slice.md) provides
+launchable diagrams and movement, routing, reconnection, expansion, replacement,
+undo/redo, and save/reload checks across the existing interfaces.
+
 ## Advanced computation
 
 The Python API and Birdtracks Lab are intended for larger calculations,

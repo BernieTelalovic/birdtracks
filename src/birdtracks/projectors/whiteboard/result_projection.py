@@ -48,6 +48,22 @@ def project_inline_occurrence(
             return source, accepted
     if previous_coefficient and accepted.coefficient / previous_coefficient == -1:
         source = flip_inline_sign(source, start)
+    elif previous_coefficient and abs(accepted.coefficient / previous_coefficient) != 1:
+        # Structural identities can introduce a rational scalar, not just a
+        # parity minus. Transfer it to the source-owned prefactor exactly once.
+        ratio = accepted.coefficient / previous_coefficient
+        number = re.search(r"(?:\\frac\s*\{\s*\d+\s*\}\s*\{\s*\d+\s*\}|\d+(?:[.,_]\d+)?(?:\s*/\s*\d+)?)\s*$", source[:start])
+        magnitude = Fraction(1)
+        if number:
+            raw = number.group().strip()
+            fraction = re.fullmatch(r"\\frac\s*\{\s*(\d+)\s*\}\s*\{\s*(\d+)\s*\}",raw)
+            magnitude = Fraction(int(fraction[1]),int(fraction[2])) if fraction else Fraction(raw.replace('_','').replace(',','.').replace(' ',''))
+        value = magnitude * abs(ratio)
+        literal = str(value.numerator) if value.denominator == 1 else rf"\frac{{{value.numerator}}}{{{value.denominator}}}"
+        index = number.start() if number else start
+        source = source[:index] + literal + source[start:]
+        if ratio < 0:
+            source = flip_inline_sign(source, index + len(literal))
     body = accepted * (source_value.coefficient / accepted.coefficient)
     return source, body
 
@@ -70,6 +86,30 @@ def projector_terms_source(projectors: Iterable[Projector]) -> tuple[str, list[d
             terms.append({"start": start, "end": len(source), "value": projector_codec.encode(term)})
         source += " "
     return source.rstrip() if source != "= " else "= 0", terms
+
+
+def inline_rewrite_factor(source: str, start: int, body: Projector, accepted: Projector) -> Fraction:
+    """Translate an atomic authored occurrence's source scalar to descendants.
+
+    Composite expressions expand on their evaluated result line, where the
+    full term graph and its provenance are available. Do not parse/solve a
+    containing product or trace from an interactive occurrence command.
+    """
+    if source[start:].strip() != r"\birdtracks":
+        raise ValueError("expand composite expressions on their evaluated result line")
+    prefix = re.sub(r"^\s*\S+?\s*(?:\\def\b|:=)\s*", "", source[:start]).strip()
+    prefix = prefix.removeprefix("=").strip()
+    literal = re.fullmatch(r"(?P<sign>[+-]?)\s*(?:(?P<frac>\\frac\s*\{\s*\d+\s*\}\s*\{\s*\d+\s*\})|(?P<number>\d+(?:[.,_]\d+)?(?:\s*/\s*\d+)?))?", prefix)
+    if literal is None:
+        raise ValueError("expand composite expressions on their evaluated result line")
+    if literal.group("frac"):
+        numerator, denominator = re.findall(r"\d+", literal.group("frac"))
+        factor = Fraction(int(numerator),int(denominator))
+    else:
+        factor = Fraction((literal.group("number") or "1").replace(" ","").replace("_","").replace(",","."))
+    if literal.group("sign") == "-":
+        factor = -factor
+    return factor * body.coefficient / accepted.coefficient if accepted.coefficient else factor
 
 
 def result_source(value: ProjectorSum | SymbolicProjectorSum) -> tuple[str, list[dict[str, object]]]:

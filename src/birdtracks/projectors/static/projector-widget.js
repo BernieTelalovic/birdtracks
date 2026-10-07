@@ -1431,10 +1431,10 @@ function renderCreator({ model, el }) {
     ...(embedded ? ["birdtracks-projector-embedded"] : []),
     `birdtracks-projector-${widgetMode}`,
   );
-  const template = sharedState?.graph || model.get("graph");
+  let template = sharedState?.graph || model.get("graph");
   // Python supplies this read-only plan for evaluate mode. Creator cleanup
   // operates on the live graph only and never rewrites compiled display data.
-  const displayGraph = template.display || {};
+  let displayGraph = template.display || {};
   const geometry = template.geometry;
   const spacing = geometry.level_spacing;
   const nodeWidth = geometry.node_width;
@@ -1457,6 +1457,7 @@ function renderCreator({ model, el }) {
     const outputOrder = [...(orders.output || node.output_labels || node.labels)];
     return {
       index: node.index,
+      editorId: node.editor_id || sharedState?.node_ids?.[node.index],
       kind: node.kind,
       layer: node.layer,
       level: position
@@ -1494,12 +1495,14 @@ function renderCreator({ model, el }) {
   );
   let connections = [
     ...(template.connections || []).map((connection) => ({
+      editorId: connection.editor_id,
       source: { type: "port", side: "output", ...connection.source },
       target: { type: "port", side: "input", ...connection.target },
       boundaryLabel: connection.boundary_label,
       route: routeFor(connection.boundary_label),
     })),
     ...(template.external_inputs || []).map((boundary) => ({
+      editorId: boundary.editor_id,
       source: {
         type: "right-anchor",
         level: boundaryLevel("input", boundary.boundary_label),
@@ -1509,6 +1512,7 @@ function renderCreator({ model, el }) {
       route: routeFor(boundary.boundary_label),
     })),
     ...(template.external_outputs || []).map((boundary) => ({
+      editorId: boundary.editor_id,
       source: { type: "port", side: "output", ...boundary.port },
       target: {
         type: "left-anchor",
@@ -1652,6 +1656,7 @@ function renderCreator({ model, el }) {
   let compiledDisplayValid = null;
   let zoom = Number(model.get("zoom") || 1);
   const undoStack = [];
+  let creationDirty = false;
   const requestPrefix = `${editorId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
   let requestSequence = 0;
   let editorTransport = editorRequestsByModel.get(model);
@@ -1662,7 +1667,7 @@ function renderCreator({ model, el }) {
   const editorQueue = editorTransport.queue;
 
   function presentationSnapshot(overrides = {}) {
-    return Object.fromEntries(["positions", "free_levels", "boundary_orders", "line_colors"]
+    return Object.fromEntries(["positions", "free_levels", "boundary_orders", "line_colors", "strand_routes"]
       .map(key => [key, structuredClone(overrides[key] || sharedState?.[key] || model.get(key) || {})]));
   }
 
@@ -1692,6 +1697,27 @@ function renderCreator({ model, el }) {
       return;
     }
     sharedState = structuredClone(next);
+    creationDirty = false;
+    undoStack.length = 0;
+    template = next.graph;
+    displayGraph = template.display || {};
+    compiledDisplayValid = null;
+    // Reconcile concrete topology from the accepted envelope, never from
+    // frontend trait callbacks or canonical object matching.
+    nodes = template.nodes.map(node => ({
+      index: node.index, editorId: next.node_ids[node.index], kind: node.kind,
+      layer: node.layer, level: 0, labels: [...node.labels],
+      inputOrder: [], outputOrder: [], initialInputOrder: [], initialOutputOrder: [],
+      mapping: node.mapping ? structuredClone(node.mapping) : null,
+    }));
+    connections = [
+      ...template.connections.map(c => ({editorId:c.editor_id, boundaryLabel:c.boundary_label,
+        source:{type:"port",side:"output",...c.source},target:{type:"port",side:"input",...c.target}})),
+      ...template.external_inputs.map(c => ({editorId:c.editor_id,boundaryLabel:c.boundary_label,
+        source:{type:"right-anchor",level:boundaryLevel("input",c.boundary_label)},target:{type:"port",side:"input",...c.port}})),
+      ...template.external_outputs.map(c => ({editorId:c.editor_id,boundaryLabel:c.boundary_label,
+        source:{type:"port",side:"output",...c.port},target:{type:"left-anchor",level:boundaryLevel("output",c.boundary_label)}})),
+    ];
     lineColors.clear();
     for (const [key, color] of Object.entries(next.line_colors || {})) lineColors.set(key, color);
     coefficientNumerator = BigInt(next.graph.coefficient.numerator);
@@ -1709,6 +1735,10 @@ function renderCreator({ model, el }) {
       );
     }
     for (const connection of connections) {
+      if (next.strand_routes?.[connection.editorId]) {
+        connection.route = structuredClone(next.strand_routes[connection.editorId]);
+        continue;
+      }
       if (connection.boundaryLabel === undefined) continue;
       connection.route = Object.fromEntries(Object.entries(next.free_levels || {})
         .filter(([_layer, levels]) => levels[String(connection.boundaryLabel)] !== undefined)
@@ -1717,6 +1747,10 @@ function renderCreator({ model, el }) {
     localUndo.disabled = !next.can_undo;
     redoPortButton.disabled = !next.can_redo;
     redoPortButton.hidden = !next.can_redo;
+    if (interactionMode === "create") {
+      creatorPresentationPrepared = false;
+      prepareCreatorPresentation();
+    }
     redraw();
   }
 
@@ -1748,11 +1782,29 @@ function renderCreator({ model, el }) {
   }
 
   function rememberEditorState(snapshot = snapshotEditorState()) {
+    if (sharedState) {
+      if (interactionMode === "create") {
+        creationDirty = true;
+        undoStack.push(snapshot);
+        localUndo.disabled = false;
+      }
+      return;
+    }
     undoStack.push(snapshot);
     localUndo.disabled = false;
   }
 
   function undoEditorOperation() {
+    if (sharedState && creationDirty && undoStack.length && !editorTransport.pending && !editorQueue.length) {
+      const previous = undoStack.pop();
+      nodes = previous.nodes; connections = previous.connections; nextLabel = previous.nextLabel;
+      coefficientNumerator = previous.coefficientNumerator;
+      coefficientDenominator = previous.coefficientDenominator;
+      creationDirty = undoStack.length > 0;
+      localUndo.disabled = !creationDirty && !sharedState.can_undo;
+      redraw();
+      return true;
+    }
     if (sharedState) return requestEditor("undo");
     const previous = undoStack.pop();
     if (!previous) return false;
@@ -1856,7 +1908,7 @@ function renderCreator({ model, el }) {
     localFraction.classList.add("birdtracks-inline-fraction");
     localNumerator.setAttribute("aria-label", "Prefactor");
     localDenominator.setAttribute("aria-label", "Denominator");
-    localNumerator.value = String(coefficientNumerator);
+    localNumerator.value = String(sharedState && coefficientNumerator < 0n ? -coefficientNumerator : coefficientNumerator);
     localDenominator.value = String(coefficientDenominator);
     setLocalFractionOpen(true);
     const numbers = [...svg.querySelectorAll(".birdtracks-fraction-number")];
@@ -2052,7 +2104,7 @@ function renderCreator({ model, el }) {
   el.append(workspace, save);
   const redoPortButton = document.createElement("button");
   redoPortButton.type = "button";
-  redoPortButton.textContent = "Redo port reorder";
+  redoPortButton.textContent = "Redo last edit";
   redoPortButton.hidden = !sharedState?.can_redo;
   redoPortButton.disabled = !sharedState?.can_redo;
   redoPortButton.addEventListener("click", () => requestEditor("redo"));
@@ -2431,9 +2483,11 @@ function renderCreator({ model, el }) {
   function prepareCreatorPresentation() {
     if (creatorPresentationPrepared) return;
     unwrapIdentityBoundaryNodes();
-    collapseFreeLineLayers();
-    compactEmptyLayers();
-    normalizeCreatorLayers();
+    if (!sharedState) {
+      collapseFreeLineLayers();
+      compactEmptyLayers();
+      normalizeCreatorLayers();
+    }
     creatorPresentationPrepared = true;
     compiledDisplayValid = false;
   }
@@ -2520,6 +2574,7 @@ function renderCreator({ model, el }) {
   }
 
   function xForNode(node) {
+    if (node.previewX !== undefined) return node.previewX;
     if (sharedState?.positions?.[String(node.index)]) return sharedState.positions[String(node.index)].x;
     const column = usesCompiledDisplay() ? displayColumn(node.index) : -1;
     if (column < 0) return xForLayer(node.layer);
@@ -2916,7 +2971,8 @@ function renderCreator({ model, el }) {
     if (!model.get("prefactor_owned")) {
       drawExactCoefficient(
         annotations,
-        currentGraphCoefficient(),
+        sharedState ? {numerator:String(coefficientNumerator < 0n ? -coefficientNumerator : coefficientNumerator),
+                       denominator:String(coefficientDenominator)} : currentGraphCoefficient(),
         displayedTermSign(),
         geometry,
         geometry.left_boundary / 2,
@@ -2927,7 +2983,7 @@ function renderCreator({ model, el }) {
       // The embedding view may own the visible sign. Notify its drawing only;
       // no model traits, coefficients, or document source are published here.
       el.dispatchEvent(new CustomEvent("birdtracks-port-preview", {
-        bubbles: true, detail: {odd: portParityIsOdd()},
+        bubbles: true, detail: {odd: interactionMode === "evaluate" && portParityIsOdd()},
       }));
     }
     // Measure the actual rendered prefactor. If it outgrows its coefficient
@@ -3065,10 +3121,14 @@ function renderCreator({ model, el }) {
     // Drawing-only preview: initial orders are the last Python-accepted orders.
     // Do not publish this parity or change the accepted scalar during a drag.
     // Acceptance rebases those orders; cancellation/rejection restores them.
+    if (sharedState && interactionMode === "create") {
+      const outerNegative = sharedState.editor_payload.state.outer_factor.numerator.startsWith("-");
+      return (coefficientNumerator < 0n) !== outerNegative ? "-" : model.get("term_leading") ? "" : "+";
+    }
     const initiallyNegative = sharedState
       ? sharedState.display.sign === "-"
       : model.get("term_sign") === "-";
-    const negative = initiallyNegative !== Boolean(sharedState && portParityIsOdd());
+    const negative = initiallyNegative !== Boolean(sharedState && interactionMode === "evaluate" && portParityIsOdd());
     if (negative) return "-";
     return model.get("term_leading") ? "" : "+";
   }
@@ -3082,7 +3142,7 @@ function renderCreator({ model, el }) {
   }
 
   function currentGraphCoefficient() {
-    if (sharedState) return sharedState.display.coefficient;
+    if (sharedState && interactionMode !== "create") return sharedState.display.coefficient;
     const coefficient = {
       numerator: String(coefficientNumerator),
       denominator: String(coefficientDenominator),
@@ -3091,7 +3151,7 @@ function renderCreator({ model, el }) {
   }
 
   function multiplyCoefficient(numeratorValue, denominatorValue) {
-    if (sharedState) {
+    if (sharedState && interactionMode !== "create") {
       message.textContent = "Switch to Create mode to edit the prefactor.";
       return;
     }
@@ -3103,7 +3163,9 @@ function renderCreator({ model, el }) {
     if (multiplierBottom < 0n) multiplierBottom = -multiplierBottom;
     let top = multiplierTop;
     let bottom = multiplierBottom;
-    if (flipsSign && top !== 0n) {
+    if (sharedState) {
+      if ((coefficientNumerator < 0n) !== flipsSign) top = -top;
+    } else if (flipsSign && top !== 0n) {
       setTermNegative(model.get("term_sign") !== "-");
     }
     const gcd = (left, right) => {
@@ -3268,6 +3330,7 @@ function renderCreator({ model, el }) {
     hitTarget.addEventListener("pointerenter", () => visible.classList.add("active"));
     hitTarget.addEventListener("pointerleave", () => visible.classList.remove("active"));
     hitTarget.addEventListener("pointerdown", (event) => {
+      if (sharedState && (editorTransport.pending || editorQueue.length)) return;
       event.preventDefault();
       event.stopPropagation();
       hitTarget.setPointerCapture?.(event.pointerId);
@@ -3310,7 +3373,7 @@ function renderCreator({ model, el }) {
       function finish() {
         document.removeEventListener("pointermove", move);
         document.removeEventListener("pointerup", finish);
-        document.removeEventListener("pointercancel", finish);
+        document.removeEventListener("pointercancel", cancel);
         if (!moved) return;
         // Ordinary creator routes are packed once on release. Compiled
         // evaluate columns were already repacked from the origin on preview.
@@ -3320,11 +3383,18 @@ function renderCreator({ model, el }) {
         }
         rememberEditorState(before);
         redraw();
-        persistPresentation();
+        persistPresentation("reroute");
+      }
+      function cancel() {
+        document.removeEventListener("pointermove", move);
+        document.removeEventListener("pointerup", finish);
+        document.removeEventListener("pointercancel", cancel);
+        nodes = before.nodes; connections = before.connections;
+        redraw();
       }
       document.addEventListener("pointermove", move);
       document.addEventListener("pointerup", finish);
-      document.addEventListener("pointercancel", finish);
+      document.addEventListener("pointercancel", cancel);
     });
     group.append(hitTarget, visible);
     layerGroup.appendChild(group);
@@ -3581,7 +3651,7 @@ function renderCreator({ model, el }) {
           event.stopPropagation();
           if (recursiveControl) {
             if (node.labels.length >= 2) {
-              saveProjector(node.index, node.labels.length === 2 ? null : edge);
+              saveProjector(node.index, sharedState ? edge : node.labels.length === 2 ? null : edge);
             }
           } else {
             resizeNode(node, edge, event.ctrlKey ? -1 : 1);
@@ -3784,11 +3854,12 @@ function renderCreator({ model, el }) {
 
   function dragNode(event, node) {
     if (event.button !== 0) return;
+    if (sharedState && (editorTransport.pending || editorQueue.length)) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture?.(event.pointerId);
     const startX = event.clientX;
     const startY = event.clientY;
-    const origin = { layer: node.layer, level: node.level };
+    const origin = { layer: node.layer, level: node.level, x:xForNode(node) };
     const before = snapshotEditorState();
     const matrix = svg.getScreenCTM();
     const sx = matrix ? matrix.a : 1;
@@ -3805,6 +3876,7 @@ function renderCreator({ model, el }) {
           0,
           Math.round(origin.layer + (moveEvent.clientX - startX) / sx / layerStep),
         );
+        if (sharedState) node.previewX = origin.x + (node.layer - origin.layer) * layerStep;
       }
       node.level = Math.max(0, Math.round(origin.level + (moveEvent.clientY - startY) / sy / spacing));
       redraw();
@@ -3812,7 +3884,7 @@ function renderCreator({ model, el }) {
     function finish() {
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", finish);
-      document.removeEventListener("pointercancel", finish);
+      document.removeEventListener("pointercancel", cancel);
       if (!moved) return;
       if (node.layer === origin.layer) {
         const requestedLevel = node.level;
@@ -3853,14 +3925,23 @@ function renderCreator({ model, el }) {
       if (node.layer !== origin.layer || node.level !== origin.level) {
         rememberEditorState(before);
       }
-      if (interactionMode === "create") compactEmptyLayers();
+      if (interactionMode === "create" && !sharedState) compactEmptyLayers();
       redraw();
-      if (interactionMode === "create") saveProjector();
-      else persistPresentation();
+      if (interactionMode === "create" && node.layer !== origin.layer) saveProjector();
+      else if (sharedState) persistPresentation("move");
+      else if (interactionMode === "create") saveProjector();
+      else persistPresentation("move");
+    }
+    function cancel() {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", finish);
+      document.removeEventListener("pointercancel", cancel);
+      nodes = before.nodes; connections = before.connections;
+      redraw();
     }
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", finish);
-    document.addEventListener("pointercancel", finish);
+    document.addEventListener("pointercancel", cancel);
   }
 
   function eventPoint(event) {
@@ -3959,6 +4040,7 @@ function renderCreator({ model, el }) {
 
   function startAttachedConnection(event, endpoint, attached) {
     if (interactionMode !== "create") return;
+    if (sharedState && (editorTransport.pending || editorQueue.length)) return;
     const before = snapshotEditorState();
     const endpointWasSource = endpointKey(attached.source) === endpointKey(endpoint);
     const fixed = endpointWasSource ? attached.target : attached.source;
@@ -4071,7 +4153,25 @@ function renderCreator({ model, el }) {
       if (connected) rememberEditorState(before);
       lineDragActive = false;
       draft = null;
+      if (!connected) { nodes = before.nodes; connections = before.connections; }
       redraw();
+      if (connected && sharedState) {
+        const beforeById = new Map(before.connections.map(c=>[c.editorId,c]));
+        function exactEndpoint(endpoint) {
+          if (endpoint.type === "port") return {node_id:nodes[endpoint.node].editorId,label:endpoint.label};
+          const side = endpoint.type === "right-anchor" ? "input" : "output";
+          return {boundary:sharedState.boundary_orders[side][endpoint.level]};
+        }
+        const changed = connections.filter(c=>c.editorId && beforeById.has(c.editorId)
+          && (endpointKey(c.source)!==endpointKey(beforeById.get(c.editorId).source)
+            || endpointKey(c.target)!==endpointKey(beforeById.get(c.editorId).target)));
+        if (changed.length) {
+          creationDirty = false;
+          requestEditor("reconnect", {changes:Object.fromEntries(changed.map(c=>[c.editorId,
+            {source:exactEndpoint(c.source),target:exactEndpoint(c.target)}]))});
+        }
+        else saveProjector(); // Splicing through a free strand changes graph size.
+      }
     }
 
     function cancel() {
@@ -4117,11 +4217,23 @@ function renderCreator({ model, el }) {
   }
 
   function saveProjector(expandNode = null, recursiveEdge = null) {
-    if (sharedState) {
-      requestEditor("save", {presentation: presentationSnapshot(),
-        save_revision: Number(model.get("save_command") || 0)}, expandNode === null ? null : () => {
-          model.set("expand_node_request", {node: expandNode,
-            ...(recursiveEdge === null ? {} : {recursive_edge: recursiveEdge}), revision: Date.now()});
+    if (sharedState && interactionMode === "create" && !creationDirty) {
+      requestEditor("save", {save_revision:Number(model.get("save_command") || 0)});
+      return;
+    }
+    if (sharedState && interactionMode === "evaluate") {
+      if (expandNode !== null && recursiveEdge !== null) {
+        requestEditor("expand", {node_id:sharedState.node_ids[expandNode], edge:recursiveEdge});
+        return;
+      }
+      if (expandNode !== null && !window.confirm("Full expansion can create factorially many terms. Run this calculation?")) return;
+      const expansionId = expandNode === null ? null : sharedState.node_ids[expandNode];
+      requestEditor("save", {save_revision: Number(model.get("save_command") || 0)}, expandNode === null ? null : () => {
+          const currentIndex = sharedState.node_ids.indexOf(expansionId);
+          if (currentIndex < 0) { message.textContent = "The selected operator no longer exists."; return; }
+          model.set("expand_node_request", {node: currentIndex,node_id:expansionId,
+            term_id:sharedState.term_id,base_revision:sharedState.revision,
+            ...(recursiveEdge === null ? {confirmed_full:true} : {recursive_edge: recursiveEdge}), revision: Date.now()});
           model.save_changes();
         });
       return;
@@ -4129,7 +4241,7 @@ function renderCreator({ model, el }) {
     // Creator topology is normalized only at the explicit serialization
     // boundary. Evaluate mode already owns an exact graph and must not run
     // creator cleanup merely because an expansion/save was requested.
-    if (interactionMode === "create") {
+    if (interactionMode === "create" && !sharedState) {
       collapseFreeLineLayers();
       compactEmptyLayers();
       normalizeCreatorLayers();
@@ -4175,7 +4287,7 @@ function renderCreator({ model, el }) {
         lineColors.set(edgeLineKey(leaving.source, leaving.target), inheritedColor);
       }
     }
-    if (interactionMode === "create") {
+    if (interactionMode === "create" && !sharedState) {
       collapseFreeLineLayers();
       compactEmptyLayers();
       normalizeCreatorLayers();
@@ -4350,7 +4462,7 @@ function renderCreator({ model, el }) {
     delete savedGraph.display;
     delete savedGraph.editor_value;
     const positions = Object.fromEntries(ordered.map((node, index) => [String(index), {
-      x: geometry.first_layer_x + node.layer * layerStep,
+      x: sharedState ? xForNode(node) : geometry.first_layer_x + node.layer * layerStep,
       y: yFor(node.level + (node.labels.length - 1) / 2),
     }]));
     const portOrders = Object.fromEntries(graphNodes.map((node) => [String(node.index), {
@@ -4359,6 +4471,23 @@ function renderCreator({ model, el }) {
     const boundaryOrders = { input: boundaryLabels, output: boundaryLabels };
     const revision = model.get("save_request") + 1;
     if (expandNode !== null) announceOperatorExpansion(el);
+    const snapshot = {
+      revision, graph:savedGraph, positions, port_orders:portOrders,
+      free_levels:savedFreeLevels, boundary_orders:boundaryOrders,
+      line_colors:savedLineColors, effective_coefficient:effectiveCoefficient,
+    };
+    if (sharedState) {
+      const savedConnections = [...internal,
+        ...connections.filter(c=>c.source.type === "right-anchor"),
+        ...connections.filter(c=>c.target.type === "left-anchor")];
+      requestEditor("creation", {snapshot,
+        node_ids:ordered.map(node=>node.editorId || null),
+        strand_ids:savedConnections.map(c=>c.editorId || null)});
+      creationDirty = false;
+      nodes = livePresentation.nodes; connections = livePresentation.connections;
+      nextLabel = livePresentation.nextLabel;
+      return;
+    }
     model.set("graph", savedGraph);
     model.set("positions", positions);
     model.set("port_orders", portOrders);
@@ -4389,7 +4518,7 @@ function renderCreator({ model, el }) {
   // Presentation-only changes must not serialize, normalize, or rebuild the
   // exact projector. They update the two synced traits used to seed the next
   // render and leave algebra topology untouched.
-  function persistPresentation() {
+  function persistPresentation(action = "move") {
     const positions = structuredClone(sharedState?.positions || model.get("positions") || {});
     for (const node of nodes) {
       const previous = positions[String(node.index)] || {};
@@ -4406,12 +4535,15 @@ function renderCreator({ model, el }) {
         freeLevels[layer][String(connection.boundaryLabel)] = level;
       }
     }
-    model.set("positions", positions);
-    model.set("free_levels", freeLevels);
     if (sharedState) {
-      requestEditor("presentation", {presentation: presentationSnapshot({positions, free_levels: freeLevels})});
+      const strandRoutes = Object.fromEntries(connections.filter(c=>c.editorId).map(c=>[c.editorId,c.route || {}]));
+      requestEditor(action, {presentation: presentationSnapshot({positions, free_levels: freeLevels, strand_routes:strandRoutes}),
+        ...(action === "reroute" ? {changes:Object.fromEntries(connections
+          .filter(c=>c.editorId).map(c=>[c.editorId,c.route || {}]))} : {})});
       return;
     }
+    model.set("positions", positions);
+    model.set("free_levels", freeLevels);
     model.save_changes();
   }
 
@@ -4482,6 +4614,7 @@ function renderCreator({ model, el }) {
     if (key !== "z" && key !== "y") return;
     event.preventDefault();
     event.stopPropagation();
+    if (key === "z" && !event.shiftKey && creationDirty) { undoEditorOperation(); return; }
     requestEditor(key === "y" || event.shiftKey ? "redo" : "undo");
   };
   model.on("change:editor_state", applyEditorState);

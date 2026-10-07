@@ -88,7 +88,7 @@ class ProjectorCanvasSession:
             from ..young_diagrams import PairExpression
 
             return PairExpression.from_state(self._state["pair_expression"])
-        from .projector_sum import ProjectorSum
+        from .editor_rewrites import expression_value
         from .widget import _projector_from_state
 
         terms: list[object] = []
@@ -98,7 +98,7 @@ class ProjectorCanvasSession:
                 state["graph"], state["port_orders"], state["boundary_orders"]
             )
             terms.append(int(term["sign"]) * projector)
-        return ProjectorSum(terms)
+        return expression_value(terms)
 
     def open(
         self,

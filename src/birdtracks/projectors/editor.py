@@ -54,7 +54,7 @@ def _presentation(projector: Projector, value: Mapping[str, object]) -> str:
     for index, position in data.get("positions", {}).items():
         if not 0 <= int(index) < len(projector.nodes):
             raise ValueError("position references an unknown node")
-        if set(position) != {"x", "y"} or any(
+        if not isinstance(position, Mapping) or set(position) != {"x", "y"} or any(
             isinstance(n, bool) or not isinstance(n, (int, float)) or not math.isfinite(n)
             for n in position.values()
         ):
@@ -67,6 +67,15 @@ def _presentation(projector: Projector, value: Mapping[str, object]) -> str:
             raise ValueError("route layers must map strand labels to levels")
         if any(isinstance(n, bool) or not isinstance(n, (int, float))
                or not math.isfinite(n) or n < 0 for n in levels.values()):
+            raise ValueError("route levels must be finite and nonnegative")
+    routes = data.get("strand_routes", {})
+    if not isinstance(routes, Mapping) or any(not isinstance(route, Mapping) for route in routes.values()):
+        raise ValueError("stable strand routes must be mappings")
+    for route in routes.values():
+        if any(str(int(layer)) != str(layer) or int(layer) < 0 for layer in route):
+            raise ValueError("route layers must be nonnegative integers")
+        if any(isinstance(level, bool) or not isinstance(level, (int, float))
+               or not math.isfinite(level) or level < 0 for level in route.values()):
             raise ValueError("route levels must be finite and nonnegative")
     return _json(data)
 
@@ -196,6 +205,8 @@ class EditorState:
         selection = tuple(payload.get("selection", ()))
         if not set(selection) <= set(ids):
             raise ValueError("selection references an unknown editor ID")
+        if not set(result.presentation.get("strand_routes", {})) <= set(strand_ids):
+            raise ValueError("route references an unknown editor strand")
         revision = payload.get("revision", 0)
         if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
             raise ValueError("editor revision must be a nonnegative integer")
@@ -204,7 +215,7 @@ class EditorState:
 
 
 class EditorSession:
-    """Atomic reorder transactions and monotonic undo/redo for one occurrence."""
+    """Atomic editing transactions and monotonic undo/redo for one occurrence."""
 
     def __init__(self, state: EditorState) -> None:
         self.state = state
@@ -248,15 +259,94 @@ class EditorSession:
         self.state = candidate
         return candidate
 
-    def presentation_checkpoint(self, presentation: Mapping[str, object], *, base_revision: int) -> None:
-        """Bridge existing movement/routes; no layout or new editing algorithm."""
-        self._check_revision(base_revision)
-        candidate = replace(self.state, presentation_json=_presentation(self.state.projector, presentation))
+    def _commit(self, candidate: EditorState) -> EditorState:
         if candidate != self.state:
-            self.state = replace(candidate, revision=self.state.revision + 1)
-            # Existing non-port edits are history barriers for this first slice.
-            self._undo.clear()
+            if candidate.projector is not self.state.projector:
+                from .display_graph import compile_display_graph
+
+                # Rendering-domain validation belongs before commit, too.
+                compile_display_graph(candidate.projector)
+            self._undo.append(self.state)
             self._redo.clear()
+            self.state = replace(candidate, revision=self.state.revision + 1)
+        return self.state
+
+    def presentation_checkpoint(self, presentation: Mapping[str, object], *, base_revision: int) -> EditorState:
+        """One presentation transaction; the exact algebra object is untouched."""
+        self._check_revision(base_revision)
+        if not set(presentation.get("strand_routes", {})) <= set(self.state.strand_ids):
+            raise ValueError("route references an unknown editor strand")
+        candidate = replace(self.state, presentation_json=_presentation(self.state.projector, presentation))
+        return self._commit(candidate)
+
+    def move(self, changes: Mapping[str, Mapping[str, float]], *, base_revision: int) -> EditorState:
+        """Update only named survivor positions, without choosing any layout."""
+        self._check_revision(base_revision)
+        if not isinstance(changes, Mapping):
+            raise ValueError("movement changes must map stable node IDs to positions")
+        drawing = self.state.presentation
+        for identity, position in changes.items():
+            if identity not in self.state.node_ids:
+                raise ValueError("movement references an unknown node")
+            drawing.setdefault("positions", {})[str(self.state.node_ids.index(identity))] = dict(position)
+        return self.presentation_checkpoint(drawing, base_revision=base_revision)
+
+    def reconnect(self, changes: Mapping[str, object], *, base_revision: int) -> EditorState:
+        from .editor_rewrites import reconnect
+
+        self._check_revision(base_revision)
+        return self._commit(reconnect(self.state, changes))
+
+    def reroute(self, changes: Mapping[str, Mapping[str, float]], *, base_revision: int,
+                presentation: Mapping[str, object] | None = None) -> EditorState:
+        """Concrete stable-ID route controls are presentation, never permutations."""
+        self._check_revision(base_revision)
+        if not isinstance(changes, Mapping):
+            raise ValueError("routing changes must map stable strand IDs to controls")
+        drawing = dict(presentation) if presentation is not None else self.state.presentation
+        routes = dict(drawing.get("strand_routes", {}))
+        for identity, route in changes.items():
+            if identity not in self.state.strand_ids:
+                raise ValueError("routing references an unknown strand")
+            if not isinstance(route, Mapping):
+                raise ValueError("strand controls must map layers to finite levels")
+            if any(str(int(layer)) != str(layer) or int(layer) < 0 for layer in route):
+                raise ValueError("route layer must be a nonnegative integer")
+            if any(isinstance(level, bool) or not isinstance(level, (int, float))
+                   or not math.isfinite(level) or level < 0 for level in route.values()):
+                raise ValueError("route levels must be finite and nonnegative")
+            routes[identity] = dict(route)
+        drawing["strand_routes"] = routes
+        return self.presentation_checkpoint(drawing, base_revision=base_revision)
+
+    def replace_node(self, node_id: str, replacement: Projector, *, base_revision: int,
+                     geometry: Mapping[str, float] | None = None) -> EditorState:
+        from .editor_rewrites import replace_node
+
+        self._check_revision(base_revision)
+        return self._commit(replace_node(self.state, node_id, replacement, geometry=geometry))
+
+    def replace_subgraph(self, node_ids: Sequence[str], replacement: Projector, *,
+                         input_ports: Mapping[int, tuple[str, int]], output_ports: Mapping[int, tuple[str, int]],
+                         base_revision: int, geometry: Mapping[str, float] | None = None) -> EditorState:
+        """Insert an exact identity with explicit cut-boundary correspondence."""
+        from .editor_rewrites import replace_subgraph
+
+        self._check_revision(base_revision)
+        return self._commit(replace_subgraph(self.state, node_ids, replacement, input_ports=input_ports,
+                                            output_ports=output_ports, geometry=geometry))
+
+    def expand(self, node_id: str, *, base_revision: int, edge: str = "bottom",
+               side: str = "input", geometry: Mapping[str, float] | None = None) -> tuple[EditorState, ...]:
+        """Produce local descendants for one document-line transaction.
+
+        The parent occurrence remains on its previous equation line. The host
+        owns insertion/removal of the whole next line, not term-local history.
+        """
+        from .editor_rewrites import recursive_branches
+
+        self._check_revision(base_revision)
+        return recursive_branches(self.state, node_id, side=side, edge=edge, geometry=geometry)
 
     def undo(self, *, base_revision: int) -> EditorState:
         self._check_revision(base_revision)
@@ -283,7 +373,6 @@ class EditorSession:
         result = cls(EditorState.decode(payload["state"]))
         result._undo = [EditorState.decode(s) for s in payload.get("undo", ())]
         result._redo = [EditorState.decode(s) for s in payload.get("redo", ())]
-        if any(s.term_id != result.state.term_id or s.node_ids != result.state.node_ids
-               or s.strand_ids != result.state.strand_ids for s in (*result._undo, *result._redo)):
+        if any(s.term_id != result.state.term_id for s in (*result._undo, *result._redo)):
             raise ValueError("history must belong to the same editor occurrence")
         return result

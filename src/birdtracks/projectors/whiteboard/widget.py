@@ -466,7 +466,103 @@ def whiteboard(
     backend_projector_listeners: dict[str, object] = {}
     backend_editor_listeners: dict[str, object] = {}
     backend_color_listeners: dict[str, object] = {}
+    backend_rewrite_listeners: dict[str, object] = {}
     pair_style_listeners: dict[str, object] = {}
+
+    def append_shared_rewrite(block_id, term_index, editor, rewrite, *, inline=False):
+        """Insert ordered descendants through the result translation layer."""
+        from dataclasses import replace
+        from uuid import uuid4
+        from ..editor import EditorState
+        from ..editor_widget import configuration_for_state
+        from .result_projection import symbolic_projector_terms_source
+
+        session = getattr(editor, "_editor_session", None)
+        if (not rewrite or session is None or rewrite["parent_term_id"] != session.state.term_id
+                or rewrite["base_revision"] != session.state.revision
+                or (embedded if inline else backend_embedded).get(f"{block_id}:{'projector' if inline else 'backend'}:{term_index}") is not editor):
+            return
+        blocks = list(widget.blocks)
+        selected = next((b for b in blocks if b.get("id") == block_id), None)
+        if selected is None:
+            return
+        raw_terms = selected.get("calculation_terms", [])
+        symbolic = bool(raw_terms) and all("outer_factor" in t for t in raw_terms)
+        descendants, factors = [], []
+        if inline:
+            from .result_projection import inline_rewrite_factor
+            source = str(selected.get("source") or "")
+            markers = list(_PROJECTOR_MARKER.finditer(source))
+            if len(markers) != 1:
+                raise ValueError("expand composite expressions on their evaluated result line")
+            factor = inline_rewrite_factor(source,markers[0].start(),editor._whiteboard_source_value,session.state.projector)
+            states = [EditorState.decode(s) for s in rewrite["states"]]
+            descendants = [replace(s,projector=s.projector*factor) for s in states]
+            factors = [Fraction(1)] * len(descendants)
+        index = 0
+        while not inline and (current := backend_embedded.get(f"{block_id}:backend:{index}")) is not None:
+            states = ([EditorState.decode(s) for s in rewrite["states"]] if index == term_index else
+                      [replace(current._editor_session.state, term_id=uuid4().hex, revision=0)])
+            descendants.extend(states)
+            factors.extend([projector_codec.decode(raw_terms[index]["outer_factor"]) if symbolic else Fraction(1)] * len(states))
+            index += 1
+        occurrences = [s.projector * s.outer_factor for s in descendants]
+        if rewrite.get("calculation") == "full" and not symbolic:
+            from ..editor_rewrites import collect_calculated_occurrences
+            descendants = collect_calculated_occurrences(tuple(descendants))
+            occurrences = [s.projector * s.outer_factor for s in descendants]
+        if symbolic:
+            pairs = list(zip(occurrences, factors, strict=True))
+            for scalar in raw_terms[0].get("scalar_terms", []):
+                pairs.append((projector_codec.decode(scalar["value"]), projector_codec.decode(scalar["outer_factor"])))
+            source, terms = symbolic_projector_terms_source(pairs)
+            value_fields = {}
+        else:
+            aggregate = projector_codec.decode(selected["calculation_value"]) if "calculation_value" in selected else None
+            if isinstance(aggregate, ProjectorSum):
+                occurrences.extend(p*c for p, c in aggregate.items() if not p.nodes)
+            source, terms = projector_terms_source(occurrences)
+            value_fields = {"calculation_value": projector_codec.encode(ProjectorSum(occurrences))}
+        group = str(selected.get("calculation_group") or block_id)
+        group_indexes = [i for i, b in enumerate(blocks) if b.get("calculation_group") == group or b.get("id") == block_id]
+        step = max(int(blocks[i].get("calculation_step", 0)) for i in group_indexes) + 1
+        generated_id = f"calculation-{group}-{step}"
+        generated = {"id":generated_id,"line_id":generated_id,"source":source,"read_only":True,
+                     "calculation_group":group,"calculation_step":step,"calculation_terms":terms,
+                     "editor_rewrite_parent":block_id,
+                     "backend_presentations":{str(i):configuration_for_state(s, editor.graph["geometry"]).state()
+                                              for i, s in enumerate(descendants)}, **value_fields}
+        blocks.insert(max(group_indexes)+1, generated)
+        widget.blocks = blocks
+
+    def backend_document_command(action, block_id, key, editor, *, inline=False):
+        if (embedded if inline else backend_embedded).get(key) is not editor:
+            return
+        blocks = deepcopy(widget.blocks)
+        selected = next((b for b in blocks if b.get("id") == block_id), None)
+        if selected is None:
+            return
+        if action == "undo" and selected.get("editor_rewrite_parent"):
+            group = selected.get("calculation_group")
+            if any(b.get("calculation_group") == group and b.get("calculation_step",0) > selected.get("calculation_step",0) for b in blocks):
+                return
+            parent = next((b for b in blocks if b.get("id") == selected["editor_rewrite_parent"]), None)
+            if parent is None:
+                return
+            parent["editor_rewrite_redo"] = selected
+            blocks.remove(selected)
+        elif action == "redo" and isinstance(selected.get("editor_rewrite_redo"), dict):
+            generated = selected.pop("editor_rewrite_redo")
+            blocks.insert(blocks.index(selected)+1,generated)
+        else:
+            return
+        widget.blocks = blocks
+
+    def backend_document_history(block_id):
+        selected = next((b for b in widget.blocks if b.get("id") == block_id), {})
+        latest = not any(b.get("calculation_group") == selected.get("calculation_group")
+                         and b.get("calculation_step",0) > selected.get("calculation_step",0) for b in widget.blocks)
+        return bool(selected.get("editor_rewrite_parent")) and latest, bool(selected.get("editor_rewrite_redo"))
 
     def append_backend_expansion(
         block_id: str,
@@ -591,6 +687,7 @@ def whiteboard(
                 for key, editor in backend_embedded.items():
                     if key.startswith(prefix) and getattr(editor, "_editor_session", None) is not None:
                         presentations[key[len(prefix):]] = editor.configuration.state()
+                        presentations[key[len(prefix):]]["backend_basis_value"] = projector_codec.encode(editor._source_projector)
                 updated.append({**block, "backend_presentations": presentations})
                 continue
             aggregate = projector_codec.decode(block["calculation_value"]) if "calculation_value" in block else None
@@ -616,8 +713,13 @@ def whiteboard(
                 # their source and value rather than infer algebra from text.
                 updated.append({**block, "backend_presentations": presentations})
                 continue
+            if isinstance(aggregate, ProjectorSum):
+                from ..editor_rewrites import expression_value
+                aggregate_fields = {"calculation_value":projector_codec.encode(expression_value(occurrences))}
+            else:
+                aggregate_fields = {}
             updated.append({**block, "source": source, "calculation_terms": terms,
-                            "backend_presentations": presentations})
+                            "backend_presentations": presentations, **aggregate_fields})
         if updated != widget.blocks:
             widget.blocks = updated
 
@@ -735,6 +837,9 @@ def whiteboard(
             listener = backend_editor_listeners.pop(key, None)
             if listener is not None:
                 editor.unobserve(listener, names="editor_state")
+            listener = backend_rewrite_listeners.pop(key, None)
+            if listener is not None:
+                editor.unobserve(listener, names="editor_rewrite")
             color_listener = backend_color_listeners.pop(key, None)
             if color_listener is not None:
                 editor.unobserve(color_listener, names="line_colors")
@@ -749,41 +854,58 @@ def whiteboard(
                  if str(block.get("id") or "") == term.block_id),
                 None,
             )
+            stored_presentations = (source_block.get("backend_presentations", {})
+                                    if isinstance(source_block, dict) else {})
             existing = backend_embedded.get(key)
             if (
                 existing is not None
                 and getattr(existing, "_source_projector", None) != term.value
+                and existing.projector != term.value
             ):
                 discard_backend_editor(key)
+            elif existing is not None and existing.projector == term.value:
+                existing._source_projector = term.value
             if key not in backend_embedded:
                 from ..widget import projector_widget
                 from ..configuration import ProjectorConfiguration
 
-                stored_presentations = (source_block.get("backend_presentations", {})
-                                        if isinstance(source_block, dict) else {})
                 presentation = stored_presentations.get(str(index))
                 configuration = None
+                render_value = term.value
                 if isinstance(presentation, dict):
                     accepted = presentation.get("graph", {}).get("editor_value")
-                    if accepted is not None and projector_codec.decode(accepted) == term.value:
-                        configuration = ProjectorConfiguration.from_state(term.value, presentation)
+                    basis = presentation.get("backend_basis_value")
+                    if accepted is not None and (projector_codec.decode(accepted) == term.value
+                            or basis is not None and projector_codec.decode(basis) == term.value):
+                        render_value = projector_codec.decode(accepted)
+                        configuration = ProjectorConfiguration.from_state(render_value, presentation)
 
                 editor = projector_widget(
-                    term.value,
+                    render_value,
                     configuration=configuration,
                     mode="evaluate",
                     embedded=True,
                     debug=debug,
                 )
                 editor.widget_role = "embedded"
+                editor._source_projector = term.value
                 backend_embedded[key] = editor
+                editor._editor_document_command = lambda action, block_id=term.block_id, key=key, editor=editor: backend_document_command(action, block_id, key, editor)
+                editor._editor_document_history = lambda block_id=term.block_id: backend_document_history(block_id)
                 if getattr(editor, "_editor_session", None) is not None:
-                    def on_editor_state(change, *, block_id=term.block_id):
-                        if change["new"]:
+                    def on_editor_state(change, *, block_id=term.block_id, key=key, editor=editor):
+                        if change["new"] and backend_embedded.get(key) is editor:
+                            if change.get("old") and change["new"]["revision"] != change["old"]["revision"]:
+                                widget.blocks = [{k:v for k,v in b.items() if k != "editor_rewrite_redo"}
+                                                 if b.get("id") == block_id else b for b in widget.blocks]
                             publish_backend_line(block_id)
 
                     editor.observe(on_editor_state, names="editor_state")
                     backend_editor_listeners[key] = on_editor_state
+                    def on_shared_rewrite(change, *, block_id=term.block_id, index=index, editor=editor):
+                        append_shared_rewrite(block_id, index, editor, change["new"])
+                    editor.observe(on_shared_rewrite, names="editor_rewrite")
+                    backend_rewrite_listeners[key] = on_shared_rewrite
 
                 def on_backend_expand(
                     change: dict[str, object],
@@ -794,6 +916,8 @@ def whiteboard(
                 ) -> None:
                     request = change.get("new")
                     if not isinstance(request, dict) or not request:
+                        return
+                    if getattr(editor, "_editor_session", None) is not None:
                         return
                     expanded = getattr(editor, "expanded_projector_sum", None)
                     if isinstance(expanded, ProjectorSum):
@@ -855,8 +979,15 @@ def whiteboard(
                 and isinstance(source_block.get("line_colors"), dict)
             ):
                 stored_colors = source_block["line_colors"]
+            committed = getattr(backend_embedded[key], "_editor_session", None)
+            if committed is not None and stored_presentations.get(str(index), {}).get("editor_state"):
+                stored_colors = committed.state.presentation.get("line_colors", {})
             if isinstance(stored_colors, dict):
                 backend_embedded[key].line_colors = deepcopy(stored_colors)
+            if committed is not None:
+                undo,redo = backend_document_history(term.block_id)
+                if backend_embedded[key].editor_state.get("can_undo") != bool(committed._undo or undo) or backend_embedded[key].editor_state.get("can_redo") != bool(committed._redo or redo):
+                    backend_embedded[key]._publish_editor()
             backend_terms.setdefault(term.block_id, []).append({
                 "id": key,
                 "start": term.start,
@@ -945,6 +1076,10 @@ def whiteboard(
         stored = editor.configuration.state().get("source_value")
         if not hasattr(editor, "_whiteboard_source_value"):
             editor._whiteboard_source_value = (projector_codec.decode(stored) if stored else editor.projector)
+        block_id = projector_id.split(":projector:", 1)[0]
+        editor._editor_document_command = lambda action: backend_document_command(
+            action, block_id, projector_id, editor, inline=True)
+        editor._editor_document_history = lambda: backend_document_history(block_id)
 
         def on_committed(change):
             if embedded.get(projector_id) is not editor or not change["new"] or not change["old"]:
@@ -959,6 +1094,8 @@ def whiteboard(
             for block in widget.blocks:
                 copy = deepcopy(block)
                 if str(block.get("id") or "") == block_id:
+                    if change["new"]["revision"] != change["old"]["revision"]:
+                        copy.pop("editor_rewrite_redo", None)
                     source = str(block.get("source") or "")
                     markers = list(_PROJECTOR_MARKER.finditer(source))
                     index = int(occurrence)
@@ -978,6 +1115,12 @@ def whiteboard(
             sync_backend_calculation()
 
         editor.observe(on_committed, names="editor_state")
+        def on_inline_rewrite(change):
+            if embedded.get(projector_id) is not editor:
+                return
+            block_id, occurrence = projector_id.split(":projector:",1)
+            append_shared_rewrite(block_id,int(occurrence),editor,change["new"],inline=True)
+        editor.observe(on_inline_rewrite,names="editor_rewrite")
 
         def on_line_colors(change: dict[str, object]) -> None:
             if embedded.get(projector_id) is not editor:
@@ -1085,6 +1228,13 @@ def whiteboard(
                 if isinstance(colors, dict):
                     embedded[key].line_colors = deepcopy(colors)
                 watch_projector(key, embedded[key])
+                session = getattr(embedded[key], "_editor_session", None)
+                if session is not None:
+                    undo, redo = backend_document_history(block_id)
+                    state = embedded[key].editor_state
+                    if (state.get("can_undo") != bool(session._undo or undo)
+                            or state.get("can_redo") != bool(session._redo or redo)):
+                        embedded[key]._publish_editor()
                 occurrence += 1
                 position = match.end()
 

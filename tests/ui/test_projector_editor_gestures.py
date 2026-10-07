@@ -135,6 +135,98 @@ def drag(page, side, source_label, destination_label):
     page.mouse.up()
 
 
+def move_hit(page, selector, dy, *, cancel=False):
+    box = page.locator(selector).first.bounding_box()
+    assert box
+    x, y = box['x'] + box['width']/2, box['y'] + box['height']/2
+    page.mouse.move(x,y)
+    page.mouse.down()
+    page.mouse.move(x,y+dy,steps=6)
+    if cancel:
+        page.evaluate("document.dispatchEvent(new PointerEvent('pointercancel',{bubbles:true}))")
+    page.mouse.up()
+
+
+@pytest.mark.parametrize("connected_canvas", ["surface:widget", "surface:canvas", "surface:generated", "surface:inline", "surface:parsed", "surface:symbolic"], indirect=True)
+def test_movement_and_routing_use_python_history_without_trait_writes(connected_canvas):
+    page, value, child, requests, original = connected_canvas
+    before = deepcopy(child.editor_state)
+    move_hit(page,'.birdtracks-node[data-node="0"] rect',45)
+    page.wait_for_function("revision=>model.get('editor_state').revision>revision",arg=before['revision'])
+    assert requests[-1]['action'] == 'move'
+    assert len(child._editor_session._undo) == 1
+    assert value().collapse() == original.collapse()
+    page.keyboard.press('Control+z')
+    page.wait_for_function("revision=>model.get('editor_state').revision>revision",arg=before['revision']+1)
+    assert child.editor_state['positions'] == before['positions']
+    page.keyboard.press('Control+Shift+z')
+    page.wait_for_function("revision=>model.get('editor_state').revision>revision",arg=before['revision']+2)
+    state = deepcopy(child.editor_state)
+    move_hit(page,'.birdtracks-route-handle',45)
+    page.wait_for_function("revision=>model.get('editor_state').revision>revision",arg=state['revision'])
+    assert requests[-1]['action'] == 'reroute'
+    assert value().collapse() == original.collapse()
+    accepted = deepcopy(child.editor_state)
+    count = len(requests)
+    move_hit(page,'.birdtracks-node[data-node="0"] rect',45,cancel=True)
+    assert len(requests) == count
+    assert child.editor_state == accepted
+    page.evaluate('remount()')
+    assert page.evaluate("model.get('editor_state').positions") == accepted['positions']
+
+
+def test_recursive_control_uses_shared_rewrite_not_legacy_expansion(connected_canvas):
+    page, canvas, child, requests, original = connected_canvas
+    page.get_by_role('button',name='Recursively expand from the top line').first.dispatch_event('pointerdown')
+    page.wait_for_function("!!model.get('editor_rewrite')?.request_id")
+    assert requests[-1]['action'] == 'expand'
+    assert not page.evaluate("model.get('expand_node_request')?.revision")
+    assert canvas.current_projector_sum.collapse() == original.collapse()
+    assert len(canvas._line_states) == 2
+
+
+def test_python_replacement_reconciles_topology_and_undo_in_real_frontend(connected_canvas):
+    from birdtracks import Antisymmetriser, Projector
+    from birdtracks.projectors.whiteboard.projector_codec import projector_codec
+    page, canvas, child, requests, original = connected_canvas
+    old = deepcopy(child.editor_state)
+    replacement = projector_codec.encode(Projector([Antisymmetriser((1,2,3)),Antisymmetriser((1,2,3))]))
+    page.evaluate("""async replacement=>{
+      const state=model.get('editor_state');
+      const reply=await pythonEditorCommand({action:'replace',request_id:'ui-replacement',
+        term_id:state.term_id,base_revision:state.revision,node_id:state.node_ids[0],replacement});
+      model.set('editor_state',reply.editor_state);model.set('editor_feedback',reply.editor_feedback);
+    }""",replacement)
+    page.wait_for_selector('[data-node="2"] rect')
+    assert child.editor_state['node_ids'][-1] == old['node_ids'][-1]
+    assert canvas.current_projector_sum.collapse() == original.collapse()
+    page.keyboard.press('Control+z')
+    page.wait_for_function("model.get('editor_state').graph.nodes.length===2")
+    assert child.editor_state['node_ids'] == old['node_ids']
+
+
+def test_create_invalid_drop_restores_graph_and_valid_reconnection_commits_once(connected_canvas):
+    page, canvas, child, requests, original = connected_canvas
+    child.mode = 'create'
+    page.evaluate("model.set('mode','create')")
+    before = deepcopy(child.editor_state)
+    endpoint = page.locator('[aria-label^="input:0:1;"]').bounding_box()
+    x,y=endpoint['x']+endpoint['width']/2,endpoint['y']+endpoint['height']/2
+    page.mouse.move(x,y);page.mouse.down();page.mouse.move(x+100,y+100,steps=5);page.mouse.up()
+    assert not requests
+    assert child.editor_state == before
+    assert page.locator('[aria-label^="input:0:1;"]').count() == 1
+    drag(page,'input',1,2)
+    page.wait_for_function("revision=>model.get('editor_state').revision>revision",arg=before['revision'])
+    assert len(requests) == 1
+    assert requests[0]['action'] == 'reconnect'
+    assert not child.editor_feedback.get('error')
+    assert child.editor_state['node_ids'] == before['node_ids']
+    page.keyboard.press('Control+z')
+    page.wait_for_function("revision=>model.get('editor_state').revision>revision",arg=before['revision']+1)
+    assert canvas.current_projector_sum.collapse() == original.collapse()
+
+
 @pytest.mark.parametrize("connected_canvas", ["surface:widget", "surface:canvas", "surface:generated", "surface:inline", "surface:parsed", "surface:symbolic"], indirect=True)
 def test_identical_drag_sequences_use_one_shared_transaction_on_every_surface(connected_canvas):
     page, value, child, requests, original = connected_canvas
@@ -275,7 +367,7 @@ def test_real_gesture_python_sign_undo_redo_save_and_reload(connected_canvas):
     page.wait_for_function("model.get('editor_state').revision === 2")
     assert child.editor_state["port_orders"] == initial["port_orders"]
     assert page.locator('.birdtracks-term-sign').count() == 1
-    page.get_by_role('button', name='Redo port reorder', exact=True).click()
+    page.get_by_role('button', name='Redo last edit', exact=True).click()
     page.wait_for_function("model.get('editor_state').revision === 3")
     assert child.editor_state["port_orders"] == accepted["port_orders"]
     page.evaluate("model.set('save_command',1)")

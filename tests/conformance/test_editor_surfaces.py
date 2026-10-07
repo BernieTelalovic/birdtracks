@@ -35,6 +35,7 @@ def surface(kind, coefficient, path):
     if kind == "canvas":
         from birdtracks import ProjectorCanvasSession
         canvas = projector_sum_widget(ProjectorSum((p,)), session=path, detangler=False, debug=True)
+        canvas._term_editors[0]._conformance_canvas = canvas
         return (canvas._term_editors[0], lambda: canvas.current_projector_sum,
                 lambda: ProjectorCanvasSession.load(path).open(detangler=False, debug=True)._term_editors[0], p)
     if kind == "parsed":
@@ -127,6 +128,8 @@ def test_legacy_whiteboard_container_roundtrip_retains_exact_editor_payload(kind
     path = tmp_path / "legacy.whiteboard"
     child, value, _reopen, original = surface(kind, Fraction(-2, 3), path)
     send(child, "reorder", changes={child.editor_state["node_ids"][0]: {"input": [2, 1, 3]}})
+    send(child, "replace", node_id=child.editor_state["node_ids"][0],
+         replacement=projector_codec.encode(Projector([Antisymmetriser((1,2,3)),Antisymmetriser((1,2,3))])))
     board = child._conformance_document
     write_sidecar(path, EvaluationEnvironment(projector_backend), codec=projector_codec,
                   document={"blocks": board.blocks, "title": "legacy"})
@@ -137,6 +140,10 @@ def test_legacy_whiteboard_container_roundtrip_retains_exact_editor_payload(kind
     assert loaded.editor_state["port_orders"] == child.editor_state["port_orders"]
     assert loaded.editor_state["display"] == child.editor_state["display"]
     assert value().collapse() == original.collapse()
+    send(loaded,"undo")
+    assert len(loaded.editor_state["node_ids"]) == 2
+    send(loaded,"redo")
+    assert loaded.editor_state["node_ids"] == child.editor_state["node_ids"]
 
 
 @pytest.mark.parametrize("kind", ["widget", "canvas", "generated", "inline", "parsed", "symbolic"])
@@ -169,6 +176,101 @@ def test_detached_inline_editor_cannot_overwrite_a_reused_occurrence(tmp_path):
     assert board.blocks == blocks
 
 
+@pytest.mark.parametrize("kind", ["widget", "canvas", "generated", "inline", "parsed", "symbolic"])
+def test_structural_presentation_and_replacement_roundtrip(kind, tmp_path):
+    child, value, reopen, original = surface(kind, Fraction(-2, 3), tmp_path / "structural.whiteboard")
+    before = deepcopy(child.editor_state)
+    first, survivor = before["node_ids"]
+    send(child, "move", changes={first:{"x":71,"y":42}})
+    send(child, "reroute", changes={before["strand_ids"][0]:{"0":4}})
+    drawing = deepcopy(child.editor_state)
+    replacement = Projector([Antisymmetriser((1,2,3)),Antisymmetriser((1,2,3))])
+    with patch.object(Projector, "collapse", side_effect=AssertionError("interactive collapse")):
+        send(child, "replace", node_id=first, replacement=projector_codec.encode(replacement))
+    assert child.editor_state["node_ids"][-1] == survivor
+    assert child.editor_state["positions"]["2"] == before["positions"]["1"]
+    assert value().collapse() == original.collapse()
+    accepted = deepcopy(child.editor_state)
+    send(child, "save")
+    loaded = reopen()
+    assert loaded.editor_state["node_ids"] == accepted["node_ids"]
+    assert loaded.editor_state["strand_ids"] == accepted["strand_ids"]
+    assert loaded.editor_state["strand_routes"] == accepted["strand_routes"]
+    assert loaded.editor_state["positions"] == accepted["positions"]
+    send(loaded, "undo")
+    assert loaded.editor_state["node_ids"] == drawing["node_ids"]
+    assert loaded.editor_state["positions"] == drawing["positions"]
+    send(loaded, "redo")
+    assert loaded.editor_state["node_ids"] == accepted["node_ids"]
+
+
+@pytest.mark.parametrize("kind", ["widget", "canvas", "generated", "inline", "parsed", "symbolic"])
+def test_recursive_command_avoids_solver_and_preserves_survivors(kind, tmp_path):
+    child, value, reopen, original = surface(kind, Fraction(-2, 3), tmp_path / "branches.whiteboard")
+    first, survivor = child.editor_state["node_ids"]
+    position = deepcopy(child.editor_state["positions"]["1"])
+    with patch.object(Projector, "collapse", side_effect=AssertionError("interactive collapse")), \
+         patch.object(Antisymmetriser, "collapse", side_effect=AssertionError("factorial expansion")):
+        send(child, "expand", node_id=first, edge="top")
+    branches = child._expanded_editor_states
+    assert len(branches) == 2
+    expected = original if kind != "inline" else original / Fraction(-2, 3)
+    assert ProjectorSum(s.projector*s.outer_factor for s in branches).collapse() == expected.collapse()
+    for s in branches:
+        assert s.node_ids[-1] == survivor
+        assert s.presentation["positions"][str(len(s.node_ids)-1)] == position
+    if kind == "canvas":
+        loaded = reopen()
+        assert loaded.editor_state["node_ids"][-1] == survivor
+    if kind in {"generated", "inline", "parsed", "symbolic"}:
+        board = child._conformance_document
+        assert len(board.blocks) >= 2
+        generated = board.blocks[-1]
+        assert len(generated["calculation_terms"]) == 2
+        loaded_board = whiteboard(tmp_path / "branches.whiteboard", debug=True)
+        assert len(loaded_board.backend_projectors) >= (2 if kind == "inline" else 3)
+        assert loaded_board.backend_projectors[-1].editor_state["node_ids"][-1] == survivor
+        if kind == "inline":
+            result = ProjectorSum(projector_codec.decode(t["value"]) for t in generated["calculation_terms"])
+            assert result.collapse() == original.collapse()
+
+
+@pytest.mark.parametrize("kind", ["canvas", "generated", "inline", "parsed", "symbolic"])
+def test_rewrite_line_undo_redo_survives_reload(kind, tmp_path):
+    path = tmp_path / ("history.canvas.json" if kind == "canvas" else "history.whiteboard")
+    child, _value, _reopen, original = surface(kind, Fraction(-2,3), path)
+    if kind == "canvas":
+        # Retain the canvas host (surface's value accessor deliberately hides it).
+        from birdtracks import ProjectorCanvasSession
+        host = ProjectorCanvasSession.load(path).open(detangler=False,debug=True)
+        child = host._term_editors[0]
+    else:
+        host = child._conformance_document
+    send(child,"expand",node_id=child.editor_state["node_ids"][0])
+    descendants = host._term_editors if kind == "canvas" else tuple(e for k,e in zip(host.backend_projector_ids,host.backend_projectors) if k.startswith(host.blocks[-1]["id"]+":"))
+    ids = [e.editor_state["node_ids"] for e in descendants]
+    presentation = [(e.editor_state["positions"],e.editor_state["strand_routes"]) for e in descendants]
+    send(descendants[0],"undo")
+    if kind == "canvas":
+        assert len(host._line_states) == 1
+        loaded = ProjectorCanvasSession.load(path).open(detangler=False,debug=True)
+        send(loaded._term_editors[0],"redo")
+        assert len(loaded._line_states) == 2
+        assert [e.editor_state["node_ids"] for e in loaded._term_editors] == ids
+        assert [(e.editor_state["positions"],e.editor_state["strand_routes"]) for e in loaded._term_editors] == presentation
+        assert loaded.current_projector_sum.collapse() == original.collapse()
+    else:
+        assert "editor_rewrite_redo" in host.blocks[-1]
+        loaded = whiteboard(path,debug=True)
+        parents = loaded.embedded_projectors if kind == "inline" else loaded.backend_projectors
+        parent = parents[0] if kind == "inline" else next(e for k,e in zip(loaded.backend_projector_ids,parents) if k.startswith(host.blocks[-1]["id"]+":"))
+        assert parent.editor_state["can_redo"]
+        send(parent,"redo")
+        restored = [e for k,e in zip(loaded.backend_projector_ids,loaded.backend_projectors) if k.startswith(loaded.blocks[-1]["id"]+":")]
+        assert [e.editor_state["node_ids"] for e in restored] == ids
+        assert [(e.editor_state["positions"],e.editor_state["strand_routes"]) for e in restored] == presentation
+
+
 def test_symbolic_projection_preserves_factors_and_scalar_occurrences(tmp_path):
     from birdtracks.symbolic import SymbolicCoefficient
     pytest.importorskip("anywidget")
@@ -182,3 +284,114 @@ def test_symbolic_projection_preserves_factors_and_scalar_occurrences(tmp_path):
     assert term["factor_preview"]["even"] == before["factor_preview"]["odd"]
     loaded = reopen()
     assert loaded.editor_state["node_ids"] == child.editor_state["node_ids"]
+
+
+@pytest.mark.parametrize("kind", ["widget", "canvas", "generated", "inline", "parsed", "symbolic"])
+def test_invalid_reconnection_leaves_every_surface_committed_state_unchanged(kind, tmp_path):
+    child, _value, _reopen, _original = surface(kind, Fraction(-2, 3), tmp_path / "invalid.whiteboard")
+    child.mode = "create"
+    before = deepcopy(child.editor_state)
+    history = deepcopy(child._editor_session.payload())
+    wire = before["graph"]["external_inputs"][0]
+    child.editor_request = {"request_id":"invalid-port", "term_id":before["term_id"],
+                            "base_revision":before["revision"], "action":"reconnect",
+                            "changes":{wire["editor_id"]:{"source":{"boundary":wire["boundary_label"]},
+                                "target":{"node_id":before["node_ids"][wire["port"]["node"]], "label":999}}}}
+    assert child.editor_feedback.get("error")
+    assert child.editor_state == before
+    assert child._editor_session.payload() == history
+
+
+def test_reconnection_publishes_wire_ids_by_boundary_label_and_transfers_paint():
+    child = projector_widget(Projector([Antisymmetriser((1, 2))]), mode="create", debug=True)
+    before = deepcopy(child.editor_state)
+    inputs = {e["boundary_label"]:e for e in before["graph"]["external_inputs"]}
+    drawing = deepcopy(child._editor_session.state.presentation)
+    drawing["line_colors"] = {"right-anchor:0->input:0:1":"#ff0000"}
+    send(child,"presentation",presentation=drawing)
+    changes = {inputs[label]["editor_id"]:{"source":{"boundary":label},
+                "target":{"node_id":before["node_ids"][0],"label":3-label}} for label in (1,2)}
+    send(child,"reconnect",changes=changes)
+    reordered = child.editor_state["graph"]["external_inputs"]
+    assert [e["boundary_label"] for e in reordered] == [2,1]
+    for edge in reordered:
+        assert edge["editor_id"] == inputs[edge["boundary_label"]]["editor_id"]
+    assert child.editor_state["line_colors"]["right-anchor:0->input:0:2"] == "#ff0000"
+    send(child,"undo")
+    assert child.editor_state["graph"]["external_inputs"] == before["graph"]["external_inputs"]
+
+
+def test_branching_rewrite_preserves_untouched_sum_occurrence_metadata(tmp_path):
+    a = Projector([Antisymmetriser((1,2,3))], coefficient=Fraction(-2,3))
+    b = Projector([Symmetriser((1,2))], coefficient=Fraction(5,7))
+    canvas = projector_sum_widget(ProjectorSum((a,b)),session=tmp_path / "sum.canvas.json",detangler=False,debug=True)
+    first, untouched = canvas._term_editors
+    send(untouched,"move",changes={untouched.editor_state["node_ids"][0]:{"x":211,"y":103}})
+    before = untouched._editor_session.state
+    send(first,"expand",node_id=first.editor_state["node_ids"][0])
+    survivors = [e._editor_session.state for e in canvas._term_editors if e._editor_session.state.node_ids == before.node_ids]
+    assert len(survivors) == 1
+    after = survivors[0]
+    assert after.strand_ids == before.strand_ids
+    assert after.presentation == before.presentation
+    assert after.projector == before.projector
+    assert canvas.current_projector_sum.collapse() == ProjectorSum((a,b)).collapse()
+
+
+@pytest.mark.parametrize("kind", ["canvas", "generated", "inline", "parsed", "symbolic"])
+def test_new_parent_edit_invalidates_undone_rewrite_line(kind, tmp_path):
+    child, _value, _reopen, _original = surface(kind, Fraction(-2,3), tmp_path / "invalidate.whiteboard")
+    host = child._conformance_canvas if kind == "canvas" else child._conformance_document
+    send(child,"expand",node_id=child.editor_state["node_ids"][0])
+    descendant = host._term_editors[0] if kind == "canvas" else host.backend_projectors[-1]
+    send(descendant,"undo")
+    assert child.editor_state["can_redo"]
+    send(child,"move",changes={child.editor_state["node_ids"][0]:{"x":91,"y":83}})
+    assert not child.editor_state["can_redo"]
+    if kind == "canvas":
+        assert not host._redo_lines
+    else:
+        assert "editor_rewrite_redo" not in host.blocks[-1]
+
+
+def test_canvas_mode_switch_keeps_committed_occurrence_routes_and_history(tmp_path):
+    child, _value, _reopen, _original = surface("canvas", Fraction(-2,3), tmp_path / "mode.canvas.json")
+    host = child._conformance_canvas
+    send(child,"move",changes={child.editor_state["node_ids"][0]:{"x":97,"y":83}})
+    send(child,"reroute",changes={child.editor_state["strand_ids"][0]:{"0":4}})
+    before = deepcopy(child._editor_session.payload())
+    host._toolbar.mode = "create"
+    assert child.mode == "create"
+    host._toolbar.mode = "evaluate"
+    # Acknowledge the existing Save handshake, just as the frontend does.
+    send(child,"save",save_revision=child.save_command)
+    assert host._term_editors[0] is child
+    assert child.mode == "evaluate"
+    assert child.active_line
+    assert child._editor_session.payload() == before
+    send(child,"undo")
+    assert not child.editor_state.get("strand_routes")
+
+
+@pytest.mark.parametrize("factor", [1,-1])
+def test_first_valid_creation_keeps_shared_rewrite_host_after_mode_switch(factor):
+    from birdtracks.projectors.widget import projector_creator
+    host = projector_creator(detangler=False,debug=True)
+    child = host._term_editors[0]
+    if factor < 0:
+        child.term_sign_flip_request = 1
+    p = Projector([Antisymmetriser((1,2,3))])
+    seed = projector_widget(p,shared_editor=False)
+    snapshot = seed.configuration.state()
+    snapshot["revision"] = 1
+    child.save_snapshot = snapshot
+    accepted = deepcopy(child._editor_session.payload())
+    assert child._editor_session.state.outer_factor == factor
+    host._toolbar.mode = "evaluate"
+    send(child,"save",save_revision=child.save_command)
+    assert host._term_editors[0] is child
+    assert child.mode == "evaluate"
+    assert child._editor_session.payload() == accepted
+    send(child,"expand",node_id=child.editor_state["node_ids"][0])
+    assert len(host._line_states) == 2
+    assert host.current_projector_sum.collapse() == (p*factor).collapse()

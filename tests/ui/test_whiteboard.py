@@ -16,7 +16,7 @@ def test_painted_line_survives_save_port_renumbering(page, prefactor, saved_labe
     from birdtracks import Projector, Symmetriser, whiteboard
     from birdtracks.projectors.widget import projector_widget
 
-    editor = projector_widget(Projector([Symmetriser((10, 11))]), embedded=True, mode="create")
+    editor = projector_widget(Projector([Symmetriser((10, 11))]), embedded=True, mode="create", shared_editor=False)
     source = base64.b64encode((STATIC / "projector-widget.js").read_bytes()).decode()
     state = {key: value for key, value in editor.get_state().items()
              if not key.startswith("_")}
@@ -67,6 +67,7 @@ def test_painted_line_survives_save_port_renumbering(page, prefactor, saved_labe
     assert page.locator(f'[data-line-key="output:0:{label}->left-anchor:0"].birdtracks-line').evaluate(
         'el => el.style.stroke') == ''
     page.evaluate("childModel.set('active_line', true)")
+    page.once('dialog', lambda dialog: dialog.accept())
     page.locator('.birdtracks-symmetriser').first.dblclick()
     child.editor_request = page.evaluate("childModel.get('editor_request')")
     # Expansion waits for the Python-owned save acknowledgement. No frontend
@@ -268,7 +269,7 @@ def test_uncommitted_port_traits_cannot_insert_a_source_sign(page):
     assert page.evaluate("() => model.get('blocks')[0].source") == r"\birdtracks"
 
 
-def connect_editor_model(page, child, *, generated=False):
+def connect_editor_model(page, child, *, generated=False, presentation_only=False):
     """Connect shipped views to Python commands and the pure source projection."""
     from birdtracks.projectors.whiteboard.result_projection import project_inline_occurrence, projector_terms_source
     source_value = child.projector
@@ -278,7 +279,9 @@ def connect_editor_model(page, child, *, generated=False):
         previous = child.projector.coefficient
         child.editor_request = payload['request']
         source = payload['source']
-        if generated:
+        if presentation_only:
+            pass
+        elif generated:
             source, _terms = projector_terms_source([child.projector])
         else:
             source, source_value = project_inline_occurrence(
@@ -402,6 +405,7 @@ def test_moved_free_line_survives_click_away_and_lower_row_insert(page):
         Antisymmetriser((1, 2)),
         PermutationNode(Permutation.identity(), support=(3,)),
     ]), embedded=True)
+    connect_editor_model(page, child, presentation_only=True)
     state = {key: value for key, value in child.get_state().items()
              if not key.startswith('_')}
     source = base64.b64encode((STATIC / 'projector-widget.js').read_bytes()).decode()
@@ -434,6 +438,7 @@ def test_moved_free_line_survives_click_away_and_lower_row_insert(page):
     page.mouse.down()
     page.mouse.move(box['x'] + box['width'] / 2, operator['y'], steps=5)
     page.mouse.up()
+    page.wait_for_function("childModel.get('editor_state').revision>0")
     moved = page.evaluate("structuredClone(childModel.get('free_levels'))")
     assert moved != before
     page.locator('.birdtracks-whiteboard-title').click()
@@ -2599,6 +2604,7 @@ def test_reopened_projector_can_add_a_line_on_first_click(page, tmp_path):
     }
     reopened = whiteboard(path, debug=True)
     child = reopened.embedded_projectors[0]
+    connect_editor_model(page, child)
     state = {key: value for key, value in child.get_state().items() if not key.startswith('_')}
     page.add_style_tag(content=(STATIC / 'projector-widget.css').read_text())
     source = base64.b64encode((STATIC / 'projector-widget.js').read_bytes()).decode()
@@ -2617,7 +2623,7 @@ def test_reopened_projector_can_add_a_line_on_first_click(page, tmp_path):
     before = page.evaluate("childModel.get('graph').boundary_labels.length")
     control.click()
     page.evaluate("childModel.set('save_command', 1)")
-    assert page.evaluate("childModel.get('save_snapshot').graph.boundary_labels.length") == before + 1
+    page.wait_for_function("count=>childModel.get('editor_state').graph.boundary_labels.length===count",arg=before+1)
 
 
 @pytest.mark.parametrize('command', [r'\birdtracks', r'\pair'])
@@ -2678,6 +2684,7 @@ def test_projector_ctrl_state_clears_when_editor_stops_keyup(page):
     from birdtracks.projectors.widget import projector_widget
 
     child = projector_widget(Projector([Symmetriser((1, 2))]), embedded=True, mode='create')
+    connect_editor_model(page, child)
     state = {key: value for key, value in child.get_state().items() if not key.startswith('_')}
     source = base64.b64encode((STATIC / 'projector-widget.js').read_bytes()).decode()
     page.add_style_tag(content=(STATIC / 'projector-widget.css').read_text())
@@ -2704,7 +2711,7 @@ def test_projector_ctrl_state_clears_when_editor_stops_keyup(page):
     bounds = control.bounding_box()
     page.mouse.click(bounds['x'] + bounds['width'] / 2, bounds['y'] + bounds['height'] / 2)
     page.evaluate("childModel.set('save_command', 1)")
-    assert len(page.evaluate("childModel.get('save_snapshot').graph.nodes[0].labels")) == 3
+    page.wait_for_function("childModel.get('editor_state').graph.nodes[0].labels.length===3")
     page.keyboard.down('Control')
     page.evaluate("window.dispatchEvent(new Event('blur'))")
     assert page.locator('svg.ctrl-active').count() == 0
@@ -2730,7 +2737,7 @@ def test_operator_completion_inserts_a_trailing_space(page, typed, completed):
 @pytest.mark.parametrize('kind', ['symmetriser', 'antisymmetriser'])
 @pytest.mark.parametrize('edge', ['top', 'bottom'])
 @pytest.mark.parametrize('size', [2, 3])
-def test_two_line_tear_sends_the_double_click_request(page, kind, edge, size):
+def test_recursive_tear_uses_bounded_command_and_full_expansion_requires_confirmation(page, kind, edge, size):
     from birdtracks import Antisymmetriser, Projector, Symmetriser
     from birdtracks.projectors.widget import projector_widget
 
@@ -2750,14 +2757,18 @@ def test_two_line_tear_sends_the_double_click_request(page, kind, edge, size):
       window.cleanup = projector.default.render({model: childModel, el: host});
     }''', {'state': state, 'source': source})
     page.get_by_role('button', name=f'Recursively expand from the {edge} line').dispatch_event('pointerdown')
-    page.wait_for_function("childModel.get('expand_node_request').revision>0")
-    revision = page.evaluate("childModel.get('expand_node_request').revision")
-    tear = page.evaluate("({...childModel.get('expand_node_request'), revision: 0})")
+    page.wait_for_function("!!childModel.get('editor_rewrite')?.request_id")
+    tear = page.evaluate("childModel.get('editor_request')")
+    assert tear['action'] == 'expand'
+    assert tear['edge'] == edge
+    assert child.expanded_projector_sum.collapse() == child.projector.collapse()
+    page.once('dialog', lambda dialog: dialog.dismiss())
     page.locator(f'.birdtracks-{kind}').first.dblclick()
-    page.wait_for_function("revision=>childModel.get('expand_node_request').revision>revision", arg=revision)
-    full = page.evaluate("({...childModel.get('expand_node_request'), revision: 0})")
-    if size == 2:
-        assert tear == full
-        assert 'recursive_edge' not in tear
-    else:
-        assert tear == {**full, 'recursive_edge': edge}
+    assert not page.evaluate("childModel.get('expand_node_request')?.revision")
+    page.once('dialog', lambda dialog: dialog.accept())
+    page.wait_for_timeout(500)
+    page.locator(f'.birdtracks-{kind}').first.dblclick()
+    page.wait_for_function("childModel.get('expand_node_request').confirmed_full===true")
+    full = page.evaluate("childModel.get('expand_node_request')")
+    assert 'recursive_edge' not in full
+    assert full['term_id'] == tear['term_id']

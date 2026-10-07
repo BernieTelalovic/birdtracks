@@ -386,7 +386,11 @@ def test_optional_widget_contains_synchronised_graph_and_positions() -> None:
     widget = evaluation._term_editors[0]  # type: ignore[attr-defined]
 
     assert widget.mode == "evaluate"  # type: ignore[attr-defined]
-    assert widget.graph == {  # type: ignore[attr-defined]
+    graph = deepcopy(widget.graph)
+    for section in ("nodes", "connections", "external_inputs", "external_outputs"):
+        for item in graph[section]:
+            item.pop("editor_id", None)
+    assert graph == {
         **widget_graph(projector),
         "term_sign": "",
         "term_leading": True,
@@ -805,7 +809,7 @@ def test_calculator_draws_hoverable_tear_controls_without_removing_double_click(
     assert 'control.classList.add("active")' in source
     assert "nodeLayer, handles, annotations, interactions" in source
     assert "interactions.append(hitTarget, control)" in source
-    assert "saveProjector(node.index, node.labels.length === 2 ? null : edge)" in source
+    assert "saveProjector(node.index, sharedState ? edge : node.labels.length === 2 ? null : edge)" in source
     assert "saveProjector(node.index);" in source
     css = (
         Path(__file__).parents[2]
@@ -1337,7 +1341,8 @@ def test_evaluate_renderer_separates_topology_from_presentation() -> None:
     save = source.split("function saveProjector(", 1)[1].split(
         "function updateModifier", 1
     )[0]
-    assert save.count('if (interactionMode === "create") {') == 2
+    assert save.count('if (interactionMode === "create" && !sharedState) {') == 2
+    assert 'requestEditor("creation", {snapshot,' in save
 
 
 def test_port_reorder_synchronizes_sign_before_whiteboard_remount() -> None:

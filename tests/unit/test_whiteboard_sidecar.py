@@ -330,7 +330,10 @@ def test_whiteboard_round_trips_embedded_projector_snapshot(tmp_path) -> None:
     document.embedded_projectors[0].save_snapshot = snapshot  # type: ignore[attr-defined]
 
     raw = json.loads((tmp_path / "snapshot.whiteboard").read_text())
-    assert raw["document"]["blocks"][0]["projector_snapshots"]["0"] == snapshot
+    committed = raw["document"]["blocks"][0]["projector_snapshots"]["0"]
+    assert committed["editor_state"]["format"] == "birdtracks-editor"
+    assert projector_codec.decode(committed["graph"]["editor_value"]) == projector
+    assert committed["line_colors"] == snapshot["line_colors"]
 
     reopened = whiteboard(path, debug=True)
     restored = reopened.embedded_projectors[0]  # type: ignore[attr-defined]
