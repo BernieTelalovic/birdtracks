@@ -72,7 +72,7 @@ def evaluate_projector_expression(
         for _match in re.finditer(r"\\birdtracks\b", source):
             key = f"{block_id}:projector:{occurrence}"
             editor = explicit_projectors.get(key)
-            value = getattr(editor, "_configured_projector", None)
+            value = getattr(editor, "_whiteboard_source_value", getattr(editor, "_configured_projector", None))
             if not isinstance(value, Projector):
                 raise ValueError(f"projector marker {key!r} has no saved value")
             projector_values.append(value)
@@ -106,15 +106,23 @@ class _ExpressionParser:
         return value
 
     def _sum(self) -> ExpressionValue:
-        value = self._product()
+        value = self._tensor()
         while True:
             self._spaces()
             if self._take("+"):
-                value = _add_values(value, self._product())
+                value = _add_values(value, self._tensor())
             elif self._take("-"):
-                value = _add_values(value, _scale_value(self._product(), -1))
+                value = _add_values(value, _scale_value(self._tensor(), -1))
             else:
                 return value
+
+    def _tensor(self) -> ExpressionValue:
+        value = self._product()
+        while True:
+            self._spaces()
+            if not self._take(r"\otimes"):
+                return value
+            value = _tensor_values(value, self._product())
 
     def _product(self) -> ExpressionValue:
         value = self._power()
@@ -241,7 +249,9 @@ class _ExpressionParser:
 
     def _starts_factor(self) -> bool:
         self._spaces()
-        if self.source.startswith(r"\right", self.index):
+        if self.source.startswith(r"\right", self.index) or self.source.startswith(
+            r"\otimes", self.index
+        ):
             return False
         return self.index < len(self.source) and (
             self.source[self.index].isalpha()
@@ -375,6 +385,14 @@ def _multiply_values(left: ExpressionValue, right: ExpressionValue) -> Expressio
     if isinstance(left, DimensionPolynomial) or isinstance(right, DimensionPolynomial):
         raise ValueError("a traced scalar cannot be multiplied by an open projector")
     return projector_backend.multiply(left, right)
+
+
+def _tensor_values(left: ExpressionValue, right: ExpressionValue) -> ExpressionValue:
+    if not isinstance(left, (Projector, ProjectorSum)) or not isinstance(
+        right, (Projector, ProjectorSum)
+    ):
+        raise TypeError("tensor product requires two projector expressions")
+    return left @ right
 
 
 def _symbolic_terms(value: ExpressionValue) -> tuple[tuple[Projector, SymbolicCoefficient], ...]:
@@ -580,7 +598,7 @@ def _group_terms(
             key = f"{block.get('id', '')}:projector:{marker_index}"
             marker_index += 1
             editor = explicit_projectors.get(key)
-            projector = getattr(editor, "_configured_projector", None)
+            projector = getattr(editor, "_whiteboard_source_value", getattr(editor, "_configured_projector", None))
             if preserve_existing and not int(
                 getattr(editor, "saved_revision", 0)
             ):

@@ -467,6 +467,8 @@ def test_permutation_first_double_click_after_evaluate(page, x_fraction):
       window.cleanup=window.module.default.render({model,el:document.querySelector('#widget')});
       model.set('mode', 'create');
     }""", values)
+    widget.mode = 'create'
+    page.evaluate("state=>model.set('editor_state',state)", widget.editor_state)
     page.wait_for_timeout(50)
     p = page.locator('#widget .birdtracks-canvas-viewport svg').evaluate("""(svg, fraction) => {
       const g=model.get('graph').geometry;

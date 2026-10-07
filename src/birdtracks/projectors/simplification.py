@@ -152,6 +152,15 @@ def recursive_expand_node(
     node = projector.nodes[node_index]
     if not isinstance(node, (Symmetriser, Antisymmetriser)):
         raise TypeError("only a Symmetriser or Antisymmetriser can be expanded")
+    from birdtracks.settings import simplification_rule_enabled
+
+    rule_name = (
+        "symmetriser_recursion"
+        if isinstance(node, Symmetriser)
+        else "antisymmetriser_recursion"
+    )
+    if not simplification_rule_enabled(rule_name):
+        return ProjectorSum((projector,))
     labels = tuple(projector.port_orders[node_index][side])
     if len(labels) < 2:
         return ProjectorSum((projector,))
@@ -160,14 +169,14 @@ def recursive_expand_node(
         # Treat both recursive edge gestures exactly like the ordinary full
         # expansion, then apply the same contextual zero cleanup used by the
         # general recursive path.
-        return remove_multiply_connected_s_a_terms(
+        return remove_automatically_vanishing_terms(
             expand_node(projector, node_index)
         )
 
     terms = _recursive_node_expansion_terms(
         projector, node_index, side=side, edge=edge
     )
-    expanded = remove_multiply_connected_s_a_terms(
+    expanded = remove_automatically_vanishing_terms(
         _absorb_same_type_terms(
             ProjectorSum(
                 (_replace_trivial_sa_nodes(term), coefficient)
@@ -523,20 +532,24 @@ def simplify_step(projector: Projector) -> ProjectorSum:
         selected = _middle_layer_node(projector)
     if selected is None:
         return ProjectorSum((projector,))
-    return remove_multiply_connected_s_a_terms(expand_node(projector, selected))
+    return remove_automatically_vanishing_terms(expand_node(projector, selected))
 
 
-def remove_multiply_connected_s_a_terms(value: ProjectorSum) -> ProjectorSum:
-    """Discard terms annihilated by a double S/A connection."""
+def remove_automatically_vanishing_terms(value: ProjectorSum) -> ProjectorSum:
+    """Discard terms annihilated by any automatic exact identity."""
     if not isinstance(value, ProjectorSum):
         raise TypeError("value must be a ProjectorSum")
-    from .identities import MULTIPLY_CONNECTED_S_A_ANNIHILATION
 
     return ProjectorSum(
         (projector, coefficient)
         for projector, coefficient in value
-        if MULTIPLY_CONNECTED_S_A_ANNIHILATION.apply(projector) is None
+        if projector.simplify()
     )
+
+
+def remove_multiply_connected_s_a_terms(value: ProjectorSum) -> ProjectorSum:
+    """Backward-compatible alias for automatic vanishing-term removal."""
+    return remove_automatically_vanishing_terms(value)
 
 
 def collect_fully_expanded_permutations(value: ProjectorSum) -> ProjectorSum:
@@ -804,6 +817,7 @@ __all__ = [
     "permute_node_ports",
     "recursive_expand_node",
     "collect_fully_expanded_permutations",
+    "remove_automatically_vanishing_terms",
     "remove_multiply_connected_s_a_terms",
     "simplify_step",
 ]

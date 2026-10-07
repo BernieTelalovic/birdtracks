@@ -38,6 +38,22 @@ def example_projector() -> Projector:
 
 def save_editor(editor: object) -> None:
     """Simulate the frontend's atomic Save permutation payload."""
+    if getattr(editor, "_editor_session", None) is not None:
+        def send(editor, action, **arguments):
+            state = editor.editor_state
+            editor.editor_request = {"action": action, "term_id": state["term_id"],
+                                    "base_revision": state["revision"],
+                                    "request_id": f"save-helper-{action}-{len(editor._editor_seen_requests)}", **arguments}
+            assert not editor.editor_feedback.get("error")
+
+        drawing = {key: deepcopy(getattr(editor, key))
+                   for key in ("positions", "free_levels", "boundary_orders", "line_colors")}
+        changes = {editor.editor_state["node_ids"][int(index)]: sides
+                   for index, sides in editor.port_orders.items()
+                   if isinstance(editor.projector.nodes[int(index)], (Antisymmetriser, Symmetriser))}
+        send(editor, "reorder", changes=changes, presentation=drawing)
+        send(editor, "save", presentation=drawing)
+        return
     revision = editor.save_request + 1  # type: ignore[attr-defined]
     editor.save_request = revision  # type: ignore[attr-defined]
     editor.save_snapshot = {  # type: ignore[attr-defined]
@@ -54,12 +70,20 @@ def test_default_positions_follow_layers_without_changing_projector() -> None:
     projector = example_projector()
     original_hash = hash(projector)
     positions = default_positions(projector)
-    geometry = widget_graph(projector)["geometry"]
+    graph = widget_graph(projector)
+    geometry = graph["geometry"]
+    corridors = graph["display"]["corridor_widths"]
 
-    assert positions["0"]["x"] == geometry["first_layer_x"]
-    assert positions["1"]["x"] == geometry["first_layer_x"] + geometry["layer_step"]
+    assert positions["0"]["x"] == pytest.approx(
+        geometry["left_boundary"] + corridors[0] + geometry["operator_width"] / 2
+    )
+    assert positions["1"]["x"] - positions["0"]["x"] == pytest.approx(
+        geometry["operator_width"] + corridors[1]
+    )
     assert positions["2"]["x"] == positions["1"]["x"]
-    assert positions["3"]["x"] == geometry["first_layer_x"] + 2 * geometry["layer_step"]
+    assert positions["3"]["x"] - positions["1"]["x"] == pytest.approx(
+        geometry["operator_width"] + corridors[2]
+    )
     for index, position in positions.items():
         line_count = max(1, len(projector.nodes[int(index)].support))
         start = (
@@ -69,6 +93,33 @@ def test_default_positions_follow_layers_without_changing_projector() -> None:
         )
         assert start == pytest.approx(round(start))
     assert hash(projector) == original_hash
+
+
+@pytest.mark.parametrize("with_permutation", [False, True])
+@pytest.mark.parametrize("operator_count", [1, 2])
+def test_automatic_positions_share_compiled_boundary_geometry(with_permutation, operator_count):
+    nodes = [Antisymmetriser((1, 2, 3))]
+    if with_permutation:
+        nodes.append(PermutationNode(Permutation.from_cycle(1, 2), support=(1, 2, 3)))
+    if operator_count == 2:
+        nodes.append(Antisymmetriser((1, 2, 3)))
+    p = Projector(nodes, coefficient=Fraction(-2, 3))
+    original_hash, original_collapse = hash(p), p.collapse()
+    style = {**load_projector_style(), "coefficient_space": 0.0}
+    graph = widget_graph(p, style)
+    geometry = graph["geometry"]
+    positions = default_positions(p, style)
+    columns = graph["display"]["operator_columns"]
+    corridors = graph["display"]["corridor_widths"]
+    half_width = geometry["operator_width"] / 2
+    first = positions[str(columns[0][0])]["x"]
+    last = positions[str(columns[-1][0])]["x"]
+    assert first - half_width - geometry["left_boundary"] == pytest.approx(corridors[0])
+    assert geometry["right_boundary"] - last - half_width == pytest.approx(corridors[-1])
+    assert corridors[0] == corridors[-1]
+    assert hash(p) == original_hash
+    assert p.coefficient == Fraction(-2, 3)
+    assert p.collapse() == original_collapse
 
 
 def test_default_operator_rectangles_do_not_overlap_within_a_layer() -> None:
@@ -103,7 +154,7 @@ def test_widget_graph_serializes_node_kinds_and_topology() -> None:
         "numerator": "1",
         "denominator": "1",
     }
-    assert graph["port_swap_sign"] == 1
+    assert "port_swap_sign" not in graph
     assert graph["layer_count"] == 3
     assert graph["geometry"]["operator_width"] == 1.0
     assert graph["geometry"]["operator_padding"] == (
@@ -230,7 +281,7 @@ def test_crossing_reducing_odd_antisymmetriser_swap_changes_display_sign() -> No
 
     assert graph["nodes"][0]["input_labels"] == [2, 1]  # type: ignore[index]
     assert graph["nodes"][0]["output_labels"] == [1, 2]  # type: ignore[index]
-    assert graph["port_swap_sign"] == -1
+    assert "port_swap_sign" not in graph
     assert graph["coefficient"] == {"numerator": "-2", "denominator": "3"}
     assert graph["base_coefficient"] == graph["coefficient"]
 
@@ -247,7 +298,7 @@ def test_crossing_reducing_symmetriser_swap_does_not_change_sign() -> None:
     graph = widget_graph(projector)
 
     assert graph["nodes"][0]["input_labels"] == [2, 1]  # type: ignore[index]
-    assert graph["port_swap_sign"] == 1
+    assert "port_swap_sign" not in graph
     assert graph["coefficient"] == {"numerator": "1", "denominator": "1"}
 
 
@@ -339,6 +390,7 @@ def test_optional_widget_contains_synchronised_graph_and_positions() -> None:
         **widget_graph(projector),
         "term_sign": "",
         "term_leading": True,
+        "editor_value": widget.graph["editor_value"],
     }
     assert widget.positions["0"] == {  # type: ignore[attr-defined]
         "x": default_x,
@@ -523,12 +575,11 @@ def test_configured_canvas_repacks_saved_free_lines_before_drawing() -> None:
         / "src/birdtracks/projectors/static/projector-widget.js"
     ).read_text()
 
-    normalization = source.split("function normalizeConfiguredLayers()", 1)[1].split(
-        "normalizeConfiguredLayers();", 1
+    normalization = source.split("function normalizeCreatorLayers()", 1)[1].split(
+        "function ", 1
     )[0]
-    assert 'kind: "node"' in normalization
-    assert 'kind: "free"' in normalization
-    assert "cursor += unit.width" in normalization
+    assert "assignLayerLevels(layer, layerUnits(layer))" in normalization
+    assert "function layerUnits(" in source
 
 
 def test_canvas_packs_sign_space_without_overlap_and_compacts_empty_layers() -> None:
@@ -1289,7 +1340,7 @@ def test_evaluate_renderer_separates_topology_from_presentation() -> None:
     assert save.count('if (interactionMode === "create") {') == 2
 
 
-def test_port_reorder_publishes_sign_during_preview_and_commits_once() -> None:
+def test_port_reorder_synchronizes_sign_before_whiteboard_remount() -> None:
     source = (
         Path(__file__).parents[2]
         / "src/birdtracks/projectors/static/projector-widget.js"
@@ -1300,9 +1351,8 @@ def test_port_reorder_publishes_sign_during_preview_and_commits_once() -> None:
     move = reorder.split("function move(", 1)[1].split("function finish()", 1)[0]
     finish = reorder.split("function finish()", 1)[1]
 
-    assert "syncPortOrders({ save: false });" in move
-    assert finish.count("syncPortOrders();") == 1
-    assert "if (changed) syncPortOrders();" in finish
+    assert "syncPortOrders(" not in move
+    assert finish.count('requestEditor("reorder"') == 1
     assert "saveProjector();" not in reorder
     assert 'model.set("effective_coefficient", currentGraphCoefficient());' in source
 
@@ -1360,8 +1410,7 @@ def test_line_and_sa_drag_reordering_restore_origin_before_insertion() -> None:
     assert "reorderCreatorLayer(node.layer, node, requestedLevel)" in source
     assert 'column, "node", node.index, origin.level, requestedLevel' in source
     assert "requestedLevel + moving.width - 1" in source
-    assert "const requestedY = positions[String(node.index)].y" in source
-    assert "positions[String(node.index)] = origin" in source
+    assert "renderConfigured" not in source
 
 
 def test_backend_term_capture_keeps_presentation_separate_from_value() -> None:
@@ -1686,6 +1735,17 @@ def test_atomic_save_snapshot_restores_latest_line_colors() -> None:
     editor = Projector([Symmetriser((1, 2))]).evaluate()._term_editors[0]  # type: ignore[attr-defined]
     colors = {"right-anchor:0->input:0:1": "#ff0000"}
 
+    editor.line_colors = colors
+    save_editor(editor)
+    assert editor.line_colors == colors
+    assert editor.configuration.state()["line_colors"] == colors
+
+
+def test_legacy_save_snapshot_restores_latest_line_colors() -> None:
+    pytest.importorskip("anywidget")
+    from birdtracks.projectors.widget import projector_widget
+    editor = projector_widget(Projector([Symmetriser((1, 2))]), shared_editor=False)
+    colors = {"right-anchor:0->input:0:1": "#ff0000"}
     editor.save_snapshot = {  # type: ignore[attr-defined]
         "revision": 1,
         "graph": editor.graph,  # type: ignore[attr-defined]
@@ -1702,8 +1762,9 @@ def test_atomic_save_snapshot_restores_latest_line_colors() -> None:
 
 def test_configurator_saves_boundary_permutations_and_relative_sign() -> None:
     pytest.importorskip("anywidget")
+    from birdtracks.projectors.widget import projector_sum_widget
     source = example_projector()
-    editor = source.evaluate()._term_editors[0]  # type: ignore[attr-defined]
+    editor = projector_sum_widget(ProjectorSum((source,)), shared_editor=False)._term_editors[0]
     input_ports = dict(source.input_boundary)
     output_ports = dict(source.output_boundary)
 
@@ -1755,7 +1816,7 @@ def test_configurator_no_op_save_preserves_displayed_port_state() -> None:
         }
         for index, orders in editor.port_orders.items()  # type: ignore[attr-defined]
     }
-    assert widget_graph(saved)["port_swap_sign"] == 1
+    assert "port_swap_sign" not in widget_graph(saved)
     assert [
         (node["input_labels"], node["output_labels"])
         for node in widget_graph(saved)["nodes"]
@@ -2051,6 +2112,8 @@ def test_canvas_session_collects_legacy_duplicate_term_panels(
         duplicate["state"]["graph"]["coefficient"] = coefficient
         duplicate["state"]["graph"]["base_coefficient"] = coefficient
         duplicate["state"]["effective_coefficient"] = coefficient
+        duplicate["state"].pop("editor_state", None)
+        duplicate["state"]["graph"].pop("editor_value", None)
         duplicates.append(duplicate)
     write_canvas_session(
         session_path,

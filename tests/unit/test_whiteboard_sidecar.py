@@ -33,6 +33,17 @@ from birdtracks.projectors.whiteboard import (
 )
 
 
+def install_created_value(editor, projector):
+    """Seed a coherent create-mode snapshot instead of changing algebra alone."""
+    from birdtracks.projectors.widget import projector_widget
+
+    seeded = projector_widget(projector, mode="create", shared_editor=False)
+    editor._configured_projector = projector
+    editor._configuration = seeded.configuration
+    for field in ("graph", "positions", "port_orders", "boundary_orders", "free_levels", "effective_coefficient"):
+        setattr(editor, field, deepcopy(getattr(seeded, field)))
+
+
 def example_projector() -> Projector:
     return Projector(
         [
@@ -286,7 +297,7 @@ def test_whiteboard_restores_saved_definition_without_evaluating_it(tmp_path) ->
         {"id": "text-1", "source": r"P \def \birdtracks"},
     ]
     editor = document.embedded_projectors[0]  # type: ignore[attr-defined]
-    editor._configured_projector = projector
+    install_created_value(editor, projector)
     editor.saved_revision = 1
 
     reopened = whiteboard(path, debug=True)
@@ -395,7 +406,7 @@ def test_whiteboard_simplification_locks_and_restores_connected_lines(tmp_path) 
         {"id": "text-1", "source": r"X \def \birdtracks"},
     ]
     editor = document.embedded_projectors[0]  # type: ignore[attr-defined]
-    editor._configured_projector = Projector([Symmetriser((1, 2, 3))])
+    install_created_value(editor, Projector([Symmetriser((1, 2, 3))]))
     editor.saved_revision = 1
     document.simplify_request = {  # type: ignore[attr-defined]
         "line_id": "text-1", "action": "evaluate", "revision": 1,
@@ -476,7 +487,7 @@ def test_whiteboard_manual_expansion_appends_a_new_calculation_line(tmp_path) ->
         {"id": "text-1", "source": r"X \def \birdtracks"},
     ]
     editor = document.embedded_projectors[0]  # type: ignore[attr-defined]
-    editor._configured_projector = Projector([Symmetriser((1, 2, 3))])
+    install_created_value(editor, Projector([Symmetriser((1, 2, 3))]))
     editor.saved_revision = 1
     document.simplify_request = {  # type: ignore[attr-defined]
         "line_id": "text-1", "action": "evaluate", "revision": 1,
@@ -507,7 +518,7 @@ def test_whiteboard_manual_expansion_discards_double_s_a_branch(tmp_path) -> Non
             Antisymmetriser((1, 3)),
         ]
     )
-    editor._configured_projector = projector
+    install_created_value(editor, projector)
     editor.saved_revision = 1
     document.simplify_request = {  # type: ignore[attr-defined]
         "line_id": "text-1", "action": "evaluate", "revision": 1,
@@ -532,7 +543,7 @@ def test_whiteboard_full_expansion_collects_equal_permutations(tmp_path) -> None
     document = whiteboard(tmp_path / "permutation-collection", debug=True)
     document.blocks = [{"id": "text-1", "source": r"X \def \birdtracks"}]
     editor = document.embedded_projectors[0]  # type: ignore[attr-defined]
-    editor._configured_projector = Projector(
+    install_created_value(editor, Projector(
         [
             Symmetriser((1, 2)),
             Antisymmetriser((2, 3)),
@@ -540,6 +551,7 @@ def test_whiteboard_full_expansion_collects_equal_permutations(tmp_path) -> None
             Antisymmetriser((2, 3)),
             Symmetriser((1, 2)),
         ]
+    )
     )
     original = editor._configured_projector
     editor.saved_revision = 1
@@ -626,27 +638,18 @@ def test_generated_terms_inherit_parent_line_colors() -> None:
     }
 
 
-def test_expansion_uses_saved_parent_port_labels(tmp_path):
-    from birdtracks.projectors.widget import projector_widget
-
+def test_expansion_preserves_accepted_parent_port_labels_and_colors(tmp_path):
     document = whiteboard(tmp_path / "renumbered-expansion", debug=True)
     document.blocks = [{"id": "text-1", "source": r"\birdtracks"}]
     editor = document.embedded_projectors[0]
-    editor._configured_projector = Projector([Symmetriser((10, 11))])
+    install_created_value(editor, Projector([Symmetriser((10, 11))]))
     editor.saved_revision = 1
     document.simplify_request = {"line_id": "text-1", "action": "evaluate", "revision": 1}
     child = document.backend_projectors[-1]
-    saved = projector_widget(Projector([Symmetriser((1, 2))]), embedded=True)
-    child.graph = saved.graph
-    child.port_orders = saved.port_orders
-    child.boundary_orders = saved.boundary_orders
-    child.save_snapshot = {
-        "revision": 1, "graph": saved.graph, "positions": saved.positions,
-        "port_orders": saved.port_orders, "free_levels": saved.free_levels,
-        "boundary_orders": saved.boundary_orders,
-        "effective_coefficient": saved.effective_coefficient,
-        "line_colors": {"right-anchor:0->input:0:1": "#ff0000"},
-    }
+    # Generated editors retain stable ports; frontend snapshots cannot renumber
+    # or replace accepted algebra. Paint through the presentation boundary.
+    child.line_colors = {"right-anchor:0->input:0:10": "#ff0000"}
+    assert child.projector.nodes[0].support == frozenset((10, 11))
     child.expand_node_request = {"node": 0, "revision": 1}
     result = document.blocks[-1]
     assert result["calculation_step"] == 2
@@ -664,7 +667,7 @@ def test_expansion_extends_color_to_entire_visible_line(tmp_path, recursive, sid
     document = whiteboard(tmp_path / "expanded-colors", debug=True)
     document.blocks = [{"id": "text-1", "source": r"\birdtracks"}]
     editor = document.embedded_projectors[0]
-    editor._configured_projector = Projector([Symmetriser((1, 2, 3))])
+    install_created_value(editor, Projector([Symmetriser((1, 2, 3))]))
     editor.saved_revision = 1
     document.simplify_request = {"line_id": "text-1", "action": "evaluate", "revision": 1}
     child = document.backend_projectors[-1]
@@ -743,7 +746,7 @@ def test_generated_term_presentation_survives_whiteboard_reopen(tmp_path) -> Non
         {"id": "text-1", "source": r"X \def \birdtracks"},
     ]
     source_editor = document.embedded_projectors[0]  # type: ignore[attr-defined]
-    source_editor._configured_projector = Projector([Symmetriser((1, 2))])
+    install_created_value(source_editor, Projector([Symmetriser((1, 2))]))
     source_editor.saved_revision = 1
     document.simplify_request = {  # type: ignore[attr-defined]
         "line_id": "text-1", "action": "evaluate", "revision": 1,

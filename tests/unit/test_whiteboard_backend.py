@@ -300,6 +300,24 @@ def test_whiteboard_expression_parser_supports_adjacency_brackets_and_trace() ->
     assert traced_definition == traced_term
 
 
+def test_whiteboard_expression_parser_supports_projector_tensor_products() -> None:
+    above = Projector([Symmetriser({4, 8})])
+    below = Projector([Antisymmetriser({10})])
+    environment = EvaluationEnvironment(ProjectorAlgebraBackend())
+    environment.define("A", above)
+    environment.define("B", below)
+
+    tensor = evaluate_projector_expression(
+        [{"source": r"A \otimes B"}], {}, environment
+    )
+    distributed = evaluate_projector_expression(
+        [{"source": r"(A + B) \otimes A"}], {}, environment
+    )
+
+    assert tensor == above @ below
+    assert distributed == (above @ above) + (below @ above)
+
+
 def test_environment_rejects_rebinding_and_unknown_symbols() -> None:
     environment = EvaluationEnvironment(ProjectorAlgebraBackend())
     environment.define("P1", Projector([]))

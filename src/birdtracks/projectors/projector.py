@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 from os import PathLike
 from types import MappingProxyType
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from birdtracks.linear_combinations.coefficients import require_coefficient
 from birdtracks.linear_combinations import PermutationSum, PolynomialPermutationSum
@@ -18,6 +18,9 @@ from .symmetrisers import Antisymmetriser, Symmetriser
 
 ProjectorNode = Symmetriser | Antisymmetriser | PermutationNode
 Direction = Literal["left", "right", "neutral"]
+
+if TYPE_CHECKING:
+    from .young_layers import BracketingYoungLayers, YoungLayerPair
 
 
 @dataclass(frozen=True, order=True)
@@ -330,6 +333,18 @@ class Projector:
 
         return simplify_step(self)
 
+    def identify_largest_young_layer_pair(self) -> YoungLayerPair | None:
+        """Return the largest Young diagram formed by adjacent S/A layers."""
+        from .young_layers import identify_largest_young_layer_pair
+
+        return identify_largest_young_layer_pair(self)
+
+    def identify_bracketing_young_layers(self) -> BracketingYoungLayers | None:
+        """Return the largest repeated Young-layer pair enclosing this graph."""
+        from .young_layers import identify_bracketing_young_layers
+
+        return identify_bracketing_young_layers(self)
+
     def detangle(self) -> Projector:
         """Return an equal diagram with its internal line levels optimized."""
         from .layout import detangle
@@ -399,6 +414,20 @@ class Projector:
             return _compose_projectors(_projector_from_permutation(other), self)
         if _is_coefficient(other):
             return self.__mul__(other)
+        return NotImplemented
+
+    def __matmul__(self, other: object) -> object:
+        """Place this projector above ``other`` without connecting them.
+
+        Boundary lines are freshly numbered in vertical order: this
+        projector receives ``1..x`` and ``other`` receives ``x+1..x+y``.
+        """
+        from .projector_sum import ProjectorSum
+
+        if isinstance(other, Projector):
+            return _tensor_projectors(self, other)
+        if isinstance(other, ProjectorSum):
+            return ProjectorSum((self,)) @ other
         return NotImplemented
 
     def __neg__(self) -> Projector:
@@ -567,6 +596,122 @@ def _compose_projectors(left: Projector, right: Projector) -> Projector:
         ),
         in_direction=right.in_direction,
         out_direction=left.out_direction,
+    )
+
+
+def _tensor_projectors(above: Projector, below: Projector) -> Projector:
+    """Return the ordered disjoint union of two projector graphs."""
+    if (above.in_direction, above.out_direction) != (
+        below.in_direction,
+        below.out_direction,
+    ):
+        raise NotImplementedError(
+            "tensor product of birdtracks with different directions is not implemented"
+        )
+    above_labels = {
+        label: index
+        for index, label in enumerate(sorted(above.support), start=1)
+    }
+    below_labels = {
+        label: index
+        for index, label in enumerate(
+            sorted(below.support), start=len(above_labels) + 1
+        )
+    }
+    relabelled_above = _relabel_projector(above, above_labels)
+    relabelled_below = _relabel_projector(below, below_labels)
+    offset = len(relabelled_above.nodes)
+
+    def shifted(port: NodePort) -> NodePort:
+        return NodePort(port.node + offset, port.label)
+
+    connections = relabelled_above.connections + tuple(
+        Connection(shifted(connection.source), shifted(connection.target))
+        for connection in relabelled_below.connections
+    )
+    input_boundary = dict(relabelled_above.input_boundary)
+    input_boundary.update(
+        (label, shifted(port))
+        for label, port in relabelled_below.input_boundary.items()
+    )
+    output_boundary = dict(relabelled_above.output_boundary)
+    output_boundary.update(
+        (label, shifted(port))
+        for label, port in relabelled_below.output_boundary.items()
+    )
+    port_orders = {
+        **{index: dict(orders) for index, orders in relabelled_above.port_orders.items()},
+        **{
+            index + offset: dict(orders)
+            for index, orders in relabelled_below.port_orders.items()
+        },
+    }
+    return Projector(
+        relabelled_above.nodes + relabelled_below.nodes,
+        connections,
+        coefficient=above.coefficient * below.coefficient,
+        input_boundary=input_boundary,
+        output_boundary=output_boundary,
+        port_orders=(
+            port_orders
+            if above.port_orders_are_explicit or below.port_orders_are_explicit
+            else None
+        ),
+        in_direction=above.in_direction,
+        out_direction=above.out_direction,
+    )
+
+
+def _relabel_projector(
+    projector: Projector, labels: Mapping[int, int]
+) -> Projector:
+    def relabel(label: int) -> int:
+        return labels.get(label, label)
+
+    def relabel_port(port: NodePort) -> NodePort:
+        return NodePort(port.node, relabel(port.label))
+
+    nodes: list[ProjectorNode] = []
+    for node in projector.nodes:
+        if isinstance(node, PermutationNode):
+            permutation = Permutation(
+                (relabel(source), relabel(target))
+                for source, target in node.permutation
+            )
+            nodes.append(
+                PermutationNode(
+                    permutation,
+                    (relabel(label) for label in node.support),
+                    in_direction=node.in_direction,
+                    out_direction=node.out_direction,
+                )
+            )
+        else:
+            nodes.append(type(node)(relabel(label) for label in node.labels))
+    return Projector(
+        nodes,
+        (
+            Connection(relabel_port(connection.source), relabel_port(connection.target))
+            for connection in projector.connections
+        ),
+        coefficient=projector.coefficient,
+        input_boundary={
+            relabel(label): relabel_port(port)
+            for label, port in projector.input_boundary.items()
+        },
+        output_boundary={
+            relabel(label): relabel_port(port)
+            for label, port in projector.output_boundary.items()
+        },
+        port_orders={
+            index: {
+                side: tuple(relabel(label) for label in order)
+                for side, order in orders.items()
+            }
+            for index, orders in projector.port_orders.items()
+        } if projector.port_orders_are_explicit else None,
+        in_direction=projector.in_direction,
+        out_direction=projector.out_direction,
     )
 
 

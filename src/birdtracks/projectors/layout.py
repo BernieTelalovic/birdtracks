@@ -10,9 +10,20 @@ from .projector import NodePort, Projector
 from .display_graph import compile_display_graph
 from .permutation_node import PermutationNode
 from .style import load_projector_style
-from .symmetrisers import Antisymmetriser
+from .symmetrisers import Antisymmetriser, Symmetriser
 
 Style = Mapping[str, float | str]
+
+
+def rendering_projector(projector: Projector) -> Projector:
+    """Choose drawing orders; the shared editor translates their exact scalar."""
+    from .editor import project_port_orders
+
+    orders = drawing_port_orders(projector)
+    return project_port_orders(projector, {
+        index: sides for index, sides in orders.items()
+        if isinstance(projector.nodes[index], (Symmetriser, Antisymmetriser))
+    })
 
 
 def default_positions(
@@ -22,7 +33,7 @@ def default_positions(
     geometry = _geometry(style)
     inputs, _outputs = _fixed_boundaries(projector)
     input_strands, output_strands = _strand_side_labels(projector, inputs)
-    port_orders, _sign = _crossing_reduced_port_orders(projector)
+    port_orders = drawing_port_orders(projector)
     return _positions_for_orders(
         projector, geometry, port_orders, input_strands, output_strands
     )
@@ -37,7 +48,17 @@ def _positions_for_orders(
 ) -> dict[str, dict[str, float]]:
     positions: dict[str, dict[str, float]] = {}
     rank = {label: index for index, label in enumerate(sorted(projector.support))}
-    display_layers = compile_display_graph(projector).operator_columns
+    display = _compiled_display_state(projector, dict(geometry))
+    display_layers = display["operator_columns"]
+    corridor_widths = display["corridor_widths"]
+    # Use the same corridor geometry as the compiled renderer and boundaries.
+    # Shared editor positions are authoritative, so incompatible automatic x
+    # coordinates would otherwise make the right-hand wires look elongated.
+    column_x = (
+        float(geometry["left_boundary"])
+        + corridor_widths[0]
+        + float(geometry["operator_width"]) / 2
+    )
     for layer_index, layer in enumerate(display_layers):
         ordered = _crossing_reduced_order(
             projector, layer, input_strands, output_strands, rank
@@ -53,16 +74,14 @@ def _positions_for_orders(
         for node_index in ordered:
             line_count = max(1, len(projector.nodes[node_index].support))
             positions[str(node_index)] = {
-                "x": float(
-                    geometry["first_layer_x"]
-                    + geometry["layer_step"] * layer_index
-                ),
+                "x": column_x,
                 "y": float(
                     geometry["top_line_level"]
                     + (starts[node_index] + (line_count - 1) / 2)
                     * geometry["level_spacing"]
                 ),
             }
+        column_x += float(geometry["operator_width"]) + corridor_widths[layer_index + 1]
     node_layers = _node_layers(projector)
     for node_index, node in enumerate(projector.nodes):
         if str(node_index) in positions:
@@ -207,8 +226,8 @@ def widget_graph(
     geometry = _geometry(style)
     display_state = _compiled_display_state(projector, geometry)
     inputs, outputs = _fixed_boundaries(projector)
-    port_orders, port_swap_sign = _crossing_reduced_port_orders(projector)
-    display_coefficient = projector.coefficient * port_swap_sign
+    port_orders = drawing_port_orders(projector)
+    display_coefficient = rendering_projector(projector).coefficient
     node_layers = _node_layers(projector)
     positions = default_positions(projector, geometry)
     input_strands, output_strands = _strand_side_labels(projector, inputs)
@@ -223,6 +242,9 @@ def widget_graph(
     )
     return {
         "display": display_state,
+        "display_free_levels": _column_free_levels(
+            projector, positions, input_strands, boundary_labels, geometry
+        ),
         "base_coefficient": {
             "numerator": str(display_coefficient.numerator),
             "denominator": str(display_coefficient.denominator),
@@ -231,7 +253,6 @@ def widget_graph(
             "numerator": str(display_coefficient.numerator),
             "denominator": str(display_coefficient.denominator),
         },
-        "port_swap_sign": port_swap_sign,
         "layer_count": len(projector.layers),
         "geometry": geometry,
         "nodes": [
@@ -420,13 +441,24 @@ def _free_levels(
     geometry: Style,
 ) -> dict[str, dict[str, int]]:
     """Assign pass-through strands to unused levels in every layer."""
-    rank = {label: index for index, label in enumerate(boundary_labels)}
     result: dict[str, dict[str, int]] = {
         str(layer_index): {} for layer_index in range(len(projector.layers))
     }
     display = compile_display_graph(projector)
-    for layer in display.operator_columns:
-        layer_index = node_layers[layer[0]]
+    columns = _column_free_levels(projector, positions, input_strands, boundary_labels, geometry)
+    for index, layer in enumerate(display.operator_columns):
+        result[str(node_layers[layer[0]])] = columns[str(index)]
+    return result
+
+
+def _column_free_levels(
+    projector: Projector, positions: dict[str, dict[str, float]],
+    input_strands: Mapping[NodePort, int], boundary_labels: list[int], geometry: Style,
+) -> dict[str, dict[str, int]]:
+    """Complete interfaces indexed by display column, never by algebra layers."""
+    rank = {label: index for index, label in enumerate(boundary_labels)}
+    result = {}
+    for layer_index, layer in enumerate(compile_display_graph(projector).operator_columns):
         occupied: set[int] = set()
         active_labels: set[int] = set()
         for node_index in layer:
@@ -466,28 +498,19 @@ def _detangle_score(
     positions = _positions_for_orders(
         projector, geometry, port_orders, input_strands, output_strands
     )
-    node_layers = _node_layers(projector)
     boundary_labels = sorted(projector.support)
     boundary_rank = {
         label: position for position, label in enumerate(boundary_labels)
     }
-    free_levels = _free_levels(
-        projector,
-        positions,
-        node_layers,
-        input_strands,
-        boundary_labels,
-        geometry,
-    )
+    free_levels = _column_free_levels(projector, positions, input_strands, boundary_labels, geometry)
 
     display = compile_display_graph(projector)
     display_layers = display.operator_columns
     layer_interfaces: dict[int, tuple[dict[int, int], dict[int, int]]] = {}
     for display_index, layer in enumerate(display_layers):
-        exact_layer = node_layers[layer[0]]
         input_levels = {
             int(label): int(level)
-            for label, level in free_levels[str(exact_layer)].items()
+            for label, level in free_levels[str(display_index)].items()
         }
         output_levels = dict(input_levels)
         for node_index in layer:
@@ -584,10 +607,10 @@ def _geometry(style: Style | None) -> dict[str, float | str]:
     return configured
 
 
-def _crossing_reduced_port_orders(
+def drawing_port_orders(
     projector: Projector,
-) -> tuple[dict[int, dict[str, list[int]]], int]:
-    """Order each node side toward its neighbours and return the induced sign."""
+) -> dict[int, dict[str, list[int]]]:
+    """Choose drawing orders only; exact scalar translation belongs to the editor."""
     if projector.port_orders_are_explicit:
         orders = {
             index: {
@@ -596,16 +619,9 @@ def _crossing_reduced_port_orders(
             }
             for index, sides in projector.port_orders.items()
         }
-        sign = 1
-        for index, node in enumerate(projector.nodes):
-            if not isinstance(node, Antisymmetriser):
-                continue
-            canonical = sorted(node.support)
-            if _is_odd_order(orders[index]["input"], canonical):
-                sign = -sign
-            if _is_odd_order(orders[index]["output"], canonical):
-                sign = -sign
-        return orders, sign
+        # These orders already participate in the exact value. We preserve
+        # them, so the relative rendering permutation is the identity.
+        return orders
     source_neighbour = {
         connection.source: connection.target.label
         for connection in projector.connections
@@ -615,7 +631,6 @@ def _crossing_reduced_port_orders(
         for connection in projector.connections
     }
     orders: dict[int, dict[str, list[int]]] = {}
-    sign = 1
     for index, node in enumerate(projector.nodes):
         canonical = sorted(node.support)
         input_labels = sorted(
@@ -631,23 +646,7 @@ def _crossing_reduced_port_orders(
             ),
         )
         orders[index] = {"input": input_labels, "output": output_labels}
-        if isinstance(node, Antisymmetriser):
-            if _is_odd_order(input_labels, canonical):
-                sign = -sign
-            if _is_odd_order(output_labels, canonical):
-                sign = -sign
-    return orders, sign
-
-
-def _is_odd_order(order: list[int], canonical: list[int]) -> bool:
-    rank = {label: index for index, label in enumerate(canonical)}
-    values = [rank[label] for label in order]
-    inversions = sum(
-        left > right
-        for index, left in enumerate(values)
-        for right in values[index + 1 :]
-    )
-    return bool(inversions % 2)
+    return orders
 
 
 def _crossing_reduced_order(

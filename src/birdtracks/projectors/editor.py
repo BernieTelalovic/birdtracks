@@ -82,6 +82,36 @@ def _parity(order: Sequence[int], previous: Sequence[int]) -> int:
     return -1 if inversions % 2 else 1
 
 
+def project_port_orders(
+    projector: Projector, changes: Mapping[int, Mapping[str, Sequence[int]]],
+) -> Projector:
+    """Translate a redraw to an exact oriented value, with relative parity once.
+
+    Shared by commands and initial rendering. No IDs, history, layout selection,
+    collapse, or term collection belong to this pure translation boundary.
+    """
+    orders = {i: dict(sides) for i, sides in projector.port_orders.items()}
+    sign = 1
+    for index, sides in changes.items():
+        if isinstance(index, bool) or not isinstance(index, int) or index not in orders:
+            raise ValueError("unknown projector node")
+        node = projector.nodes[index]
+        if not isinstance(node, (Symmetriser, Antisymmetriser)):
+            raise ValueError("only S/A ports support redraw reordering")
+        if not isinstance(sides, Mapping) or not sides or not set(sides) <= {"input", "output"}:
+            raise ValueError("reorder requires input and/or output orders")
+        for side, order in sides.items():
+            parity = _parity(order, orders[index][side])
+            if isinstance(node, Antisymmetriser):
+                sign *= parity
+            orders[index][side] = tuple(order)
+    return Projector(
+        projector.nodes, projector.connections, coefficient=projector.coefficient * sign,
+        input_boundary=projector.input_boundary, output_boundary=projector.output_boundary,
+        port_orders=orders, in_direction=projector.in_direction, out_direction=projector.out_direction,
+    )
+
+
 @dataclass(frozen=True, eq=False)
 class EditorState:
     """One immutable term, drawing, and selection; IDs are editor-only data."""
@@ -202,31 +232,15 @@ class EditorSession:
         if presentation is not None:
             before = replace(before, presentation_json=_presentation(before.projector, presentation))
         projector = before.projector
-        orders = {i: dict(sides) for i, sides in projector.port_orders.items()}
-        sign = 1
+        indexed = {}
         for node_id, sides in changes.items():
             if node_id not in before.node_ids:
                 raise ValueError(f"unknown editor node: {node_id}")
-            index = before.node_ids.index(node_id)
-            node = projector.nodes[index]
-            if not isinstance(node, (Symmetriser, Antisymmetriser)):
-                raise ValueError("only S/A ports support redraw reordering")
-            if not isinstance(sides, Mapping) or not sides or not set(sides) <= {"input", "output"}:
-                raise ValueError("reorder requires input and/or output orders")
-            for side, order in sides.items():
-                parity = _parity(order, orders[index][side])
-                if isinstance(node, Antisymmetriser):
-                    sign *= parity
-                orders[index][side] = tuple(order)
-        changed = any(dict(projector.port_orders[i]) != sides for i, sides in orders.items())
+            indexed[before.node_ids.index(node_id)] = sides
+        value = project_port_orders(projector, indexed)
+        changed = any(projector.port_orders[i] != sides for i, sides in value.port_orders.items())
         if not changed:
             return self.state
-        value = Projector(
-            projector.nodes, projector.connections, coefficient=projector.coefficient * sign,
-            input_boundary=projector.input_boundary, output_boundary=projector.output_boundary,
-            port_orders=orders, in_direction=projector.in_direction,
-            out_direction=projector.out_direction,
-        )
         candidate = replace(before, projector=value, revision=self.state.revision + 1,
                             selection=tuple(selection) if selection is not None else before.selection)
         self._undo.append(before)

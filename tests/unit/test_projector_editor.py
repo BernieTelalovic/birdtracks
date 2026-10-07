@@ -185,7 +185,7 @@ def test_automatic_odd_layout_is_materialized_from_authoritative_algebra():
     assert canvas.current_projector_sum.collapse() == p.collapse()
     child = canvas._term_editors[0]
     assert child.projector == child._source_projector
-    assert child.graph["port_swap_sign"] == 1
+    assert "port_swap_sign" not in child.graph
 
 
 def test_presentation_bridge_prevents_reorder_from_restoring_old_placement():

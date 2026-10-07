@@ -16,7 +16,7 @@ def test_painted_line_survives_save_port_renumbering(page, prefactor, saved_labe
     from birdtracks import Projector, Symmetriser, whiteboard
     from birdtracks.projectors.widget import projector_widget
 
-    editor = projector_widget(Projector([Symmetriser((10, 11))]), embedded=True)
+    editor = projector_widget(Projector([Symmetriser((10, 11))]), embedded=True, mode="create")
     source = base64.b64encode((STATIC / "projector-widget.js").read_bytes()).decode()
     state = {key: value for key, value in editor.get_state().items()
              if not key.startswith("_")}
@@ -68,12 +68,14 @@ def test_painted_line_survives_save_port_renumbering(page, prefactor, saved_labe
         'el => el.style.stroke') == ''
     page.evaluate("childModel.set('active_line', true)")
     page.locator('.birdtracks-symmetriser').first.dblclick()
-    snapshot = page.evaluate("childModel.get('save_snapshot')")
+    child.editor_request = page.evaluate("childModel.get('editor_request')")
+    # Expansion waits for the Python-owned save acknowledgement. No frontend
+    # graph replacement or port renumbering is allowed on this result editor.
+    page.evaluate("""reply => {
+      childModel.set('editor_state', reply.state);
+      childModel.set('editor_feedback', reply.feedback);
+    }""", {'state': child.editor_state, 'feedback': child.editor_feedback})
     request = page.evaluate("childModel.get('expand_node_request')")
-    child.graph = snapshot['graph']
-    child.port_orders = snapshot['port_orders']
-    child.boundary_orders = snapshot['boundary_orders']
-    child.save_snapshot = snapshot
     child.expand_node_request = request
     result = document.blocks[-1]
     assert result['calculation_step'] == 2
@@ -229,13 +231,13 @@ def page():
         assert not errors
 
 
-def test_embedded_projector_flips_numeric_prefactor_with_orientation(page):
+def test_uncommitted_port_traits_cannot_flip_numeric_source_prefactor(page):
     page.evaluate(
         """() => childModel.set('port_orders', {
           '0': {input: [2, 1], output: [1, 2]}
         })"""
     )
-    assert page.evaluate("() => model.get('blocks')[0].source") == r"-123.45\birdtracks"
+    assert page.evaluate("() => model.get('blocks')[0].source") == r"123.45\birdtracks"
 
     page.evaluate(
         """() => childModel.set('port_orders', {
@@ -245,7 +247,7 @@ def test_embedded_projector_flips_numeric_prefactor_with_orientation(page):
     assert page.evaluate("() => model.get('blocks')[0].source") == r"123.45\birdtracks"
 
 
-def test_embedded_projector_inserts_sign_without_numeric_prefactor(page):
+def test_uncommitted_port_traits_cannot_insert_a_source_sign(page):
     page.evaluate("""() => model.set('blocks', [{
       id: 'text-1', source: '\\\\birdtracks'
     }])""")
@@ -256,7 +258,7 @@ def test_embedded_projector_inserts_sign_without_numeric_prefactor(page):
           '0': {input: [2, 1], output: [1, 2]}
         })"""
     )
-    assert page.evaluate("() => model.get('blocks')[0].source") == r"-\birdtracks"
+    assert page.evaluate("() => model.get('blocks')[0].source") == r"\birdtracks"
 
     page.evaluate(
         """() => childModel.set('port_orders', {
@@ -264,6 +266,110 @@ def test_embedded_projector_inserts_sign_without_numeric_prefactor(page):
         })"""
     )
     assert page.evaluate("() => model.get('blocks')[0].source") == r"\birdtracks"
+
+
+def connect_editor_model(page, child, *, generated=False):
+    """Connect shipped views to Python commands and the pure source projection."""
+    from birdtracks.projectors.whiteboard.result_projection import project_inline_occurrence, projector_terms_source
+    source_value = child.projector
+
+    def command(_source, payload):
+        nonlocal source_value
+        previous = child.projector.coefficient
+        child.editor_request = payload['request']
+        source = payload['source']
+        if generated:
+            source, _terms = projector_terms_source([child.projector])
+        else:
+            source, source_value = project_inline_occurrence(
+                source, source.index(r'\birdtracks'), child.projector, previous, source_value)
+        return {'state': {key: value for key, value in child.get_state().items()
+                          if not key.startswith('_')}, 'source': source}
+
+    page.expose_binding('legacyTestEditorCommand', command)
+    page.evaluate('''() => {
+      childModel.save_changes=()=>{
+        const request=childModel.get('editor_request');
+        if(!request?.request_id || childModel.lastSent===request.request_id) return;
+        childModel.lastSent=request.request_id;
+        legacyTestEditorCommand({request,source:model.get('blocks')[0].source}).then(reply=>{
+          for(const [key,value] of Object.entries(reply.state))
+            if(!['editor_request','editor_state','editor_feedback','save_command','save_request','local_undo_command','expand_node_request'].includes(key)) childModel.set(key,value);
+          childModel.set('editor_state',reply.state.editor_state);
+          childModel.set('editor_feedback',reply.state.editor_feedback);
+          model.set('blocks',[{...model.get('blocks')[0],source:reply.source}]);
+        });
+      };
+    }''')
+
+
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        (r"123.45\birdtracks", r"-123.45\birdtracks"),
+        (r"\birdtracks", r"-\birdtracks"),
+    ],
+)
+def test_dragging_real_antisymmetriser_port_updates_whiteboard_sign(
+    page, expression, expected
+):
+    from birdtracks import Antisymmetriser, Projector
+    from birdtracks.projectors.widget import projector_widget
+
+    child = projector_widget(
+        Projector([Antisymmetriser((1, 2))]), embedded=True
+    )
+    connect_editor_model(page, child)
+    state = {
+        key: value
+        for key, value in child.get_state().items()
+        if not key.startswith("_")
+    }
+    source = base64.b64encode(
+        (STATIC / "projector-widget.js").read_bytes()
+    ).decode()
+    page.add_style_tag(content=(STATIC / "projector-widget.css").read_text())
+    page.evaluate(
+        """async ({state, source, expression}) => {
+          cleanup();
+          for (const [key, value] of Object.entries(state)) childModel.set(key, value);
+          childModel.model_id = 'real-child';
+          model.set('blocks', [{
+            ...model.get('blocks')[0], source: expression, read_only: true,
+          }]);
+          const projector = await import('data:text/javascript;base64,' + source);
+          window.cleanup = module.default.render({
+            model, el: document.querySelector('#widget'), signal: null,
+            host: {
+              getModel: async () => childModel,
+              getWidget: async () => ({render: ({el}) =>
+                projector.default.render({model: childModel, el})}),
+            },
+          });
+        }""",
+        {"state": state, "source": source, "expression": expression},
+    )
+    first = page.locator('[aria-label^="input:0:1;"]')
+    second = page.locator('[aria-label^="input:0:2;"]')
+    playwright.expect(first).to_be_visible()
+    first_box = first.bounding_box()
+    second_box = second.bounding_box()
+
+    page.mouse.move(
+        first_box["x"] + first_box["width"] / 2,
+        first_box["y"] + first_box["height"] / 2,
+    )
+    page.mouse.down()
+    page.mouse.move(
+        second_box["x"] + second_box["width"] / 2,
+        second_box["y"] + second_box["height"],
+        steps=5,
+    )
+    page.mouse.up()
+    page.wait_for_function("childModel.get('editor_state').revision===1")
+    assert page.evaluate("() => model.get('blocks')[0].source") == expected
+    assert page.evaluate("() => childModel.get('editor_state').port_orders['0'].input") == [2, 1]
+    assert page.evaluate("() => childModel.get('prefactor_owned')") is True
 
 
 def test_lower_row_updates_keep_upper_projector_mounted(page):
@@ -339,7 +445,7 @@ def test_moved_free_line_survives_click_away_and_lower_row_insert(page):
     assert page.evaluate("childModel.get('free_levels')") == moved
 
 
-def test_embedded_projector_recovers_orientation_change_while_unmounted(page):
+def test_unmounted_uncommitted_port_traits_cannot_rewrite_source(page):
     page.evaluate("""() => {
       document.querySelector('.birdtracks-whiteboard-rendered')
         ._birdtracksCleanupBlock();
@@ -350,7 +456,7 @@ def test_embedded_projector_recovers_orientation_change_while_unmounted(page):
     }""")
     page.wait_for_timeout(50)
 
-    assert page.evaluate("() => model.get('blocks')[0].source") == r"-123.45\birdtracks"
+    assert page.evaluate("() => model.get('blocks')[0].source") == r"123.45\birdtracks"
 
 
 def test_prefactor_flip_combines_binary_and_unary_signs(page):
@@ -366,7 +472,7 @@ def test_prefactor_flip_combines_binary_and_unary_signs(page):
         ) == expected
 
 
-def test_backend_projector_recovers_shifted_placeholder_and_updates_sign(page):
+def test_backend_projector_recovers_shifted_placeholder_without_frontend_sign_writes(page):
     source = r"= -\frac{9}{16}R"
     page.evaluate(
         """source => {
@@ -392,7 +498,7 @@ def test_backend_projector_recovers_shifted_placeholder_and_updates_sign(page):
           '0': {input: [2, 1], output: [1, 2]}
         })"""
     )
-    assert page.evaluate("() => model.get('blocks')[0].source") == r"= \frac{9}{16}R"
+    assert page.evaluate("() => model.get('blocks')[0].source") == source
 
     page.evaluate(
         """() => childModel.set('port_orders', {
@@ -400,6 +506,93 @@ def test_backend_projector_recovers_shifted_placeholder_and_updates_sign(page):
         })"""
     )
     assert page.evaluate("() => model.get('blocks')[0].source") == source
+
+
+@pytest.mark.parametrize("node", [1, 3])
+@pytest.mark.parametrize("side", ["input", "output"])
+def test_dragging_backend_product_antisymmetriser_inserts_unity_sign(
+    page, node, side
+):
+    from birdtracks import Antisymmetriser, Projector, Symmetriser
+    from birdtracks.projectors.widget import projector_widget
+
+    child = projector_widget(
+        Projector(
+            [
+                Symmetriser((1, 2, 3)),
+                Antisymmetriser((3, 4)),
+                Symmetriser((1, 2, 3)),
+                Antisymmetriser((3, 4)),
+                Symmetriser((1, 2, 3)),
+            ]
+        ),
+        embedded=True,
+    )
+    connect_editor_model(page, child, generated=True)
+    state = {
+        key: value
+        for key, value in child.get_state().items()
+        if not key.startswith("_")
+    }
+    source = base64.b64encode(
+        (STATIC / "projector-widget.js").read_bytes()
+    ).decode()
+    page.add_style_tag(content=(STATIC / "projector-widget.css").read_text())
+    page.evaluate(
+        """async ({state, source}) => {
+          cleanup();
+          for (const [key, value] of Object.entries(state)) childModel.set(key, value);
+          childModel.model_id = 'backend-product';
+          const projector = await import('data:text/javascript;base64,' + source);
+          model.set('blocks', [{
+            id: 'result', source: '= R', read_only: true,
+            calculation_step: 1, calculation_group: 'product',
+            backend_terms: [{
+              id: 'result:backend:0', start: 2, end: 3, prefactor_owned: true,
+            }],
+          }]);
+          model.set('embedded_projector_ids', []);
+          model.set('embedded_projectors', []);
+          model.set('backend_projector_ids', ['result:backend:0']);
+          model.set('backend_projectors', ['child-1']);
+          window.cleanup = module.default.render({
+            model, el: document.querySelector('#widget'), signal: null,
+            host: {
+              getModel: async () => childModel,
+              getWidget: async () => ({render: ({el}) =>
+                projector.default.render({model: childModel, el})}),
+            },
+          });
+        }""",
+        {"state": state, "source": source},
+    )
+    first = page.locator(f'[aria-label^="{side}:{node}:3;"]')
+    second = page.locator(f'[aria-label^="{side}:{node}:4;"]')
+    playwright.expect(first).to_be_visible()
+    first_box = first.bounding_box()
+    second_box = second.bounding_box()
+
+    page.mouse.move(
+        first_box["x"] + first_box["width"] / 2,
+        first_box["y"] + first_box["height"] / 2,
+    )
+    page.mouse.down()
+    page.mouse.move(
+        second_box["x"] + second_box["width"] / 2,
+        second_box["y"] + second_box["height"],
+        steps=5,
+    )
+    page.mouse.up()
+
+    page.wait_for_function("childModel.get('editor_state').revision===1")
+    assert page.evaluate("() => model.get('blocks')[0].source").replace(' ', '') == "=-R"
+    assert page.evaluate(
+        "([node, side]) => childModel.get('port_orders')[node][side]",
+        [str(node), side],
+    ) == [4, 3]
+    assert page.evaluate("() => childModel.get('prefactor_owned')") is True
+    rendered = page.locator('[data-block-id="result"] .birdtracks-whiteboard-rendered')
+    assert "−" in rendered.text_content() or "-" in rendered.text_content()
 
 
 def test_whiteboard_paintbrush_palette_keeps_five_recent_colors(page):
@@ -817,6 +1010,81 @@ def test_embedded_pair_marker_mounts_an_inline_pair_anchor(page):
     rendered = page.locator('[data-block-id="text-1"] .birdtracks-whiteboard-rendered')
     assert "2_4" not in (rendered.text_content() or "")
     assert page.evaluate("() => model.get('blocks')[0].source") == r"2_4\pair"
+
+
+@pytest.mark.parametrize('prefactor', ['', '2', '1_3'])
+def test_pair_definition_prefix_survives_inline_prefactor_projection(page, prefactor):
+    source = r'B\def ' + prefactor + r'\pair'
+    page.evaluate("""source => {
+      model.set('embedded_projector_ids', []); model.set('embedded_projectors', []);
+      model.set('embedded_pair_ids', ['text-1:pair:0']); model.set('embedded_pairs', ['child-1']);
+      model.set('blocks', [{id:'text-1', source}]);
+    }""", source)
+    rendered = page.locator('[data-block-id="text-1"] .birdtracks-whiteboard-rendered')
+    assert rendered.locator('mi').all_text_contents() == ['B']
+    assert rendered.locator('.birdtracks-whiteboard-definition-operator').text_content() == '≔'
+    assert rendered.locator('mn').count() == 0
+    assert page.evaluate("model.get('blocks')[0].source") == source
+
+
+def test_prefactored_pairs_keep_the_definition_and_direct_sum_between_them(page):
+    source = r'B\def 1_2\pair\oplus1_2\pair'
+    page.evaluate("""source => {
+      model.set('embedded_projector_ids', []); model.set('embedded_projectors', []);
+      model.set('embedded_pair_ids', ['text-1:pair:0','text-1:pair:1']);
+      model.set('embedded_pairs', ['child-1','child-2']);
+      model.set('blocks', [{id:'text-1',source}]);
+    }""", source)
+    rendered = page.locator('[data-block-id="text-1"] .birdtracks-whiteboard-rendered')
+    assert rendered.locator('mi').all_text_contents() == ['B']
+    assert rendered.locator('.birdtracks-whiteboard-definition-operator').count() == 1
+    assert rendered.locator('.birdtracks-whiteboard-pair-operator').count() == 1
+    assert rendered.locator('.birdtracks-whiteboard-embedded-pair').count() == 2
+    assert rendered.locator('mn').count() == 0
+    assert page.evaluate("model.get('blocks')[0].source") == source
+
+
+def test_colour_acknowledgement_keeps_focus_on_the_painted_result(page):
+    blocks = [{'id':'original', 'source':'x', 'read_only':True, 'calculation_group':'g'}]
+    blocks += [{'id':f'result-{i}', 'source':'= R', 'read_only':True,
+        'calculation_group':'g', 'calculation_step':i} for i in range(1, 41)]
+    page.evaluate('blocks => model.set("blocks",blocks)', blocks)
+    painted = page.locator('[data-block-id="result-1"] .birdtracks-whiteboard-rendered')
+    painted.focus()
+    before = page.evaluate('window.scrollY')
+    page.evaluate("""() => {
+      const blocks=structuredClone(model.get('blocks'));
+      blocks[1].backend_line_colors={'result-1:backend:0': {'strand:1':'#ff0000'}};
+      model.set('blocks', blocks);
+    }""")
+    page.wait_for_timeout(50)
+    assert page.evaluate("document.activeElement.closest('[data-block-id]').dataset.blockId") == 'result-1'
+    assert page.evaluate('window.scrollY') == pytest.approx(before, abs=1)
+
+
+def test_late_canvas_mount_after_colour_ack_does_not_reveal_an_old_result(page):
+    blocks = [{'id':f'line-{i}', 'source':'= 1', 'read_only':True,
+        'calculation_group':'g', 'calculation_step':i} for i in range(1, 41)]
+    page.evaluate("""blocks => {
+      model.set('embedded_projector_ids', ['late-result:projector:0']);
+      model.set('embedded_projectors', []); model.set('blocks',blocks);
+    }""", blocks)
+    page.locator('[data-block-id="line-1"] .birdtracks-whiteboard-rendered').focus()
+    page.keyboard.press('Shift+Enter')
+    result = {'id':'late-result', 'source':r'= \birdtracks', 'read_only':True,
+              'calculation_group':'g', 'calculation_step':41}
+    page.evaluate('blocks => model.set("blocks",blocks)', blocks + [result])
+    page.wait_for_timeout(50)
+    page.evaluate('window.scrollTo(0,0)')
+    page.wait_for_timeout(50)
+    page.evaluate("""() => {
+      const blocks=structuredClone(model.get('blocks'));
+      blocks[0].line_colors={'strand:1':'#ff0000'};
+      model.set('blocks',blocks);
+      model.set('embedded_projectors',['child-1']);
+    }""")
+    page.wait_for_timeout(50)
+    assert page.evaluate('window.scrollY') == pytest.approx(0, abs=1)
 
 
 def test_recreated_last_pair_remains_content_sized(page):
@@ -2468,6 +2736,7 @@ def test_two_line_tear_sends_the_double_click_request(page, kind, edge, size):
 
     operator = Symmetriser if kind == 'symmetriser' else Antisymmetriser
     child = projector_widget(Projector([operator(tuple(range(1, size + 1)))]), embedded=True)
+    connect_editor_model(page, child)
     state = {key: value for key, value in child.get_state().items() if not key.startswith('_')}
     source = base64.b64encode((STATIC / 'projector-widget.js').read_bytes()).decode()
     page.add_style_tag(content=(STATIC / 'projector-widget.css').read_text())
@@ -2481,8 +2750,11 @@ def test_two_line_tear_sends_the_double_click_request(page, kind, edge, size):
       window.cleanup = projector.default.render({model: childModel, el: host});
     }''', {'state': state, 'source': source})
     page.get_by_role('button', name=f'Recursively expand from the {edge} line').dispatch_event('pointerdown')
+    page.wait_for_function("childModel.get('expand_node_request').revision>0")
+    revision = page.evaluate("childModel.get('expand_node_request').revision")
     tear = page.evaluate("({...childModel.get('expand_node_request'), revision: 0})")
     page.locator(f'.birdtracks-{kind}').first.dblclick()
+    page.wait_for_function("revision=>childModel.get('expand_node_request').revision>revision", arg=revision)
     full = page.evaluate("({...childModel.get('expand_node_request'), revision: 0})")
     if size == 2:
         assert tear == full

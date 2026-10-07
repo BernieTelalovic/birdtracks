@@ -54,7 +54,9 @@ creates a new document, and **×** closes the selected document.
 
 Start a line with `&` to continue the preceding logical line. Define a named
 expression with either `A := expression` or `A \\def expression`. Later lines
-can use that name. Adjacent projector names are ordered products. Parentheses,
+can use that name. Adjacent projector names are ordered products. `A \\otimes B`
+places projector A above B in a new projector and freshly numbers its boundary
+lines with A's lines first. Parentheses,
 square brackets, and braces group calculations. `\\tr A` traces the next term;
 `\\tr(A + B)` traces the grouped expression.
 
@@ -69,8 +71,8 @@ as one symbol. Mouse gestures inside an object continue to edit that object.
 - `\\pair` inserts an editable Young-diagram pair. A prefactor can be attached,
   for example `2_4\\pair`.
 - `\\def` renders the definition operator; `:=` is equivalent.
-- `\\oplus` and `\\otimes` are direct sum and ordered tensor product for pair
-  expressions.
+- `\\oplus` is direct sum for pair expressions. `\\otimes` is ordered tensor
+  product for both pair and projector expressions.
 - `\\tr` is the trace operator.
 - `\\frac{numerator}{denominator}` and `\\sqrt{value}` create a fraction and
   square root.

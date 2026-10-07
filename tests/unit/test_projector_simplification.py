@@ -17,6 +17,7 @@ from birdtracks import (
     expand_node,
     permute_node_ports,
     recursive_expand_node,
+    remove_automatically_vanishing_terms,
     remove_multiply_connected_s_a_terms,
     simplify_step,
 )
@@ -509,6 +510,24 @@ def test_vanishing_terms_are_removed_from_a_projector_sum() -> None:
     surviving = Projector([Symmetriser((1, 3))])
 
     assert remove_multiply_connected_s_a_terms(
+        ProjectorSum((vanishing, surviving))
+    ) == ProjectorSum((surviving,))
+
+
+def test_automatic_zero_cleanup_removes_mismatched_young_layers() -> None:
+    vanishing = Projector(
+        [
+            Symmetriser((1, 2, 3)),
+            Antisymmetriser((1, 4)),
+            Symmetriser((1, 2)),
+            Symmetriser((3, 4)),
+            Antisymmetriser((1, 3)),
+            Antisymmetriser((2, 4)),
+        ]
+    )
+    surviving = Projector([Symmetriser((1, 3))])
+
+    assert remove_automatically_vanishing_terms(
         ProjectorSum((vanishing, surviving))
     ) == ProjectorSum((surviving,))
 

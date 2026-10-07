@@ -40,6 +40,7 @@ from .pair_calculation import (
 )
 from .projector_backend import projector_backend
 from .projector_codec import projector_codec
+from .result_projection import result_source as _result_source, projector_terms_source
 from .sidecar import (
     TypedWhiteboardSidecar,
     WhiteboardSidecar,
@@ -158,43 +159,6 @@ def _expanded_line_colors(
                                for side, endpoint in anchors):
                 result[key(descendant, child)] = color
     return result
-
-
-def _result_source(value: ProjectorSum | SymbolicProjectorSum) -> tuple[str, list[dict[str, object]]]:
-    """Typeset exact results through the ordinary whiteboard renderer."""
-    from ..layout import _crossing_reduced_port_orders
-
-    source = "= "
-    terms: list[dict[str, object]] = []
-    if isinstance(value, SymbolicProjectorSum):
-        for index, (projector, coefficient) in enumerate(value.terms):
-            _, presentation_sign = _crossing_reduced_port_orders(projector)
-            displayed = coefficient * projector.coefficient * presentation_sign
-            if index:
-                source += " + "
-            source += displayed.latex_factor()
-            if projector.nodes:
-                start = len(source)
-                source += "R"
-                terms.append({"start": start, "end": len(source),
-                              "value": projector_codec.encode(projector)})
-        return source if value.terms else "= 0", terms
-    for index, (projector, coefficient) in enumerate(value.items()):
-        term = projector * coefficient
-        _, presentation_sign = _crossing_reduced_port_orders(term)
-        number = term.coefficient * presentation_sign
-        source += "- " if number < 0 else "+ " if index else ""
-        magnitude = abs(number)
-        if magnitude != 1 or not term.nodes:
-            source += (str(magnitude.numerator) if magnitude.denominator == 1
-                       else rf"\frac{{{magnitude.numerator}}}{{{magnitude.denominator}}}")
-        if term.nodes:
-            start = len(source)
-            source += "R"
-            terms.append({"start": start, "end": len(source),
-                          "value": projector_codec.encode(term)})
-        source += " "
-    return source.rstrip() if value.terms else "= 0", terms
 
 
 def _projector_color_candidates(
@@ -500,6 +464,7 @@ def whiteboard(
     projector_color_listeners: dict[str, object] = {}
     pair_listeners: dict[str, object] = {}
     backend_projector_listeners: dict[str, object] = {}
+    backend_editor_listeners: dict[str, object] = {}
     backend_color_listeners: dict[str, object] = {}
     pair_style_listeners: dict[str, object] = {}
 
@@ -554,11 +519,11 @@ def whiteboard(
         next_value = ProjectorSum(next_terms)
         from ..simplification import (
             collect_fully_expanded_permutations,
-            remove_multiply_connected_s_a_terms,
+            remove_automatically_vanishing_terms,
         )
 
         next_value = collect_fully_expanded_permutations(
-            remove_multiply_connected_s_a_terms(next_value)
+            remove_automatically_vanishing_terms(next_value)
         )
 
         parent_colors = selected.get("backend_line_colors", {})
@@ -612,6 +577,49 @@ def whiteboard(
         updated = list(blocks)
         updated.insert(max(group_indexes) + 1, generated)
         widget.blocks = updated
+
+    def publish_backend_line(block_id: str) -> None:
+        """Project accepted editor occurrences and text as one document update."""
+        updated = []
+        for block in widget.blocks:
+            if block.get("id") != block_id:
+                updated.append(block)
+                continue
+            if "calculation_terms" not in block:
+                presentations = deepcopy(block.get("backend_presentations", {}))
+                prefix = f"{block_id}:backend:"
+                for key, editor in backend_embedded.items():
+                    if key.startswith(prefix) and getattr(editor, "_editor_session", None) is not None:
+                        presentations[key[len(prefix):]] = editor.configuration.state()
+                updated.append({**block, "backend_presentations": presentations})
+                continue
+            aggregate = projector_codec.decode(block["calculation_value"]) if "calculation_value" in block else None
+            occurrences = []
+            presentations = deepcopy(block.get("backend_presentations", {}))
+            for index, item in enumerate(block["calculation_terms"]):
+                editor = backend_embedded.get(f"{block_id}:backend:{index}")
+                if editor is not None and getattr(editor, "_editor_session", None) is not None:
+                    occurrences.append(editor.projector)
+                    presentations[str(index)] = editor.configuration.state()
+                else:
+                    occurrences.append(projector_codec.decode(item["value"]))
+            # Scalar-only terms do not have an embedded editor occurrence.
+            if isinstance(aggregate, ProjectorSum):
+                occurrences.extend(p * c for p, c in aggregate.items() if not p.nodes)
+                source, terms = projector_terms_source(occurrences)
+            elif all("outer_factor" in item for item in block["calculation_terms"]):
+                from .result_projection import project_symbolic_occurrences
+
+                source, terms = project_symbolic_occurrences(occurrences, block["calculation_terms"])
+            else:
+                # Historical symbolic rows lack an encoded outer factor. Keep
+                # their source and value rather than infer algebra from text.
+                updated.append({**block, "backend_presentations": presentations})
+                continue
+            updated.append({**block, "source": source, "calculation_terms": terms,
+                            "backend_presentations": presentations})
+        if updated != widget.blocks:
+            widget.blocks = updated
 
     def sync_backend_calculation(
         change: dict[str, object] | None = None,
@@ -724,6 +732,9 @@ def whiteboard(
             listener = backend_projector_listeners.pop(key, None)
             if listener is not None:
                 editor.unobserve(listener, names="expand_node_request")
+            listener = backend_editor_listeners.pop(key, None)
+            if listener is not None:
+                editor.unobserve(listener, names="editor_state")
             color_listener = backend_color_listeners.pop(key, None)
             if color_listener is not None:
                 editor.unobserve(color_listener, names="line_colors")
@@ -746,36 +757,33 @@ def whiteboard(
                 discard_backend_editor(key)
             if key not in backend_embedded:
                 from ..widget import projector_widget
+                from ..configuration import ProjectorConfiguration
+
+                stored_presentations = (source_block.get("backend_presentations", {})
+                                        if isinstance(source_block, dict) else {})
+                presentation = stored_presentations.get(str(index))
+                configuration = None
+                if isinstance(presentation, dict):
+                    accepted = presentation.get("graph", {}).get("editor_value")
+                    if accepted is not None and projector_codec.decode(accepted) == term.value:
+                        configuration = ProjectorConfiguration.from_state(term.value, presentation)
 
                 editor = projector_widget(
                     term.value,
+                    configuration=configuration,
                     mode="evaluate",
                     embedded=True,
                     debug=debug,
                 )
                 editor.widget_role = "embedded"
                 backend_embedded[key] = editor
-                stored_presentations = (
-                    source_block.get("backend_presentations", {})
-                    if isinstance(source_block, dict)
-                    and isinstance(source_block.get("backend_presentations"), dict)
-                    else {}
-                )
-                presentation = stored_presentations.get(str(index))
-                if (
-                    isinstance(presentation, dict)
-                    and presentation.get("graph") == editor.graph
-                ):
-                    for field in (
-                        "positions",
-                        "free_levels",
-                        "port_orders",
-                        "boundary_orders",
-                        "effective_coefficient",
-                    ):
-                        value = presentation.get(field)
-                        if isinstance(value, dict):
-                            setattr(editor, field, deepcopy(value))
+                if getattr(editor, "_editor_session", None) is not None:
+                    def on_editor_state(change, *, block_id=term.block_id):
+                        if change["new"]:
+                            publish_backend_line(block_id)
+
+                    editor.observe(on_editor_state, names="editor_state")
+                    backend_editor_listeners[key] = on_editor_state
 
                 def on_backend_expand(
                     change: dict[str, object],
@@ -807,10 +815,17 @@ def whiteboard(
                     *,
                     key: str = key,
                     block_id: str = term.block_id,
+                    editor=editor,
                 ) -> None:
                     colors = change.get("new")
                     if not isinstance(colors, dict):
                         return
+                    session = getattr(editor, "_editor_session", None)
+                    if session is not None and session.state.presentation.get("line_colors") != colors:
+                        presentation = session.state.presentation
+                        presentation["line_colors"] = deepcopy(colors)
+                        session.presentation_checkpoint(presentation, base_revision=session.state.revision)
+                        editor._publish_editor()
                     updated = []
                     changed = False
                     for block in widget.blocks:
@@ -846,6 +861,9 @@ def whiteboard(
                 "id": key,
                 "start": term.start,
                 "end": term.end,
+                **({"factor_preview": source_block["calculation_terms"][index]["factor_preview"]}
+                   if isinstance(source_block, dict) and index < len(source_block.get("calculation_terms", []))
+                   and "factor_preview" in source_block["calculation_terms"][index] else {}),
                 "prefactor_owned": any(
                     block.get("id") == term.block_id and "calculation_step" in block
                     for block in widget.blocks
@@ -895,7 +913,14 @@ def whiteboard(
 
         def on_saved(change: dict[str, object]) -> None:
             del change
-            snapshot = getattr(editor, "save_snapshot", None)
+            if embedded.get(projector_id) is not editor:
+                return
+            if getattr(editor, "_editor_session", None) is None:
+                editor._whiteboard_source_value = editor.projector
+            snapshot = (editor.configuration.state() if getattr(editor, "_editor_session", None) is not None
+                        else getattr(editor, "save_snapshot", None) or editor.configuration.state())
+            if isinstance(snapshot, dict) and snapshot and hasattr(editor, "_whiteboard_source_value"):
+                snapshot["source_value"] = projector_codec.encode(editor._whiteboard_source_value)
             if isinstance(snapshot, dict) and snapshot:
                 block_id, occurrence = projector_id.split(":projector:", 1)
                 updated = []
@@ -917,7 +942,46 @@ def whiteboard(
         projector_listeners[projector_id] = on_saved
         editor.observe(on_saved, names="saved_revision")
 
+        stored = editor.configuration.state().get("source_value")
+        if not hasattr(editor, "_whiteboard_source_value"):
+            editor._whiteboard_source_value = (projector_codec.decode(stored) if stored else editor.projector)
+
+        def on_committed(change):
+            if embedded.get(projector_id) is not editor or not change["new"] or not change["old"]:
+                return
+            from .result_projection import project_inline_occurrence
+
+            old = change["old"]["graph"]["coefficient"]
+            previous = Fraction(int(old["numerator"]), int(old["denominator"]))
+            current = editor.projector
+            block_id, occurrence = projector_id.split(":projector:", 1)
+            updated = []
+            for block in widget.blocks:
+                copy = deepcopy(block)
+                if str(block.get("id") or "") == block_id:
+                    source = str(block.get("source") or "")
+                    markers = list(_PROJECTOR_MARKER.finditer(source))
+                    index = int(occurrence)
+                    if index >= len(markers):
+                        return
+                    start = markers[index].start()
+                    copy["source"], editor._whiteboard_source_value = project_inline_occurrence(
+                        source, start, current, previous, editor._whiteboard_source_value,
+                    )
+                    snapshot = editor.configuration.state()
+                    snapshot["source_value"] = projector_codec.encode(editor._whiteboard_source_value)
+                    snapshots = copy.setdefault("projector_snapshots", {})
+                    snapshots[occurrence] = snapshot
+                updated.append(copy)
+            if updated != widget.blocks:
+                widget.blocks = updated
+            sync_backend_calculation()
+
+        editor.observe(on_committed, names="editor_state")
+
         def on_line_colors(change: dict[str, object]) -> None:
+            if embedded.get(projector_id) is not editor:
+                return
             colors = change.get("new")
             if not isinstance(colors, dict):
                 return
@@ -968,11 +1032,12 @@ def whiteboard(
                     )
                     mode = "evaluate" if block.get("read_only") else "create"
                     if isinstance(snapshot, dict):
-                        projector = _projector_from_state(
+                        projector = (projector_codec.decode(snapshot["graph"]["editor_value"])
+                                     if snapshot.get("graph", {}).get("editor_value") else _projector_from_state(
                             snapshot["graph"],
                             snapshot["port_orders"],
                             snapshot["boundary_orders"],
-                        )
+                        ))
                         editor = projector_widget(
                             projector,
                             configuration=ProjectorConfiguration.from_state(

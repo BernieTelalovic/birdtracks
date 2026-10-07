@@ -1,6 +1,8 @@
 # Shared port-reordering slice
 
-The existing evaluation canvas now has an opt-in Python-owned port editor.
+Evaluate-mode canvases, projector widgets, and whiteboard diagrams now use the
+same Python-owned port editor by default. See
+[the cross-interface checklist](editor-port-migration.md) for this migration.
 Use the repository venv. Its notebook/app extras provide anywidget and Voilà.
 
 ## Launch
@@ -76,18 +78,21 @@ canvas's compatibility traits and configuration expose that accepted state.
 
 ## Scope and compatibility
 
-Whiteboard source rewriting, parsed-source commits, symbolic UI coefficients,
+Ordinary source editing, parsed-source commits, symbolic UI coefficients,
 structural reconnection/replacement/expansion, and branch/merge provenance are
 later slices. Create mode releases this shared evaluation session and continues
 with existing creation behavior; entering evaluation on the opted-in canvas
 creates a new shared session. Prefactor editing uses Create mode in this slice.
-Default canvases/whiteboards keep their previous protocol.
+Default canvases keep their previous protocol. Generated rational whiteboard
+result terms now use the shared editor; Python projects their exact occurrences
+and written coefficients in one document update. Their IDs and undo stacks
+persist in backend presentations.
 
-Old document readers remain available with their existing sign interpretation;
-graph-only legacy snapshots do not contain enough information for universally
-lossless sign recovery. New shared snapshots encode the exact Projector and
-editor state. No algebra convention, required dependency, compiled backend, or
-interactive full-collapse fallback was added.
+Legacy orientation compensation and `port_swap_sign` metadata have been removed.
+Old graph-only whiteboards should be regenerated; there is no compatibility
+fallback. New shared snapshots encode the exact Projector and editor state.
+No required dependency, compiled backend, or interactive full-collapse fallback
+was added.
 
 The six architecture-review concerns applicable to this slice are addressed by
 exact persistence, protocol isolation, representation-sensitive history, explicit
@@ -95,7 +100,7 @@ factor ownership, fixed-topology stable IDs, and a port path without collapse.
 Structural lineage and symbolic whiteboard persistence remain explicit later
 requirements; see [ADR 0004](adr/0004-shared-editor-port-slice.md).
 
-## Verification results
+## Initial-slice verification
 
 The final staged slice was exported to an isolated tree, imported from that
 tree, and tested with the repository venv using `python -m pytest -q -r fEs`:
@@ -114,3 +119,19 @@ The final five-browser-test run passed after the remount fix.
 A live Voilà page, using the real anywidget/kernel transport and shipped
 frontend, additionally passed input dragging, coefficient rendering, keyboard
 undo, and redo with no browser errors. The demo server was stopped after testing.
+
+## Result-line follow-up verification
+
+The follow-up adds 31 focused cases, using synthetic diagrams rather than the
+author's example file. They cover topology-derived columns and complete routing
+interfaces, contextual top/bottom recursion, explicit odd/odd and odd/even
+orientations, correct new-line coefficient/diagram projection, product/sum
+occurrences, persisted IDs/placement/undo, unary versus binary signs, and queued
+saves surviving remounts before or after acknowledgement. Real browser controls
+are connected to Python for the recursive-expansion checks. Port-command tests
+also reject any interactive call to collapse.
+
+Final full configured run: `python -m pytest -q -r fEs` — 967 passed, 1 failed,
+8 skipped. The sole failure remains the pre-existing untracked stress-fixture
+assertion named above. The skips remain three unbuilt optional Cython checks and
+five missing optional Torch checks. There is no configured lint/type-check suite.

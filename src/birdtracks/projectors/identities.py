@@ -26,6 +26,10 @@ class AlgebraicIdentity:
     def apply(self, projector: Projector) -> ProjectorSum | None:
         if not isinstance(projector, Projector):
             raise TypeError("an algebraic identity expects a Projector")
+        from birdtracks.settings import simplification_rule_enabled
+
+        if not simplification_rule_enabled(self.name):
+            return None
         return self.rewrite(projector)
 
 
@@ -68,6 +72,197 @@ def _annihilate_multiply_connected_s_a(
                 )
                 current = next_port.get(output)
     return None
+
+
+def _annihilate_mismatched_young_layers(
+    projector: Projector,
+) -> ProjectorSum | None:
+    """Annihilate enclosed Young layer pairs of different shapes.
+
+    A layer pair consists of one all-S and one all-A layer.  Its domain is the
+    union of the lines occurring in the two layers; lines absent from either
+    layer are its one-box rows or columns.  Equal-size distinct shapes are
+    orthogonal.  With nested domains of unequal size, they are orthogonal
+    unless the smaller shape is an ancestor of the larger shape.  The rule is
+    deliberately conservative: every S/A lying between the four matched
+    layers must act wholly inside the larger domain or on a disjoint tensor
+    factor, and every permutation must preserve the domain as a set.  An
+    operator which carries a strand across the Young-domain boundary blocks
+    the rewrite.
+    """
+    layer_of = {
+        node_index: layer_index
+        for layer_index, layer in enumerate(projector.layers)
+        for node_index in layer
+    }
+
+    pairs: list[tuple[frozenset[int], tuple[int, ...], frozenset[int]]] = []
+    layers = tuple(
+        tuple(projector.nodes[index] for index in layer)
+        for layer in projector.layers
+    )
+    for left_index, left_nodes in enumerate(layers):
+        for right_index, right_nodes in enumerate(
+            layers[left_index + 1 :], left_index + 1
+        ):
+            orientations = (
+                (
+                    tuple(
+                        node.support
+                        for node in left_nodes
+                        if isinstance(node, Symmetriser)
+                    ),
+                    tuple(
+                        node.support
+                        for node in right_nodes
+                        if isinstance(node, Antisymmetriser)
+                    ),
+                ),
+                (
+                    tuple(
+                        node.support
+                        for node in right_nodes
+                        if isinstance(node, Symmetriser)
+                    ),
+                    tuple(
+                        node.support
+                        for node in left_nodes
+                        if isinstance(node, Antisymmetriser)
+                    ),
+                ),
+            )
+            for s_blocks, a_blocks in orientations:
+                for component_s, component_a in _overlap_components(
+                    s_blocks, a_blocks
+                ):
+                    domain = frozenset().union(*component_s, *component_a)
+                    rows = _partition_with_singletons(component_s, domain)
+                    columns = _partition_with_singletons(component_a, domain)
+                    if columns == _conjugate_partition(rows):
+                        pairs.append(
+                            (
+                                frozenset((left_index, right_index)),
+                                rows,
+                                domain,
+                            )
+                        )
+
+    for position, (first_layers, first_shape, domain) in enumerate(pairs):
+        for second_layers, second_shape, second_domain in pairs[position + 1 :]:
+            if first_layers & second_layers:
+                continue
+            first_interval = (min(first_layers), max(first_layers))
+            second_interval = (min(second_layers), max(second_layers))
+            if not (
+                first_interval[1] < second_interval[0]
+                or second_interval[1] < first_interval[0]
+            ):
+                continue
+            if domain <= second_domain:
+                smaller_shape, larger_shape = first_shape, second_shape
+                larger_domain = second_domain
+            elif second_domain <= domain:
+                smaller_shape, larger_shape = second_shape, first_shape
+                larger_domain = domain
+            else:
+                continue
+            if _is_young_ancestor(smaller_shape, larger_shape):
+                continue
+            outer_left = min(first_layers | second_layers)
+            outer_right = max(first_layers | second_layers)
+            if all(
+                _preserves_young_domain(node, larger_domain)
+                for node_index, node in enumerate(projector.nodes)
+                if outer_left <= layer_of[node_index] <= outer_right
+            ):
+                return ProjectorSum()
+    return None
+
+
+def _preserves_young_domain(
+    node: Symmetriser | Antisymmetriser | PermutationNode,
+    domain: frozenset[int],
+) -> bool:
+    """Return whether an operator keeps a Young domain tensor-separated."""
+    if isinstance(node, PermutationNode):
+        return all(
+            (label in domain) == (node.permutation(label) in domain)
+            for label in node.support
+        )
+    return node.support <= domain or node.support.isdisjoint(domain)
+
+
+def _overlap_components(
+    s_blocks: tuple[frozenset[int], ...],
+    a_blocks: tuple[frozenset[int], ...],
+) -> tuple[
+    tuple[tuple[frozenset[int], ...], tuple[frozenset[int], ...]], ...
+]:
+    """Split tensor-product S/A layers into support-overlap components."""
+    remaining = {("s", index) for index in range(len(s_blocks))}
+    remaining.update(("a", index) for index in range(len(a_blocks)))
+    components = []
+    while remaining:
+        pending = [remaining.pop()]
+        component: set[tuple[str, int]] = set()
+        while pending:
+            kind, index = pending.pop()
+            component.add((kind, index))
+            support = s_blocks[index] if kind == "s" else a_blocks[index]
+            opposite = "a" if kind == "s" else "s"
+            opposite_blocks = a_blocks if kind == "s" else s_blocks
+            neighbours = {
+                (opposite, other_index)
+                for other_index, other in enumerate(opposite_blocks)
+                if support & other and (opposite, other_index) in remaining
+            }
+            remaining.difference_update(neighbours)
+            pending.extend(neighbours)
+        component_s = tuple(
+            s_blocks[index]
+            for kind, index in sorted(component)
+            if kind == "s"
+        )
+        component_a = tuple(
+            a_blocks[index]
+            for kind, index in sorted(component)
+            if kind == "a"
+        )
+        if component_s and component_a:
+            components.append((component_s, component_a))
+    return tuple(components)
+
+
+def _partition_with_singletons(
+    blocks: tuple[frozenset[int], ...], domain: frozenset[int]
+) -> tuple[int, ...]:
+    covered = frozenset().union(*blocks)
+    return tuple(
+        sorted(
+            tuple(len(block) for block in blocks) + (1,) * len(domain - covered),
+            reverse=True,
+        )
+    )
+
+
+def _conjugate_partition(partition: tuple[int, ...]) -> tuple[int, ...]:
+    return (
+        tuple(
+            sum(length >= column for length in partition)
+            for column in range(1, partition[0] + 1)
+        )
+        if partition
+        else ()
+    )
+
+
+def _is_young_ancestor(
+    smaller: tuple[int, ...], larger: tuple[int, ...]
+) -> bool:
+    """Return whether ``larger`` is obtained by adding Young-diagram boxes."""
+    return len(smaller) <= len(larger) and all(
+        row <= larger[index] for index, row in enumerate(smaller)
+    )
 
 
 def _absorb_nested_same_type_operator(
@@ -306,6 +501,11 @@ MULTIPLY_CONNECTED_S_A_ANNIHILATION = AlgebraicIdentity(
     _annihilate_multiply_connected_s_a,
     automatic=True,
 )
+MISMATCHED_YOUNG_LAYERS_ANNIHILATION = AlgebraicIdentity(
+    "mismatched_young_layers_annihilation",
+    _annihilate_mismatched_young_layers,
+    automatic=True,
+)
 SAME_TYPE_NESTED_ABSORPTION = AlgebraicIdentity(
     "same_type_nested_absorption",
     _absorb_nested_same_type_operator,
@@ -345,6 +545,7 @@ IDENTITIES = MappingProxyType(
         identity.name: identity
         for identity in (
             MULTIPLY_CONNECTED_S_A_ANNIHILATION,
+            MISMATCHED_YOUNG_LAYERS_ANNIHILATION,
             SAME_TYPE_NESTED_ABSORPTION,
             SYMMETRISER_RECURSION,
             ANTISYMMETRISER_RECURSION,
@@ -362,6 +563,7 @@ __all__ = [
     "ANTISYMMETRISER_RECURSION",
     "IDENTITIES",
     "MULTIPLY_CONNECTED_S_A_ANNIHILATION",
+    "MISMATCHED_YOUNG_LAYERS_ANNIHILATION",
     "PERMUTATION_LEFT_ANTISYMMETRISER_ABSORPTION",
     "PERMUTATION_LEFT_SYMMETRISER_ABSORPTION",
     "PERMUTATION_RIGHT_ANTISYMMETRISER_ABSORPTION",

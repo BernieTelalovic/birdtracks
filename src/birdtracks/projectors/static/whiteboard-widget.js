@@ -452,6 +452,13 @@ function numericPrefactorBefore(source, markerStart) {
   };
 }
 
+function sourceOwnsProjectorPrefactor(source, markerStart) {
+  if (numericPrefactorBefore(source, markerStart)) return true;
+  let end = markerStart;
+  while (end > 0 && /\s/.test(source[end - 1])) end -= 1;
+  return end > 0 && (source[end - 1] === "+" || source[end - 1] === "-");
+}
+
 export function flipNumericPrefactor(source, markerStart) {
   const prefactor = numericPrefactorBefore(source, markerStart);
   if (!prefactor) return null;
@@ -462,9 +469,10 @@ export function flipNumericPrefactor(source, markerStart) {
   const flippedSign = -(unarySign * operatorSign);
   const magnitudeStart = prefactor.start + (prefactor.sign ? 1 : 0);
   if (operator?.index !== undefined) {
+    const prefix = source.slice(0, operator.index);
+    const unary = !prefix.trimEnd() || /(?:[=({\[]|\\(?:def|oplus|otimes))$/.test(prefix.trimEnd());
     return source.slice(0, operator.index)
-      + (flippedSign < 0 ? "-" : "+")
-      + operator[2]
+      + (flippedSign < 0 ? "-" + operator[2] : unary ? "" : "+" + operator[2])
       + source.slice(magnitudeStart);
   }
   return source.slice(0, prefactor.start)
@@ -492,31 +500,6 @@ export function flipProjectorTermSign(source, markerStart) {
     + source.slice(signIndex + 1);
 }
 
-function permutationIsOdd(order, initial) {
-  const rank = new Map(initial.map((label, index) => [label, index]));
-  const values = order.map((label) => rank.get(label));
-  let inversions = 0;
-  for (let left = 0; left < values.length; left += 1) {
-    for (let right = left + 1; right < values.length; right += 1) {
-      if (values[left] > values[right]) inversions += 1;
-    }
-  }
-  return inversions % 2 === 1;
-}
-
-export function projectorOrientationSign(graph, portOrders) {
-  let sign = 1;
-  for (const node of graph?.nodes || []) {
-    if (node.kind !== "antisymmetriser") continue;
-    const orders = portOrders?.[String(node.index)] || {};
-    for (const [side, initialKey] of [["input", "input_labels"], ["output", "output_labels"]]) {
-      const initial = node[initialKey] || node.labels || [];
-      const order = orders[side] || initial;
-      if (permutationIsOdd(order, initial)) sign = -sign;
-    }
-  }
-  return sign;
-}
 
 function renderCommandSuggestion(source, target, sourceOffset = 0) {
   const suggestion = projectorCommandSuggestion(source);
@@ -735,7 +718,6 @@ function renderWhiteboard({ model, el, host, signal }) {
   const cancelledCalculationGroups = new Set();
   const embeddedModels = new Map();
   const embeddedAnchors = new Map();
-  const embeddedProjectorSigns = new Map();
   const root = document.createElement("section");
   root.className = "birdtracks-whiteboard-section";
   root.classList.add("paintbrush-active");
@@ -987,6 +969,19 @@ function renderWhiteboard({ model, el, host, signal }) {
   updateRecentColors();
 
   function backendPresentationSnapshot(child) {
+    const accepted = child.get("editor_state");
+    if (accepted?.version === 1) {
+      return {
+        graph: structuredClone(accepted.graph),
+        positions: structuredClone(accepted.positions),
+        free_levels: structuredClone(accepted.free_levels),
+        port_orders: structuredClone(accepted.port_orders),
+        boundary_orders: structuredClone(accepted.boundary_orders),
+        line_colors: structuredClone(accepted.line_colors),
+        effective_coefficient: structuredClone(accepted.effective_coefficient),
+        editor_state: structuredClone(accepted.editor_payload),
+      };
+    }
     return {
       graph: structuredClone(child.get("graph")),
       positions: structuredClone(child.get("positions") || {}),
@@ -996,6 +991,8 @@ function renderWhiteboard({ model, el, host, signal }) {
       effective_coefficient: structuredClone(
         child.get("effective_coefficient") || {},
       ),
+      ...(child.get("editor_state")?.version === 1
+        ? {editor_state: structuredClone(child.get("editor_state").editor_payload)} : {}),
     };
   }
 
@@ -1005,6 +1002,9 @@ function renderWhiteboard({ model, el, host, signal }) {
     };
     for (const [id, child] of embeddedModels) {
       if (id.includes(":projector:")) {
+        // Python persists committed shared occurrences atomically with source.
+        // Never merge a legacy frontend snapshot over that newer document state.
+        if (child.get("editor_state")?.version === 1) continue;
         child.set("save_command", Number(child.get("save_command") || 0) + 1);
         child.save_changes();
         const snapshot = child.get("save_snapshot");
@@ -1014,6 +1014,7 @@ function renderWhiteboard({ model, el, host, signal }) {
         if (expression) snapshots.pairs[id] = structuredClone(expression);
         snapshots.pairStyles[id] = structuredClone(child.get("pair_cell_styles") || {});
       } else if (id.includes(":backend:")) {
+        if (child.get("editor_state")?.version === 1) continue;
         snapshots.backend[id] = backendPresentationSnapshot(child);
         snapshots.backendColors[id] = structuredClone(child.get("line_colors") || {});
       }
@@ -1152,7 +1153,7 @@ function renderWhiteboard({ model, el, host, signal }) {
       item.classList.toggle("topology-editing", item === anchor);
     }
     if (anchor && root.contains(anchor)
-        && !event.target.closest("input, textarea, button")) anchor.focus();
+        && !event.target.closest("input, textarea, button")) anchor.focus({preventScroll: true});
   };
   const calculationShortcut = (event) => {
     if (!event.shiftKey || !["Enter", "Backspace"].includes(event.key)) return;
@@ -1307,7 +1308,8 @@ function renderWhiteboard({ model, el, host, signal }) {
     activeEditorId = null;
     const renderScroller = scrollingViewport(list);
     const renderScrollTop = renderScroller.scrollTop;
-    const focusedId = document.activeElement?.closest?.('.birdtracks-whiteboard-block')?.dataset.blockId;
+    const focusedElement = document.activeElement;
+    const focusedId = focusedElement?.closest?.('.birdtracks-whiteboard-block')?.dataset.blockId;
     const oldBlock = (model.get('blocks') || []).find(item => item.id === focusedId);
     const existing = new Map([...list.children].map((row) => [row.dataset.blockId, row]));
     const retainedIds = new Set(displayBlocks.map((block) => block.id));
@@ -1356,13 +1358,14 @@ function renderWhiteboard({ model, el, host, signal }) {
       }
       focusTarget = pendingTarget;
     } else if (oldBlock) {
-      const related = (model.get('blocks') || []).filter(item => oldBlock.calculation_group
-        && item.calculation_group === oldBlock.calculation_group);
-      const targetId = related.at(-1)?.id || focusedId;
-      const target = [...list.children].find(item => item.dataset.blockId === targetId);
+      // A presentation acknowledgement is not a request to select the last
+      // calculation step. Retain the focused control when its row survives.
+      const target = [...list.children].find(item => item.dataset.blockId === focusedId);
       const editor = target?.querySelector('textarea');
-      if (editor && !editor.disabled) editor.focus({preventScroll: true});
-      else target?.querySelector('.birdtracks-whiteboard-rendered')?.focus({preventScroll: true});
+      if (!focusedElement?.isConnected) {
+        if (editor && !editor.disabled) editor.focus({preventScroll: true});
+        else target?.querySelector('.birdtracks-whiteboard-rendered')?.focus({preventScroll: true});
+      }
       focusTarget = target || focusTarget;
     } else if (focusTarget) {
       const editor = focusTarget.querySelector('textarea');
@@ -1382,6 +1385,7 @@ function renderWhiteboard({ model, el, host, signal }) {
           : null;
         if (target) {
           focusTarget = target;
+          target.querySelector('.birdtracks-whiteboard-rendered')?.focus({preventScroll: true});
           completed = true;
         }
       }
@@ -1761,7 +1765,6 @@ function renderWhiteboard({ model, el, host, signal }) {
     let lastValidSource = "";
     let activeFraction = null;
     let caretNavigationDirection = 0;
-    const embeddedProjectorListeners = new Map();
     let disposed = false;
 
     rendered._birdtracksCleanupBlock = () => {
@@ -1775,18 +1778,10 @@ function renderWhiteboard({ model, el, host, signal }) {
         anchor._birdtracksCleanup = null;
         delete anchor._birdtracksProjectorReference;
       }
-      for (const [id, listener] of embeddedProjectorListeners) {
-        embeddedModels.get(id)?.off(
-          "change:port_orders change:graph change:boundary_orders", listener,
-        );
-      }
-      embeddedProjectorListeners.clear();
       for (const id of embeddedModels.keys()) {
         if (!id.startsWith(`${block.id}:`)) continue;
         embeddedModels.delete(id);
         embeddedAnchors.delete(id);
-        // Retain orientation across remounts so changes while detached are
-        // reflected in the surrounding numeric prefactor.
       }
       caretResizeObserver?.disconnect();
     };
@@ -1798,12 +1793,13 @@ function renderWhiteboard({ model, el, host, signal }) {
           if (id.startsWith(`${item.id}:projector:`)) {
             child.set("save_command", Number(child.get("save_command") || 0) + 1);
             child.save_changes();
-            const snapshot = child.get("save_snapshot");
+            const snapshot = child.get("editor_state")?.version === 1 ? null : child.get("save_snapshot");
             if (snapshot) snapshots.projectors[id] = structuredClone(snapshot);
           } else if (id.startsWith(`${item.id}:pair:`)) {
             const expression = child.get("pair_expression");
             if (expression) snapshots.pairs[id] = structuredClone(expression);
           } else if (id.startsWith(`${item.id}:backend:`)) {
+            if (child.get("editor_state")?.version === 1) continue;
             snapshots.backend[id] = backendPresentationSnapshot(child);
           }
         }
@@ -1997,7 +1993,7 @@ function renderWhiteboard({ model, el, host, signal }) {
           start: match.index,
           end: pattern.lastIndex,
           id: embeddedKey(occurrence),
-          prefactor: numericPrefactorBefore(source, match.index),
+          prefactor: sourceOwnsProjectorPrefactor(source, match.index),
           kind: "explicit",
         });
         occurrence += 1;
@@ -2046,6 +2042,7 @@ function renderWhiteboard({ model, el, host, signal }) {
             id: String(term.id),
             kind: "backend",
             prefactor: Boolean(term.prefactor_owned),
+            factorPreview: term.factor_preview,
           };
         })
         .filter((marker) => Number.isInteger(marker.start)
@@ -2083,6 +2080,11 @@ function renderWhiteboard({ model, el, host, signal }) {
     function embeddedMarkerAnchor(marker, index) {
       const projectorId = marker.id || embeddedKey(index);
       const anchor = embeddedAnchors.get(projectorId) || document.createElement("span");
+      if (!embeddedAnchors.has(projectorId)) {
+        anchor.addEventListener("birdtracks-port-preview", event => {
+          anchor._birdtracksPreviewSign?.(event.detail);
+        });
+      }
       embeddedAnchors.set(projectorId, anchor);
       anchor.classList.add("birdtracks-whiteboard-embedded-projector");
       anchor.classList.toggle(
@@ -2233,16 +2235,8 @@ function renderWhiteboard({ model, el, host, signal }) {
           anchor._birdtracksCleanup = null;
           delete anchor._birdtracksProjectorReference;
         }
-        const listener = embeddedProjectorListeners.get(id);
-        if (listener) {
-          embeddedModels.get(id)?.off(
-            "change:port_orders change:graph change:boundary_orders", listener,
-          );
-        }
         embeddedModels.delete(id);
         embeddedAnchors.delete(id);
-        embeddedProjectorListeners.delete(id);
-        embeddedProjectorSigns.delete(id);
       }
       wrapper.classList.toggle("has-embedded-projector", markers.length > 0);
       editor.style.pointerEvents = block.read_only ? "none" : "auto";
@@ -2262,8 +2256,9 @@ function renderWhiteboard({ model, el, host, signal }) {
         const implicitTensor = previousMarker?.kind === "pair"
           && marker.kind === "pair"
           && /^\s*$/.test(source.slice(previousMarker.end, visibleStart));
-        if (visibleStart > position) {
-          const prefix = document.createElement("span");
+        const prefixStart = position;
+        const prefix = document.createElement("span");
+        if (visibleStart > position || marker.kind !== "pair") {
           renderLatex(
             source.slice(position, visibleStart),
             prefix,
@@ -2280,6 +2275,26 @@ function renderWhiteboard({ model, el, host, signal }) {
           ));
         }
         const anchor = embeddedMarkerAnchor(marker, index);
+        let previewOdd = false;
+        anchor._birdtracksPreviewSign = detail => {
+          if (!marker.prefactor || marker.kind === "pair") return;
+          const odd = Boolean(detail?.odd);
+          if (odd === previewOdd) return;
+          previewOdd = odd;
+          // Replace only the text prefix, keeping the live canvas and gesture.
+          // The source, marker offsets, models, and saved blocks stay accepted.
+          const drawnSource = odd ? flipProjectorTermSign(source, marker.start) : source;
+          const originalPrefix = source.slice(prefixStart, visibleStart);
+          const drawnPrefix = marker.factorPreview
+            ? originalPrefix.slice(0, originalPrefix.length - marker.factorPreview.even.length)
+              + marker.factorPreview[odd ? "odd" : "even"]
+            : drawnSource.slice(prefixStart, visibleStart + drawnSource.length - source.length);
+          prefix.replaceChildren();
+          renderLatex(
+            drawnPrefix,
+            prefix, prefixStart, effectiveEditingIndex,
+          );
+        };
         rendered.appendChild(anchor);
         position = marker.end;
         previousMarker = marker;
@@ -2614,6 +2629,17 @@ function renderWhiteboard({ model, el, host, signal }) {
 
     async function mountEmbeddedProjectors() {
       if (disposed) return;
+      const syncPrefactorOwnership = (anchor, childModel) => {
+        const marker = sourceMarkers.find((item, markerIndex) => (
+          (item.id || embeddedKey(markerIndex)) === anchor.dataset.projectorId
+        ));
+        if (!marker || marker.kind === "pair") return;
+        const prefactorOwned = Boolean(marker.prefactor);
+        if (childModel.get("prefactor_owned") !== prefactorOwned) {
+          childModel.set("prefactor_owned", prefactorOwned);
+          childModel.save_changes();
+        }
+      };
       const ids = [
         ...(model.get("embedded_projector_ids") || []),
         ...(model.get("embedded_pair_ids") || []),
@@ -2635,18 +2661,13 @@ function renderWhiteboard({ model, el, host, signal }) {
           continue;
         }
         if (anchor._birdtracksProjectorReference === reference) {
+          const childModel = embeddedModels.get(anchor.dataset.projectorId);
+          if (childModel) syncPrefactorOwnership(anchor, childModel);
           updateEmbeddedModesForCaret();
           continue;
         }
         anchor._birdtracksCleanup?.();
         anchor._birdtracksCleanup = null;
-        const previousListener = embeddedProjectorListeners.get(anchor.dataset.projectorId);
-        if (previousListener) {
-          embeddedModels.get(anchor.dataset.projectorId)?.off(
-            "change:port_orders change:graph change:boundary_orders", previousListener,
-          );
-          embeddedProjectorListeners.delete(anchor.dataset.projectorId);
-        }
         anchor.replaceChildren();
         anchor._birdtracksProjectorReference = reference;
         try {
@@ -2705,50 +2726,7 @@ function renderWhiteboard({ model, el, host, signal }) {
             positionCaret();
             continue;
           }
-          const markerIndex = sourceMarkers.findIndex((marker, markerIndex) => (
-            (marker.id || embeddedKey(markerIndex)) === anchor.dataset.projectorId
-          ));
-          const prefactorOwned = markerIndex >= 0
-            && Boolean(sourceMarkers[markerIndex].prefactor);
-          if (childModel.get("prefactor_owned") !== prefactorOwned) {
-            childModel.set("prefactor_owned", prefactorOwned);
-            childModel.save_changes();
-          }
-          if (!embeddedProjectorListeners.has(anchor.dataset.projectorId)) {
-            const projectorId = anchor.dataset.projectorId;
-            const onProjectorChange = () => {
-              const sign = projectorOrientationSign(
-                childModel.get("graph"),
-                childModel.get("port_orders"),
-              );
-              const previous = embeddedProjectorSigns.get(projectorId);
-              embeddedProjectorSigns.set(projectorId, sign);
-              if (previous === undefined || previous === sign) return;
-              const markerIndex = sourceMarkers.findIndex((marker, index) => (
-                (marker.id || embeddedKey(index)) === projectorId
-              ));
-              const marker = markerIndex < 0 ? null : sourceMarkers[markerIndex];
-              if (!marker || marker.kind === "pair") return;
-              const nextSource = flipProjectorTermSign(editor.value, marker.start);
-              editor.value = nextSource;
-              updateSource(nextSource);
-            };
-            if (!embeddedProjectorSigns.has(projectorId)) {
-              embeddedProjectorSigns.set(
-                projectorId,
-                projectorOrientationSign(
-                  childModel.get("graph"),
-                  childModel.get("port_orders"),
-                ),
-              );
-            }
-            embeddedProjectorListeners.set(projectorId, onProjectorChange);
-            childModel.on(
-              "change:port_orders change:graph change:boundary_orders",
-              onProjectorChange,
-            );
-            onProjectorChange();
-          }
+          syncPrefactorOwnership(anchor, childModel);
           anchor.addEventListener("pointerdown", (event) => {
             event.stopPropagation();
             caretPoint = null;
@@ -2758,7 +2736,12 @@ function renderWhiteboard({ model, el, host, signal }) {
           });
           const child = await host.getWidget(reference);
           if (disposed || anchor._birdtracksProjectorReference !== reference) continue;
-          anchor._birdtracksCleanup = await child.render({ el: anchor, signal });
+          const childCleanup = await child.render({ el: anchor, signal });
+          if (disposed || anchor._birdtracksProjectorReference !== reference) {
+            if (typeof childCleanup === "function") childCleanup();
+            continue;
+          }
+          anchor._birdtracksCleanup = childCleanup;
           anchor._birdtracksMounted = true;
           updateEmbeddedModesForCaret();
           positionCaret();
@@ -2777,8 +2760,11 @@ function renderWhiteboard({ model, el, host, signal }) {
       if (pendingRevealBlockId === block.id
           && projectors.length
           && projectors.every((anchor) => anchor._birdtracksMounted)) {
-        pendingRevealScroller.scrollTop = pendingRevealScrollTop;
-        revealGeneratedBlock(pendingRevealBlockId, pendingRevealScroller);
+        // Delayed mounts must not replay a calculation scroll after the user
+        // has navigated elsewhere (including while painting another line).
+        if (Math.abs(pendingRevealScroller.scrollTop - pendingRevealScrollTop) <= 1) {
+          revealGeneratedBlock(pendingRevealBlockId, pendingRevealScroller);
+        }
         pendingRevealBlockId = null;
         pendingRevealScroller = null;
         pendingRevealScrollTop = null;
@@ -3190,7 +3176,7 @@ function renderWhiteboard({ model, el, host, signal }) {
       if (paintPairBox(event)) return;
       if (event.target.closest?.(".birdtracks-whiteboard-embedded-projector")) return;
       if (block.read_only) {
-        rendered.focus();
+        rendered.focus({preventScroll: true});
         return;
       }
       caretPoint = { x: event.clientX, y: event.clientY };

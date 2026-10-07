@@ -1,0 +1,198 @@
+\text{Let's write some projectors - write \ birdtracks} \\
+A=& \frac{4}{3}\begin{projector}
+  \startnodes[,,]
+  \layer{\symmetriser{2}\freelines{1}}
+  \layer{\permute{1,2,3}{1,2,3}}
+  \layer{\freelines{1}\antisymmetriser{2}}
+  \layer{\permute{1,2,3}{1,2,3}}
+  \layer{\symmetriser{2}\freelines{1}}
+  \endnodes[,,]
+\end{projector} \\
+\text{Evaluate expressions by pressing [Shift+Enter] while on the next line} \\
+A A \\
+=& \frac{16}{9}\begin{projector}
+  \startnodes[,,]
+  \layer{\symmetriser{2}\freelines{1}}
+  \layer{\permute{1,2,3}{1,2,3}}
+  \layer{\freelines{1}\antisymmetriser{2}}
+  \layer{\permute{1,2,3}{1,2,3}}
+  \layer{\symmetriser{2}\freelines{1}}
+  \layer{\permute{1,2,3}{1,2,3}}
+  \layer{\freelines{1}\antisymmetriser{2}}
+  \layer{\permute{1,2,3}{1,2,3}}
+  \layer{\symmetriser{2}\freelines{1}}
+  \endnodes[,,]
+\end{projector} \\
+=& \frac{8}{9}\begin{projector}
+  \startnodes[,,]
+  \layer{\symmetriser{2}\freelines{1}}
+  \layer{\permute{1,2,3}{1,2,3}}
+  \layer{\freelines{1}\antisymmetriser{2}}
+  \layer{\permute{1,2,3}{1,2,3}}
+  \layer{\symmetriser{2}\freelines{1}}
+  \endnodes[,,]
+\end{projector} - \frac{8}{9}\begin{projector}
+  \startnodes[,,]
+  \layer{\symmetriser{2}\freelines{1}}
+  \layer{\permute{1,2,3}{1,3,2}}
+  \layer{\symmetriser{2}\freelines{1}}
+  \layer{\permute{1,2,3}{1,2,3}}
+  \layer{\freelines{1}\antisymmetriser{2}}
+  \layer{\permute{1,2,3}{1,2,3}}
+  \layer{\symmetriser{2}\freelines{1}}
+  \endnodes[,,]
+\end{projector} \\
+=& \frac{4}{3}\begin{projector}
+  \startnodes[,,]
+  \layer{\symmetriser{2}\freelines{1}}
+  \layer{\permute{1,2,3}{1,2,3}}
+  \layer{\freelines{1}\antisymmetriser{2}}
+  \layer{\permute{1,2,3}{1,2,3}}
+  \layer{\symmetriser{2}\freelines{1}}
+  \endnodes[,,]
+\end{projector} \\
+{} \\
+\text{While creating a projector, holding [Ctrl] exposes extra options - try it:} \\
+B=& \begin{projector}
+  \startnodes[>,>]
+  \layer{\symmetriser{2}}
+  \endnodes[>,>]
+\end{projector} \\
+ \\
+\text{We can also operate with Young diagram pair expressions. To evaluate them, press [Shift+Enter] and [Enter] to get each next line} \\
+C=& 1_{2}\,\begin{ydpair}
+  \covar{
+    [] 
+  }
+  \convar{
+    [] \ensuremath{\bullet}
+  }
+\end{ydpair} \\
+C\oplus C \\
+=& 2_{2}\,\begin{ydpair}
+  \covar{
+    [] 
+  }
+  \convar{
+    [] \ensuremath{\bullet}
+  }
+\end{ydpair} \\
+C\otimes C \\
+=& \left(1_{2}\,\begin{ydpair}
+  \covar{
+    [] 
+  }
+  \convar{
+    [] \ensuremath{\overline{1}} & [] \ensuremath{\bullet}
+  }
+\end{ydpair} \oplus 1_{3}\,\begin{ydpair}
+  \covar{
+    [] 
+  }
+  \convar{
+    [] \ensuremath{\overline{1}} \\[] \ensuremath{\bullet}
+  }
+\end{ydpair} \oplus 1_{2}\,\begin{ydpair}
+  \covar{
+    [dashed] \ensuremath{\overline{1}}
+  }
+  \convar{
+    [] \ensuremath{\bullet}
+  }
+\end{ydpair}\right) \otimes 1_{2}\,\begin{ydpair}
+  \covar{
+    [] \ensuremath{1}
+  }
+\end{ydpair} \\
+=& 1_{2}\,\begin{ydpair}
+  \covar{
+    []  & [] \ensuremath{1}
+  }
+  \convar{
+    [] \ensuremath{\overline{1}} & [] \ensuremath{\bullet}
+  }
+\end{ydpair} \oplus 1_{3}\,\begin{ydpair}
+  \covar{
+    []  \\[] \ensuremath{1}
+  }
+  \convar{
+    [] \ensuremath{\overline{1}} & [] \ensuremath{\bullet}
+  }
+\end{ydpair} \oplus 1_{3}\,\begin{ydpair}
+  \covar{
+    []  & [] \ensuremath{1}
+  }
+  \convar{
+    [] \ensuremath{\overline{1}} \\[] \ensuremath{\bullet}
+  }
+\end{ydpair} \oplus 1_{4}\,\begin{ydpair}
+  \covar{
+    []  \\[] \ensuremath{1}
+  }
+  \convar{
+    [] \ensuremath{\overline{1}} \\[] \ensuremath{\bullet}
+  }
+\end{ydpair} \oplus 1_{3}\,\begin{ydpair}
+  \covar{
+    [] 
+  }
+  \convar{
+    [dashed] \splitbox{\overline{1}}{1} \\[] \ensuremath{\bullet}
+  }
+\end{ydpair} \oplus 1_{2}\,\begin{ydpair}
+  \covar{
+    [] \splitbox{\overline{1}}{1}
+  }
+  \convar{
+    [] \ensuremath{\bullet}
+  }
+\end{ydpair} \oplus 1_{2}\,\begin{ydpair}
+  \covar{
+    [dashed] \ensuremath{\overline{1}} \\[dashed] \ensuremath{1}
+  }
+\end{ydpair} \\
+=& 1_{2}\,\begin{ydpair}
+  \covar{
+    []  & [] 
+  }
+  \convar{
+    [] \ensuremath{\bullet} & [] \ensuremath{\bullet}
+  }
+\end{ydpair} \oplus 1_{3}\,\begin{ydpair}
+  \covar{
+    []  \\[] 
+  }
+  \convar{
+    [] \ensuremath{\bullet} & [] \ensuremath{\bullet}
+  }
+\end{ydpair} \oplus 1_{3}\,\begin{ydpair}
+  \covar{
+    []  & [] 
+  }
+  \convar{
+    [] \ensuremath{\bullet} \\[] \ensuremath{\bullet}
+  }
+\end{ydpair} \oplus 1_{4}\,\begin{ydpair}
+  \covar{
+    []  \\[] 
+  }
+  \convar{
+    [] \ensuremath{\bullet} \\[] \ensuremath{\bullet}
+  }
+\end{ydpair} \oplus 1_{3}\,\begin{ydpair}
+  \covar{
+    [] 
+  }
+  \convar{
+    [] \ensuremath{\bullet}
+  }
+\end{ydpair} \oplus 1_{2}\,\begin{ydpair}
+  \covar{
+    [] 
+  }
+  \convar{
+    [] \ensuremath{\bullet}
+  }
+\end{ydpair} \oplus 1_{2}\,\begin{ydpair}
+\end{ydpair} \\
+\text{To revert any evaluated expression, press [Shift+Backspace] while on one of its lines.}

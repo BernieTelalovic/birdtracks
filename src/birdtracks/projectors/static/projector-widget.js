@@ -1,5 +1,7 @@
 const SVG_NS = "http://www.w3.org/2000/svg";
 const activeEditorByGroup = new Map();
+// Requests belong to the model, not a disposable view of a result line.
+const editorRequestsByModel = new WeakMap();
 let activeGroupId = null;
 
 function announceOperatorExpansion(element) {
@@ -1407,6 +1409,7 @@ function renderToolbar({ model, el }) {
 }
 
 function renderCreator({ model, el }) {
+  let sharedState = model.get("editor_state")?.version === 1 ? model.get("editor_state") : null;
   const embedded = model.get("widget_role") === "embedded";
   const widgetMode = model.get("mode") || "evaluate";
   let groupId = model.get("group_id");
@@ -1428,7 +1431,7 @@ function renderCreator({ model, el }) {
     ...(embedded ? ["birdtracks-projector-embedded"] : []),
     `birdtracks-projector-${widgetMode}`,
   );
-  const template = model.get("graph");
+  const template = sharedState?.graph || model.get("graph");
   // Python supplies this read-only plan for evaluate mode. Creator cleanup
   // operates on the live graph only and never rewrites compiled display data.
   const displayGraph = template.display || {};
@@ -1438,13 +1441,13 @@ function renderCreator({ model, el }) {
   const layerStep = geometry.layer_step;
   const INITIAL_LAYERS = 1;
   const INITIAL_LEVELS = 1;
-  const savedPositions = structuredClone(model.get("positions") || {});
-  const savedPortOrders = structuredClone(model.get("port_orders") || {});
-  const savedBoundaryOrders = structuredClone(model.get("boundary_orders") || {
+  const savedPositions = structuredClone(sharedState?.positions || model.get("positions") || {});
+  const savedPortOrders = structuredClone(sharedState?.port_orders || model.get("port_orders") || {});
+  const savedBoundaryOrders = structuredClone(sharedState?.boundary_orders || model.get("boundary_orders") || {
     input: template.boundary_labels || [],
     output: template.boundary_labels || [],
   });
-  const savedFreeLevels = structuredClone(model.get("free_levels") || {});
+  const savedFreeLevels = structuredClone(sharedState?.free_levels || model.get("free_levels") || {});
   let coefficientNumerator = BigInt(template.coefficient.numerator);
   let coefficientDenominator = BigInt(template.coefficient.denominator);
   let nodes = (template.nodes || []).map((node) => {
@@ -1480,7 +1483,7 @@ function renderCreator({ model, el }) {
       + 2 * geometry.step * (layer + 1) / (layers + 1);
   }
   const boundaryLevel = (side, label) => {
-    const order = savedBoundaryOrders[side] || template.boundary_labels || [];
+    const order = sharedState?.boundary_orders?.[side] || savedBoundaryOrders[side] || template.boundary_labels || [];
     const level = order.indexOf(label);
     return level < 0 ? (template.boundary_labels || []).indexOf(label) : level;
   };
@@ -1580,7 +1583,7 @@ function renderCreator({ model, el }) {
     route: {},
   }];
   const lineColors = new Map(
-    Object.entries(model.get("line_colors") || {})
+    Object.entries(sharedState?.line_colors || model.get("line_colors") || {})
       .filter(([, color]) => typeof color === "string"),
   );
   let savedToLiveColorKeys = new Map();
@@ -1624,8 +1627,13 @@ function renderCreator({ model, el }) {
         pendingPaint = null;
         if (legacyKey) lineColors.delete(legacyKey);
         lineColors.set(key, color);
-        model.set("line_colors", Object.fromEntries(lineColors));
-        model.save_changes();
+        if (sharedState) requestEditor("presentation", {
+          presentation: presentationSnapshot({line_colors: Object.fromEntries(lineColors)}),
+        });
+        else {
+          model.set("line_colors", Object.fromEntries(lineColors));
+          model.save_changes();
+        }
         state.record?.(color);
         redraw();
       }, 300);
@@ -1644,21 +1652,24 @@ function renderCreator({ model, el }) {
   let compiledDisplayValid = null;
   let zoom = Number(model.get("zoom") || 1);
   const undoStack = [];
-  let sharedState = model.get("editor_state")?.version === 1 ? model.get("editor_state") : null;
   const requestPrefix = `${editorId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
   let requestSequence = 0;
-  let pendingEditorRequest = null;
-  const editorQueue = [];
+  let editorTransport = editorRequestsByModel.get(model);
+  if (!editorTransport || editorTransport.termId !== sharedState?.term_id) {
+    editorTransport = {termId: sharedState?.term_id, pending: null, queue: []};
+    editorRequestsByModel.set(model, editorTransport);
+  }
+  const editorQueue = editorTransport.queue;
 
-  function presentationSnapshot() {
+  function presentationSnapshot(overrides = {}) {
     return Object.fromEntries(["positions", "free_levels", "boundary_orders", "line_colors"]
-      .map(key => [key, structuredClone(model.get(key) || {})]));
+      .map(key => [key, structuredClone(overrides[key] || sharedState?.[key] || model.get(key) || {})]));
   }
 
   function sendNextEditorRequest() {
-    if (!sharedState || pendingEditorRequest || !editorQueue.length) return;
-    pendingEditorRequest = editorQueue.shift();
-    const { after, ...command } = pendingEditorRequest;
+    if (!sharedState || editorTransport.pending || !editorQueue.length) return;
+    editorTransport.pending = editorQueue.shift();
+    const { after, ...command } = editorTransport.pending;
     model.set("editor_request", {
       ...command, term_id: sharedState.term_id, base_revision: sharedState.revision,
     });
@@ -1676,11 +1687,13 @@ function renderCreator({ model, el }) {
   function applyEditorState() {
     const next = model.get("editor_state");
     if (!next?.version) { sharedState = null; redoPortButton.hidden = true; return; }
-    if (sharedState && next.revision < sharedState.revision) {
+    if (sharedState && (next.term_id !== sharedState.term_id || next.revision < sharedState.revision)) {
       model.set("editor_state", structuredClone(sharedState));
       return;
     }
     sharedState = structuredClone(next);
+    lineColors.clear();
+    for (const [key, color] of Object.entries(next.line_colors || {})) lineColors.set(key, color);
     coefficientNumerator = BigInt(next.graph.coefficient.numerator);
     coefficientDenominator = BigInt(next.graph.coefficient.denominator);
     for (const node of nodes) {
@@ -1709,9 +1722,9 @@ function renderCreator({ model, el }) {
 
   function editorFeedback() {
     const feedback = model.get("editor_feedback");
-    if (!pendingEditorRequest || feedback?.request_id !== pendingEditorRequest.request_id) return;
-    const completed = pendingEditorRequest;
-    pendingEditorRequest = null;
+    if (!editorTransport.pending || feedback?.request_id !== editorTransport.pending.request_id) return;
+    const completed = editorTransport.pending;
+    editorTransport.pending = null;
     if (feedback.error) {
       applyEditorState();
       message.textContent = feedback.error;
@@ -2530,8 +2543,13 @@ function renderCreator({ model, el }) {
       && Number.isFinite(displayGraph.corridor_width)
       ? geometry.left_boundary + displayGraph.corridor_width
       : geometry.first_layer_x + (layers - 1) * layerStep + geometry.step;
+    // Hidden permutation nodes carry connectivity, not a visible footprint.
+    // Only visible operators can extend the bounds for manual placement.
+    const positionedNodes = compiled
+      ? nodes.filter(node => node.kind !== "permutation")
+      : nodes;
     const preservedRightBoundary = sharedState
-      ? Math.max(rightBoundary, ...nodes.map(node => xForNode(node) + nodeWidth / 2 + geometry.step / 2))
+      ? Math.max(rightBoundary, ...positionedNodes.map(node => xForNode(node) + nodeWidth / 2 + geometry.step / 2))
       : rightBoundary;
     // Fixed margins make a logical level occupy the same screen y-coordinate
     // in every term; cropping must not depend on where an S/A happens to sit.
@@ -2726,7 +2744,8 @@ function renderCreator({ model, el }) {
         );
         const assigned = liveConnection
           ? routeLevel(liveConnection, node.layer)
-          : template.free_levels?.[String(node.layer)]?.[
+          : (template.display_free_levels?.[String(column)]
+             || template.free_levels?.[String(node.layer)])?.[
               String(strand.strand_label)
             ];
         const fraction = (sourceColumn - column) / (sourceColumn - targetColumn);
@@ -2904,6 +2923,13 @@ function renderCreator({ model, el }) {
         yFor(Math.max(0, levelCount() - 1) / 2),
       );
     }
+    if (sharedState) {
+      // The embedding view may own the visible sign. Notify its drawing only;
+      // no model traits, coefficients, or document source are published here.
+      el.dispatchEvent(new CustomEvent("birdtracks-port-preview", {
+        bubbles: true, detail: {odd: portParityIsOdd()},
+      }));
+    }
     // Measure the actual rendered prefactor. If it outgrows its coefficient
     // slot, keep its right edge against the diagram and enlarge the viewBox
     // by precisely the measured left overflow.
@@ -3036,9 +3062,13 @@ function renderCreator({ model, el }) {
   }
 
   function displayedTermSign() {
-    if (sharedState) return sharedState.display.sign;
-    const initiallyNegative = model.get("term_sign") === "-";
-    const negative = initiallyNegative !== portParityIsOdd();
+    // Drawing-only preview: initial orders are the last Python-accepted orders.
+    // Do not publish this parity or change the accepted scalar during a drag.
+    // Acceptance rebases those orders; cancellation/rejection restores them.
+    const initiallyNegative = sharedState
+      ? sharedState.display.sign === "-"
+      : model.get("term_sign") === "-";
+    const negative = initiallyNegative !== Boolean(sharedState && portParityIsOdd());
     if (negative) return "-";
     return model.get("term_leading") ? "" : "+";
   }
@@ -3057,9 +3087,6 @@ function renderCreator({ model, el }) {
       numerator: String(coefficientNumerator),
       denominator: String(coefficientDenominator),
     };
-    if (portParityIsOdd()) {
-      coefficient.numerator = String(-BigInt(coefficient.numerator));
-    }
     return coefficient;
   }
 
@@ -3104,14 +3131,13 @@ function renderCreator({ model, el }) {
 
   function startPortReorder(event, endpoint) {
     if (event.button !== 0) return;
-    if (sharedState && (pendingEditorRequest || editorQueue.length)) return;
+    if (!sharedState || editorTransport.pending || editorQueue.length) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture?.(event.pointerId);
     const node = nodes[endpoint.node];
     const order = endpoint.side === "input" ? node.inputOrder : node.outputOrder;
     const origin = order.indexOf(endpoint.label);
-    const before = snapshotEditorState();
     let changed = false;
     let cancelled = false;
 
@@ -3128,15 +3154,10 @@ function renderCreator({ model, el }) {
       const current = order.indexOf(endpoint.label);
       if (current === desired) return;
       if (!changed) {
-        if (!sharedState) rememberEditorState(before);
         changed = true;
       }
       order.splice(current, 1);
       order.splice(desired, 0, endpoint.label);
-      // Publish semantic orientation during the preview. The embedding
-      // whiteboard owns the surrounding term sign and reacts to this state;
-      // the projector renderer never edits the expression itself.
-      if (!sharedState) syncPortOrders({ save: false });
       redraw();
     }
 
@@ -3144,14 +3165,12 @@ function renderCreator({ model, el }) {
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", finish);
       document.removeEventListener("pointercancel", cancel);
-      if (sharedState) {
-        if (cancelled) { applyEditorState(); return; }
-        if (changed) requestEditor("reorder", {
+      if (cancelled) { applyEditorState(); return; }
+      if (changed) requestEditor("reorder", {
           changes: {[sharedState.node_ids[node.index]]: {
             input: [...node.inputOrder], output: [...node.outputOrder],
           }}, presentation: presentationSnapshot(), selection: [sharedState.node_ids[node.index]],
-        });
-      } else if (changed) syncPortOrders();
+      });
       redraw();
     }
     function cancel() { cancelled = true; finish(); }
@@ -4371,7 +4390,7 @@ function renderCreator({ model, el }) {
   // exact projector. They update the two synced traits used to seed the next
   // render and leave algebra topology untouched.
   function persistPresentation() {
-    const positions = structuredClone(model.get("positions") || {});
+    const positions = structuredClone(sharedState?.positions || model.get("positions") || {});
     for (const node of nodes) {
       const previous = positions[String(node.index)] || {};
       positions[String(node.index)] = {
@@ -4379,7 +4398,7 @@ function renderCreator({ model, el }) {
         y: yFor(node.level + (node.labels.length - 1) / 2),
       };
     }
-    const freeLevels = structuredClone(model.get("free_levels") || {});
+    const freeLevels = structuredClone(sharedState?.free_levels || model.get("free_levels") || {});
     for (const connection of connections) {
       if (connection.boundaryLabel === undefined) continue;
       for (const [layer, level] of Object.entries(connection.route || {})) {
@@ -4390,7 +4409,7 @@ function renderCreator({ model, el }) {
     model.set("positions", positions);
     model.set("free_levels", freeLevels);
     if (sharedState) {
-      requestEditor("presentation", {presentation: presentationSnapshot()});
+      requestEditor("presentation", {presentation: presentationSnapshot({positions, free_levels: freeLevels})});
       return;
     }
     model.save_changes();
@@ -4475,6 +4494,7 @@ function renderCreator({ model, el }) {
   model.on("change:active_line", redrawActiveLine);
   model.on("change:mode", redrawMode);
   const syncLineColors = () => {
+    if (sharedState) return;
     lineColors.clear();
     for (const [key, color] of Object.entries(model.get("line_colors") || {})) {
       if (typeof color === "string") lineColors.set(savedToLiveColorKeys.get(key) || key, color);
@@ -4489,7 +4509,10 @@ function renderCreator({ model, el }) {
   if (widgetMode === "create") prepareCreatorPresentation();
   setMode(widgetMode);
   setZoom(1);
-  if (sharedState) applyEditorState();
+  if (sharedState) {
+    applyEditorState();
+    editorFeedback();
+  }
   return () => {
     model.off("change:editor_state", applyEditorState);
     model.off("change:editor_feedback", editorFeedback);
@@ -4516,785 +4539,6 @@ function renderCreator({ model, el }) {
   };
 }
 
-function renderConfigured({ model, el }) {
-  const mode = model.get("mode") || "evaluate";
-  el.classList.add("birdtracks-projector-widget", `birdtracks-projector-${mode}`);
-  const graph = model.get("graph");
-  const LINE_SPACING = graph.geometry.level_spacing;
-  const OPERATOR_PADDING = graph.geometry.operator_padding;
-  const TOP_LINE_LEVEL = graph.geometry.top_line_level;
-  const NODE_WIDTH = graph.geometry.node_width;
-  const STEP = graph.geometry.step;
-  const LAYER_STEP = graph.geometry.layer_step;
-  const FIRST_LAYER_X = graph.geometry.first_layer_x;
-  const LEFT_BOUNDARY = graph.geometry.left_boundary;
-  const RIGHT_BOUNDARY = graph.geometry.right_boundary;
-  const viewWidth = RIGHT_BOUNDARY + STEP / 2;
-  const viewHeight = 2 * graph.geometry.top_margin
-    + LINE_SPACING * Math.max(1, graph.boundary_labels.length - 1);
-  el.style.setProperty("--birdtracks-background", graph.geometry.background_color);
-  el.style.setProperty("--birdtracks-border", graph.geometry.border_color);
-  el.style.setProperty("--birdtracks-line", graph.geometry.line_color);
-  el.style.setProperty("--birdtracks-symmetriser", graph.geometry.symmetriser_color);
-  el.style.setProperty("--birdtracks-antisymmetriser", graph.geometry.antisymmetriser_color);
-  el.style.setProperty("--birdtracks-port-handle", graph.geometry.port_handle_color);
-  el.style.setProperty("--birdtracks-free-handle", graph.geometry.free_line_handle_color);
-  el.style.setProperty("--birdtracks-handle-line-width", graph.geometry.handle_line_width);
-  el.style.setProperty("--birdtracks-line-width", graph.geometry.line_width);
-  el.style.setProperty("--birdtracks-operator-line-width", graph.geometry.operator_line_width);
-  el.style.setProperty("--birdtracks-fraction-line-width", graph.geometry.fraction_line_width);
-  const svg = svgElement("svg", {
-    viewBox: `0 0 ${viewWidth} ${viewHeight}`,
-    role: "img",
-    "aria-label": "Interactive birdtrack projector diagram",
-  });
-  enableTermReordering({ model, el, svg });
-  const lineLayer = svgElement("g", { class: "birdtracks-lines" });
-  const nodeLayer = svgElement("g", { class: "birdtracks-nodes" });
-  const handleLayer = svgElement("g", { class: "birdtracks-port-handles" });
-  const annotationLayer = svgElement("g", { class: "birdtracks-annotations" });
-  svg.append(lineLayer, nodeLayer, handleLayer, annotationLayer);
-  el.appendChild(svg);
-  const saveButton = document.createElement("button");
-  saveButton.type = "button";
-  saveButton.className = "birdtracks-save-button";
-  saveButton.textContent = mode === "evaluate" ? "Save Step" : "Save Projector";
-  saveButton.addEventListener("click", () => {
-    const revision = model.get("save_request") + 1;
-    // Send one authoritative snapshot. This avoids saving a mixture of stale
-    // Python traits when the button is clicked immediately after a drag.
-    model.set("positions", structuredClone(positions));
-    model.set("port_orders", structuredClone(portOrders));
-    model.set("free_levels", structuredClone(freeLevels));
-    model.set("boundary_orders", structuredClone(boundaryOrders));
-    const coefficient = effectiveCoefficient();
-    model.set("effective_coefficient", coefficient);
-    model.set("save_request", revision);
-    model.set("save_snapshot", {
-      revision,
-      positions: structuredClone(positions),
-      port_orders: structuredClone(portOrders),
-      free_levels: structuredClone(freeLevels),
-      boundary_orders: structuredClone(boundaryOrders),
-      effective_coefficient: coefficient,
-    });
-    model.save_changes();
-    saveButton.textContent = "Saving…";
-  });
-  function updateSaveStatus() {
-    if (model.get("saved_revision") === model.get("save_request")) {
-      saveButton.textContent = mode === "evaluate" ? "Step saved" : "Projector saved";
-    }
-  }
-  model.on("change:saved_revision", updateSaveStatus);
-  el.appendChild(saveButton);
-
-  let positions = structuredClone(model.get("positions"));
-  let portOrders = structuredClone(model.get("port_orders"));
-  let freeLevels = structuredClone(model.get("free_levels"));
-  let boundaryOrders = structuredClone(model.get("boundary_orders"));
-  let dragOverride = null;
-  let freeDragOverride = null;
-  let boundaryDragOverride = null;
-  const nodes = new Map(graph.nodes.map((node) => [node.index, node]));
-
-  function drawCoefficient(coefficient) {
-    annotationLayer.replaceChildren();
-    if (model.get("prefactor_owned")) return;
-    const numerator = BigInt(coefficient.numerator);
-    const denominator = BigInt(coefficient.denominator);
-    const middleLevel = TOP_LINE_LEVEL
-      + Math.max(0, graph.boundary_labels.length - 1) * LINE_SPACING / 2;
-    const x = LEFT_BOUNDARY / 2;
-    const fontSize = 0.75 * LINE_SPACING;
-    if (mode === "create") {
-      const hitTarget = svgElement("rect", {
-        x: 0,
-        y: middleLevel - LINE_SPACING / 2,
-        width: LEFT_BOUNDARY,
-        height: LINE_SPACING,
-        class: "birdtracks-prefactor-delete-target",
-      });
-      hitTarget.addEventListener("contextmenu", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        model.set(
-          "term_delete_request",
-          model.get("term_delete_request") + 1,
-        );
-        model.save_changes();
-      });
-      annotationLayer.appendChild(hitTarget);
-    }
-    const termSign = model.get("term_sign") || "";
-    if (termSign) {
-      const signX = numerator === 1n && denominator === 1n
-        ? x : x - fontSize * 0.9;
-      const radius = fontSize * 0.42;
-      annotationLayer.appendChild(svgElement("line", {
-        x1: signX - radius,
-        x2: signX + radius,
-        y1: middleLevel,
-        y2: middleLevel,
-        class: "birdtracks-term-sign",
-      }));
-      if (termSign === "+") {
-        annotationLayer.appendChild(svgElement("line", {
-          x1: signX,
-          x2: signX,
-          y1: middleLevel - radius,
-          y2: middleLevel + radius,
-          class: "birdtracks-term-sign",
-        }));
-      }
-    }
-    if (numerator === 1n && denominator === 1n) return;
-    function drawMinus(signX, signY) {
-      annotationLayer.appendChild(svgElement("line", {
-        x1: signX - fontSize * 0.36,
-        x2: signX + fontSize * 0.36,
-        y1: signY,
-        y2: signY,
-        class: "birdtracks-coefficient-minus",
-      }));
-    }
-    if (denominator === 1n) {
-      const negative = numerator < 0n;
-      const magnitude = negative ? -numerator : numerator;
-      if (negative) {
-        drawMinus(
-          x - (magnitude === 1n ? 0 : fontSize * 0.35)
-            - (magnitude === 1n ? 0 : fontSize * 0.28),
-          middleLevel,
-        );
-      }
-      if (magnitude === 1n && negative) return;
-      const text = svgElement("text", {
-        x: negative ? x + fontSize * 0.2 : x,
-        y: middleLevel,
-        class: "birdtracks-coefficient",
-        "font-size": fontSize,
-        "text-anchor": "middle",
-        "dominant-baseline": "middle",
-      });
-      text.textContent = String(magnitude);
-      annotationLayer.appendChild(text);
-      return;
-    }
-
-    const magnitude = numerator < 0n ? -numerator : numerator;
-    const fractionFontSize = 0.75 * LINE_SPACING;
-    const digitCount = Math.max(String(magnitude).length, String(denominator).length);
-    const barWidth = Math.max(
-      graph.geometry.fraction_bar_width,
-      digitCount * fractionFontSize * 0.6,
-    );
-    if (numerator < 0n) {
-      drawMinus(x - barWidth / 2 - fractionFontSize * 0.6, middleLevel);
-    }
-    const bar = svgElement("line", {
-      x1: x - barWidth / 2,
-      x2: x + barWidth / 2,
-      y1: middleLevel,
-      y2: middleLevel,
-      class: "birdtracks-fraction-bar",
-      "stroke-width": graph.geometry.line_width,
-    });
-    const top = svgElement("text", {
-      x,
-      y: middleLevel - graph.geometry.fraction_height / 2,
-      class: "birdtracks-fraction-number",
-      "font-size": fractionFontSize,
-      "text-anchor": "middle",
-      "dominant-baseline": "middle",
-    });
-    top.textContent = String(magnitude);
-    const bottom = svgElement("text", {
-      x,
-      y: middleLevel + graph.geometry.fraction_height / 2,
-      class: "birdtracks-fraction-number",
-      "font-size": fractionFontSize,
-      "text-anchor": "middle",
-      "dominant-baseline": "middle",
-    });
-    bottom.textContent = String(denominator);
-    annotationLayer.append(bar, top, bottom);
-  }
-
-  function nodeHeight(node) {
-    return Math.max(0, node.labels.length - 1) * LINE_SPACING
-      + 2 * OPERATOR_PADDING;
-  }
-
-  function portPoint(port, side) {
-    const node = nodes.get(port.node);
-    const position = positions[String(port.node)];
-    const labels = portOrders[String(node.index)][side];
-    const labelIndex = labels.indexOf(port.label);
-    const overridden = dragOverride
-      && dragOverride.node === port.node
-      && dragOverride.side === side
-      && dragOverride.label === port.label;
-    return {
-      x: position.x + (side === "input" ? NODE_WIDTH / 2 : -NODE_WIDTH / 2),
-      y: overridden
-        ? dragOverride.y
-        : position.y + (labelIndex - (labels.length - 1) / 2) * LINE_SPACING,
-    };
-  }
-
-  function curvedPath(start, end) {
-    const bend = Math.max(STEP / 2, Math.abs(start.x - end.x) * 0.45);
-    return `M ${start.x} ${start.y} C ${start.x - bend} ${start.y}, ${end.x + bend} ${end.y}, ${end.x} ${end.y}`;
-  }
-
-  function routedPath(points) {
-    let path = `M ${points[0].x} ${points[0].y}`;
-    for (let index = 1; index < points.length; index += 1) {
-      const start = points[index - 1];
-      const end = points[index];
-      if (start.y === end.y) {
-        path += ` L ${end.x} ${end.y}`;
-        continue;
-      }
-      const bend = Math.max(STEP / 2, Math.abs(start.x - end.x) * 0.45);
-      path += ` C ${start.x - bend} ${start.y}, ${end.x + bend} ${end.y}, ${end.x} ${end.y}`;
-    }
-    return path;
-  }
-
-  function layerPoint(layer, boundaryLabel) {
-    const overridden = freeDragOverride
-      && freeDragOverride.layer === layer
-      && freeDragOverride.label === boundaryLabel;
-    const level = freeLevels[String(layer)][String(boundaryLabel)];
-    return {
-      x: FIRST_LAYER_X + LAYER_STEP * layer,
-      y: overridden
-        ? freeDragOverride.y
-        : TOP_LINE_LEVEL + level * LINE_SPACING,
-    };
-  }
-
-  function intermediatePoints(fromLayer, toLayer, boundaryLabel) {
-    const points = [];
-    for (let layer = fromLayer - 1; layer > toLayer; layer -= 1) {
-      const point = layerPoint(layer, boundaryLabel);
-      // A strand which is free in this layer stays level across the entire
-      // operator column; any vertical transition happens in the step gap.
-      points.push(
-        { x: point.x + NODE_WIDTH / 2, y: point.y },
-        { x: point.x - NODE_WIDTH / 2, y: point.y },
-      );
-    }
-    return points;
-  }
-
-  function boundaryPoint(label, side) {
-    const overridden = boundaryDragOverride
-      && boundaryDragOverride.side === side
-      && boundaryDragOverride.label === label;
-    return {
-      x: side === "input" ? RIGHT_BOUNDARY : LEFT_BOUNDARY,
-      y: overridden
-        ? boundaryDragOverride.y
-        : TOP_LINE_LEVEL + boundaryOrders[side].indexOf(label) * LINE_SPACING,
-    };
-  }
-
-  function drawLines() {
-    lineLayer.replaceChildren();
-    for (const node of graph.nodes) {
-      if (node.kind !== "permutation") continue;
-      for (const [inputLabel, outputLabel] of node.mapping) {
-        lineLayer.appendChild(svgElement("path", {
-          d: curvedPath(
-            portPoint({ node: node.index, label: inputLabel }, "input"),
-            portPoint({ node: node.index, label: outputLabel }, "output"),
-          ),
-          class: "birdtracks-line birdtracks-permutation-line",
-        }));
-      }
-    }
-    for (const connection of graph.connections) {
-      const start = portPoint(connection.source, "output");
-      const end = portPoint(connection.target, "input");
-      const sourceLayer = nodes.get(connection.source.node).layer;
-      const targetLayer = nodes.get(connection.target.node).layer;
-      const points = [
-        start,
-        ...intermediatePoints(
-          sourceLayer,
-          targetLayer,
-          connection.boundary_label,
-        ),
-        end,
-      ];
-      lineLayer.appendChild(svgElement("path", {
-        d: routedPath(points),
-        class: "birdtracks-line",
-      }));
-    }
-    for (const boundary of graph.external_inputs) {
-      const end = portPoint(boundary.port, "input");
-      const start = boundaryPoint(boundary.boundary_label, "input");
-      const targetLayer = nodes.get(boundary.port.node).layer;
-      const points = [
-        start,
-        ...intermediatePoints(
-          graph.layer_count,
-          targetLayer,
-          boundary.boundary_label,
-        ),
-        end,
-      ];
-      lineLayer.appendChild(svgElement("path", {
-        d: routedPath(points),
-        class: "birdtracks-line",
-      }));
-    }
-    for (const boundary of graph.external_outputs) {
-      const start = portPoint(boundary.port, "output");
-      const end = boundaryPoint(boundary.boundary_label, "output");
-      const sourceLayer = nodes.get(boundary.port.node).layer;
-      const points = [
-        start,
-        ...intermediatePoints(
-          sourceLayer,
-          -1,
-          boundary.boundary_label,
-        ),
-        end,
-      ];
-      lineLayer.appendChild(svgElement("path", {
-        d: routedPath(points),
-        class: "birdtracks-line",
-      }));
-    }
-  }
-
-  function isOdd(order, canonical) {
-    const rank = new Map(canonical.map((label, index) => [label, index]));
-    const values = order.map((label) => rank.get(label));
-    let inversions = 0;
-    for (let left = 0; left < values.length; left += 1) {
-      for (let right = left + 1; right < values.length; right += 1) {
-        if (values[left] > values[right]) inversions += 1;
-      }
-    }
-    return inversions % 2 === 1;
-  }
-
-  function effectiveCoefficient() {
-    let sign = 1n;
-    for (const node of graph.nodes) {
-      if (node.kind !== "antisymmetriser") continue;
-      if (isOdd(portOrders[String(node.index)].input, node.input_labels)) sign = -sign;
-      if (isOdd(portOrders[String(node.index)].output, node.output_labels)) sign = -sign;
-    }
-    return {
-      numerator: String(BigInt(graph.base_coefficient.numerator) * sign),
-      denominator: graph.base_coefficient.denominator,
-    };
-  }
-
-  function savePortState() {
-    const coefficient = effectiveCoefficient();
-    model.set("port_orders", structuredClone(portOrders));
-    model.set("effective_coefficient", coefficient);
-    model.save_changes();
-    drawCoefficient(coefficient);
-  }
-
-  function saveFreeLevelState() {
-    model.set("free_levels", structuredClone(freeLevels));
-    model.save_changes();
-  }
-
-  function saveBoundaryState() {
-    model.set("boundary_orders", structuredClone(boundaryOrders));
-    model.save_changes();
-  }
-
-  function updateNode(group, node) {
-    const position = positions[String(node.index)];
-    group.setAttribute("transform", `translate(${position.x} ${position.y})`);
-  }
-
-  function reorderLayer(layer, movingKey, requestedY) {
-    const units = [];
-    for (const node of graph.nodes.filter((item) => item.layer === layer)) {
-      const width = Math.max(1, node.labels.length);
-      units.push({
-        key: `node:${node.index}`,
-        kind: "node",
-        node,
-        width,
-        start: (positions[String(node.index)].y - TOP_LINE_LEVEL) / LINE_SPACING
-          - (width - 1) / 2,
-      });
-    }
-    for (const [labelKey, level] of Object.entries(freeLevels[String(layer)] || {})) {
-      units.push({
-        key: `free:${labelKey}`,
-        kind: "free",
-        labelKey,
-        width: 1,
-        start: Number(level),
-      });
-    }
-    units.sort((left, right) => left.start - right.start || left.key.localeCompare(right.key));
-    const movingIndex = units.findIndex((unit) => unit.key === movingKey);
-    if (movingIndex < 0) return;
-    const [moving] = units.splice(movingIndex, 1);
-    const requestedLevel = (requestedY - TOP_LINE_LEVEL) / LINE_SPACING;
-    const originalCentre = moving.start + (moving.width - 1) / 2;
-    const movingHalfSpan = (moving.width - 1) / 2;
-    const movingUp = requestedLevel < originalCentre;
-    const insertionProbe = movingUp
-      ? requestedLevel - movingHalfSpan
-      : requestedLevel + movingHalfSpan;
-    const insertion = units.findIndex((unit) => {
-      const centre = unit.start + (unit.width - 1) / 2;
-      return movingUp ? insertionProbe <= centre : insertionProbe < centre;
-    });
-    units.splice(insertion < 0 ? units.length : insertion, 0, moving);
-    let cursor = 0;
-    for (const unit of units) {
-      if (unit.kind === "node") {
-        positions[String(unit.node.index)] = {
-          x: FIRST_LAYER_X + LAYER_STEP * layer,
-          y: TOP_LINE_LEVEL + (cursor + (unit.width - 1) / 2) * LINE_SPACING,
-        };
-      } else {
-        freeLevels[String(layer)][unit.labelKey] = cursor;
-      }
-      cursor += unit.width;
-    }
-  }
-
-  function normalizeConfiguredLayers() {
-    const layers = new Set([
-      ...graph.nodes.map((node) => node.layer),
-      ...Object.keys(freeLevels).map(Number),
-    ]);
-    for (const layer of layers) {
-      const units = [];
-      for (const node of graph.nodes.filter((item) => item.layer === layer)) {
-        const width = Math.max(1, node.labels.length);
-        units.push({
-          kind: "node", node, width,
-          start: (positions[String(node.index)].y - TOP_LINE_LEVEL) / LINE_SPACING
-            - (width - 1) / 2,
-          key: `node:${node.index}`,
-        });
-      }
-      for (const [labelKey, level] of Object.entries(freeLevels[String(layer)] || {})) {
-        units.push({
-          kind: "free", labelKey, width: 1, start: Number(level),
-          key: `free:${labelKey}`,
-        });
-      }
-      units.sort((left, right) => left.start - right.start || left.key.localeCompare(right.key));
-      let cursor = 0;
-      for (const unit of units) {
-        if (unit.kind === "node") {
-          positions[String(unit.node.index)] = {
-            x: FIRST_LAYER_X + LAYER_STEP * layer,
-            y: TOP_LINE_LEVEL + (cursor + (unit.width - 1) / 2) * LINE_SPACING,
-          };
-        } else {
-          freeLevels[String(layer)][unit.labelKey] = cursor;
-        }
-        cursor += unit.width;
-      }
-    }
-  }
-
-  normalizeConfiguredLayers();
-
-  const nodesByPaintOrder = [...graph.nodes].sort((left, right) =>
-    right.labels.length - left.labels.length || left.index - right.index
-  );
-  for (const node of nodesByPaintOrder) {
-    const group = svgElement("g", {
-      class: "birdtracks-node",
-      "data-node": node.index,
-    });
-    const height = nodeHeight(node);
-    group.appendChild(svgElement("rect", {
-      x: -NODE_WIDTH / 2,
-      y: -height / 2,
-      width: NODE_WIDTH,
-      height,
-      class: node.kind === "permutation"
-        ? "birdtracks-permutation-node"
-        : node.kind === "antisymmetriser"
-        ? "birdtracks-antisymmetriser"
-        : "birdtracks-symmetriser",
-    }));
-    updateNode(group, node);
-    nodeLayer.appendChild(group);
-
-    for (const side of ["input", "output"]) {
-      for (const label of node.labels) {
-        const handle = svgElement("circle", {
-          r: graph.geometry.handle_radius,
-          class: "birdtracks-port-handle",
-          "aria-label": `${side} port ${label} on node ${node.index}`,
-        });
-        handleLayer.appendChild(handle);
-
-        function updateHandle() {
-          const point = portPoint({ node: node.index, label }, side);
-          handle.setAttribute("cx", point.x);
-          handle.setAttribute("cy", point.y);
-        }
-        updateHandle();
-
-        handle.addEventListener("pointerdown", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          handle.setPointerCapture(event.pointerId);
-          const matrix = svg.getScreenCTM();
-          const scaleY = matrix ? matrix.d : 1;
-          const startClientY = event.clientY;
-          const startY = portPoint({ node: node.index, label }, side).y;
-
-          function move(moveEvent) {
-            const y = startY + (moveEvent.clientY - startClientY) / scaleY;
-            dragOverride = { node: node.index, side, label, y };
-            const order = portOrders[String(node.index)][side];
-            const relative = (y - positions[String(node.index)].y) / LINE_SPACING
-              + (order.length - 1) / 2;
-            const desired = Math.max(0, Math.min(order.length - 1, Math.round(relative)));
-            const current = order.indexOf(label);
-            if (desired !== current) {
-              order.splice(current, 1);
-              order.splice(desired, 0, label);
-              savePortState();
-            }
-            updateAllHandles();
-            drawLines();
-          }
-
-          function finish() {
-            handle.removeEventListener("pointermove", move);
-            handle.removeEventListener("pointerup", finish);
-            handle.removeEventListener("pointercancel", finish);
-            dragOverride = null;
-            updateAllHandles();
-            drawLines();
-            savePortState();
-          }
-
-          handle.addEventListener("pointermove", move);
-          handle.addEventListener("pointerup", finish);
-          handle.addEventListener("pointercancel", finish);
-        });
-
-        handle._birdtracksUpdate = updateHandle;
-      }
-    }
-
-    group.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      group.setPointerCapture(event.pointerId);
-      const startY = event.clientY;
-      const origin = { ...positions[String(node.index)] };
-      const matrix = svg.getScreenCTM();
-      const scaleY = matrix ? matrix.d : 1;
-
-      function move(moveEvent) {
-        positions[String(node.index)] = {
-          x: FIRST_LAYER_X + LAYER_STEP * node.layer,
-          y: origin.y + (moveEvent.clientY - startY) / scaleY,
-        };
-        updateNode(group, node);
-        updateAllHandles();
-        drawLines();
-      }
-
-      function finish() {
-        group.removeEventListener("pointermove", move);
-        group.removeEventListener("pointerup", finish);
-        group.removeEventListener("pointercancel", finish);
-        const requestedY = positions[String(node.index)].y;
-        positions[String(node.index)] = origin;
-        reorderLayer(node.layer, `node:${node.index}`, requestedY);
-        for (const child of nodeLayer.children) {
-          const childNode = nodes.get(Number(child.getAttribute("data-node")));
-          if (childNode) updateNode(child, childNode);
-        }
-        updateAllHandles();
-        drawLines();
-        model.set("positions", structuredClone(positions));
-        model.set("free_levels", structuredClone(freeLevels));
-        model.save_changes();
-      }
-
-      group.addEventListener("pointermove", move);
-      group.addEventListener("pointerup", finish);
-      group.addEventListener("pointercancel", finish);
-    });
-    if (mode === "evaluate" && node.kind !== "permutation") {
-      group.addEventListener("dblclick", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        announceOperatorExpansion(el);
-        model.set("expand_node_request", {
-          node: node.index,
-          revision: Date.now(),
-        });
-        model.save_changes();
-      });
-    }
-  }
-
-  for (const [layerKey, assignments] of Object.entries(freeLevels)) {
-    const layer = Number(layerKey);
-    for (const labelKey of Object.keys(assignments)) {
-      const label = Number(labelKey);
-      for (const side of ["input", "output"]) {
-        const handle = svgElement("circle", {
-          r: graph.geometry.handle_radius,
-          class: "birdtracks-free-line-handle",
-          "aria-label": `${side} port for free line ${label} in layer ${layer}`,
-        });
-        handleLayer.appendChild(handle);
-
-        function updateHandle() {
-          const point = layerPoint(layer, label);
-          handle.setAttribute("cx", point.x + (side === "input" ? NODE_WIDTH / 2 : -NODE_WIDTH / 2));
-          handle.setAttribute("cy", point.y);
-        }
-        updateHandle();
-
-        handle.addEventListener("pointerdown", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          handle.setPointerCapture(event.pointerId);
-          const matrix = svg.getScreenCTM();
-          const scaleY = matrix ? matrix.d : 1;
-          const startClientY = event.clientY;
-          const startY = layerPoint(layer, label).y;
-          let requestedY = startY;
-
-          function move(moveEvent) {
-            requestedY = startY + (moveEvent.clientY - startClientY) / scaleY;
-            freeDragOverride = { layer, label, y: requestedY };
-            updateAllHandles();
-            drawLines();
-          }
-
-          function finish() {
-            handle.removeEventListener("pointermove", move);
-            handle.removeEventListener("pointerup", finish);
-            handle.removeEventListener("pointercancel", finish);
-            reorderLayer(layer, `free:${labelKey}`, requestedY);
-            freeDragOverride = null;
-            for (const child of nodeLayer.children) {
-              const childNode = nodes.get(Number(child.getAttribute("data-node")));
-              if (childNode) updateNode(child, childNode);
-            }
-            updateAllHandles();
-            drawLines();
-            model.set("positions", structuredClone(positions));
-            saveFreeLevelState();
-          }
-
-          handle.addEventListener("pointermove", move);
-          handle.addEventListener("pointerup", finish);
-          handle.addEventListener("pointercancel", finish);
-        });
-
-        handle._birdtracksUpdate = updateHandle;
-      }
-    }
-  }
-
-  for (const side of ["input", "output"]) {
-    for (const label of graph.boundary_labels) {
-      const handle = svgElement("circle", {
-        r: graph.geometry.handle_radius,
-        class: "birdtracks-boundary-handle",
-        "aria-label": `${side} boundary line ${label}`,
-      });
-      handleLayer.appendChild(handle);
-
-      function updateHandle() {
-        const point = boundaryPoint(label, side);
-        handle.setAttribute("cx", point.x);
-        handle.setAttribute("cy", point.y);
-      }
-      updateHandle();
-
-      handle.addEventListener("pointerdown", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        handle.setPointerCapture(event.pointerId);
-        const matrix = svg.getScreenCTM();
-        const scaleY = matrix ? matrix.d : 1;
-        const startClientY = event.clientY;
-        const startY = boundaryPoint(label, side).y;
-        let requestedY = startY;
-
-        function move(moveEvent) {
-          requestedY = startY + (moveEvent.clientY - startClientY) / scaleY;
-          boundaryDragOverride = {
-            side,
-            label,
-            y: requestedY,
-          };
-          updateAllHandles();
-          drawLines();
-        }
-
-        function finish() {
-          handle.removeEventListener("pointermove", move);
-          handle.removeEventListener("pointerup", finish);
-          handle.removeEventListener("pointercancel", finish);
-          const order = boundaryOrders[side];
-          const desired = Math.max(
-            0,
-            Math.min(
-              order.length - 1,
-              Math.round(
-                (requestedY - TOP_LINE_LEVEL) / LINE_SPACING,
-              ),
-            ),
-          );
-          const current = order.indexOf(label);
-          order.splice(current, 1);
-          order.splice(desired, 0, label);
-          boundaryDragOverride = null;
-          updateAllHandles();
-          drawLines();
-          saveBoundaryState();
-        }
-
-        handle.addEventListener("pointermove", move);
-        handle.addEventListener("pointerup", finish);
-        handle.addEventListener("pointercancel", finish);
-      });
-
-      handle._birdtracksUpdate = updateHandle;
-    }
-  }
-
-  function updateAllHandles() {
-    for (const handle of handleLayer.children) {
-      handle._birdtracksUpdate();
-    }
-  }
-
-  drawCoefficient(model.get("effective_coefficient"));
-  drawLines();
-  const redrawTermSign = () => drawCoefficient(model.get("effective_coefficient"));
-  const redrawPrefactorOwnership = () => drawCoefficient(model.get("effective_coefficient"));
-  model.on("change:term_sign change:term_leading", redrawTermSign);
-  model.on("change:prefactor_owned", redrawPrefactorOwnership);
-}
 
 export default {
   render(context) {

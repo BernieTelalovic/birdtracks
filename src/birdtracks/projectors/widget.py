@@ -52,7 +52,7 @@ def projector_sum_widget(
     detangler: str | PathLike[str] | object | None = None,
     prompt_for_session: bool = False,
     debug: bool = False,
-    shared_editor: bool = False,
+    shared_editor: bool = True,
     pair_expression: dict[str, object] | None = None,
     create_kind: str = "birdtracks",
     restored_lines: list[
@@ -71,7 +71,7 @@ def projector_sum_widget(
         ) from exc
 
     from .projector_sum import ProjectorSum
-    from .simplification import remove_multiply_connected_s_a_terms
+    from .simplification import remove_automatically_vanishing_terms
     shared_editor = shared_editor or bool(
         initial_editor is not None and initial_editor.configuration.state().get("editor_state")
     ) or bool(restored_lines and any(
@@ -109,7 +109,7 @@ def projector_sum_widget(
 
     if not isinstance(projector_sum, ProjectorSum):
         raise TypeError("projector canvas expects a ProjectorSum")
-    projector_sum = remove_multiply_connected_s_a_terms(projector_sum)
+    projector_sum = remove_automatically_vanishing_terms(projector_sum)
     if not projector_sum:
         initial_editor = None
 
@@ -154,7 +154,7 @@ def projector_sum_widget(
         @property
         def current_projector_sum(self) -> ProjectorSum:
             """Return the sum represented by current synchronized canvas state."""
-            return remove_multiply_connected_s_a_terms(
+            return remove_automatically_vanishing_terms(
                 ProjectorSum(
                     sign
                     * _projector_from_state(
@@ -282,7 +282,7 @@ def projector_sum_widget(
     def current_from(
         editors: tuple[object, ...], signs: tuple[int, ...]
     ) -> ProjectorSum:
-        return remove_multiply_connected_s_a_terms(
+        return remove_automatically_vanishing_terms(
             ProjectorSum(
                 sign
                 * _projector_from_state(
@@ -396,16 +396,10 @@ def projector_sum_widget(
             items = tuple(value)
         for term_index, (projector, coefficient) in enumerate(items):
             term = coefficient * projector
-            # Port order is presentation, but an odd ordering at an
-            # antisymmetriser is compensated in the Projector coefficient.
-            # Choose the written term sign only after removing that hidden
-            # compensation; otherwise a harmless detangling swap is rendered
-            # as a spurious global minus sign.
-            from .layout import _crossing_reduced_port_orders
+            from .layout import rendering_projector
 
-            _orders, presentation_sign = _crossing_reduced_port_orders(term)
-            visible_coefficient = term.coefficient * presentation_sign
-            sign = -1 if visible_coefficient < 0 else 1
+            term = rendering_projector(term)
+            sign = -1 if term.coefficient < 0 else 1
             magnitude = -term if sign < 0 else term
             if line_editors is not None:
                 editor = line_editors[term_index]
@@ -424,6 +418,7 @@ def projector_sum_widget(
                     mode=result.mode,
                     group_id=group_id,
                     debug=debug,
+                    shared_editor=False,
                 )
             graph = dict(editor.graph)
             graph["term_sign"] = "-" if sign < 0 else "+" if term_index else ""
@@ -506,7 +501,7 @@ def projector_sum_widget(
                 ]
                 from .simplification import (
                     collect_fully_expanded_permutations,
-                    remove_multiply_connected_s_a_terms,
+                    remove_automatically_vanishing_terms,
                 )
 
                 expanded = _expand_from_canvas_request(
@@ -517,7 +512,7 @@ def projector_sum_widget(
                     *expanded.items(),
                     *current_terms[selected + 1 :],
                 ]
-                next_value = remove_multiply_connected_s_a_terms(
+                next_value = remove_automatically_vanishing_terms(
                     ProjectorSum(next_terms)
                 )
                 next_value = collect_fully_expanded_permutations(next_value)
@@ -907,6 +902,7 @@ def projector_sum_widget(
                     mode="evaluate",
                     group_id=group_id,
                     debug=debug,
+                    shared_editor=False,
                 )
                 graph = dict(editor.graph)
                 graph["term_sign"] = "-" if sign < 0 else "+" if index else ""
@@ -1193,6 +1189,7 @@ def projector_widget(
     group_id: str = "",
     debug: bool = False,
     embedded: bool = False,
+    shared_editor: bool = True,
 ) -> object:
     """Create one projector term within the shared canvas.
 
@@ -1263,7 +1260,7 @@ def projector_widget(
 
         @property
         def projector(self) -> Projector:
-            """The last projector saved with the editor's save button."""
+            """The committed value (the last saved value while creating)."""
             return self._configured_projector
 
         @property
@@ -1275,7 +1272,7 @@ def projector_widget(
 
         @property
         def configuration(self) -> ProjectorConfiguration:
-            """The last exact canvas snapshot saved with the button."""
+            """The accepted exact editor snapshot, separate from preview traits."""
             return self._configuration
 
         @property
@@ -1289,7 +1286,8 @@ def projector_widget(
             if self.mode != "evaluate" or not request:
                 return
             assert isinstance(request, dict)
-            current = _projector_from_state(
+            session = getattr(self, "_editor_session", None)
+            current = session.state.projector if session is not None else _projector_from_state(
                 self.graph, self.port_orders, self.boundary_orders
             )
             self._expanded_projector_sum = _expand_from_canvas_request(
@@ -1305,6 +1303,9 @@ def projector_widget(
             if not snapshot or not hasattr(self, "_source_projector"):
                 return
             assert isinstance(snapshot, dict)
+            if int(snapshot["revision"]) < self.saved_revision:
+                self._last_error = ValueError("stale creation snapshot")
+                return
             snapshot_graph = snapshot.get("graph", self.graph)
             assert isinstance(snapshot_graph, dict)
             self._configured_projector = _projector_from_state(
@@ -1324,6 +1325,12 @@ def projector_widget(
                 configuration_graph,
                 snapshot,
             )
+            # The create-to-evaluate bridge must start from this complete,
+            # accepted snapshot, not traits from before the creation save.
+            with self.hold_trait_notifications():
+                self.graph = configuration_graph
+                for field in ("positions", "port_orders", "free_levels", "boundary_orders", "effective_coefficient"):
+                    setattr(self, field, deepcopy(snapshot[field]))
             snapshot_colors = snapshot.get("line_colors")
             if isinstance(snapshot_colors, dict):
                 self.line_colors = deepcopy(snapshot_colors)
@@ -1395,6 +1402,10 @@ def projector_widget(
         term_leading=bool(graph.get("term_leading", True)),
     )
     editor._source_projector = projector
+    if saved_state is not None and saved_state.get("source_value"):
+        from .whiteboard.projector_codec import projector_codec
+
+        editor._whiteboard_source_value = projector_codec.decode(saved_state["source_value"])
     editor._last_error = None
     editor._configured_projector = projector
     editor._configuration = (
@@ -1402,6 +1413,15 @@ def projector_widget(
         if configuration is not None
         else _configuration_from_widget(editor)
     )
+    if shared_editor:
+        from .editor_widget import attach_editor
+
+        def attach_on_evaluate(change=None):
+            if editor.mode == "evaluate":
+                attach_editor(editor)
+
+        editor.observe(attach_on_evaluate, names="mode")
+        attach_on_evaluate()
     return editor
 
 
@@ -1688,6 +1708,7 @@ def _projector_from_state(
             raise ValueError("shared canvas state requires an exact Projector")
         return value
     from .projector import Connection, NodePort, Projector
+    from .symmetrisers import Antisymmetriser, Symmetriser
     nodes = graph["nodes"]
     assert isinstance(nodes, list)
     complete_port_orders = {
@@ -1705,20 +1726,6 @@ def _projector_from_state(
         }
         for node_data in nodes
     }
-    sign = 1
-    for node_data in nodes:
-        assert isinstance(node_data, dict)
-        index = int(node_data["index"])
-        if node_data["kind"] != "antisymmetriser":
-            continue
-        state = complete_port_orders[str(index)]
-        for side, initial_key in (
-            ("input", "input_labels"),
-            ("output", "output_labels"),
-        ):
-            if _relative_order_is_odd(state[side], node_data[initial_key]):
-                sign = -sign
-
     labels = list(graph["boundary_labels"])
     input_boundary = _boundary_from_order(
         labels, boundary_orders["input"], graph["external_inputs"], NodePort
@@ -1736,19 +1743,10 @@ def _projector_from_state(
         )
         for item in serialized_connections
     )
-    return Projector(
+    baseline = Projector(
         projector_nodes,
         connections,
-        # ``port_swap_sign`` is hidden presentation metadata: the renderer
-        # removes this parity from the visible scalar, while reconstruction
-        # must restore it before explicit port orders enter Projector's exact
-        # value semantics. ``sign`` accounts only for edits made after the
-        # graph was rendered.
-        coefficient=(
-            _graph_coefficient(graph)
-            * int(graph.get("port_swap_sign", 1))
-            * sign
-        ),
+        coefficient=_graph_coefficient(graph),
         input_boundary=input_boundary,
         output_boundary=output_boundary,
         in_direction=graph.get("in_direction", "neutral"),
@@ -1758,15 +1756,24 @@ def _projector_from_state(
                 "input": tuple(orders["input"]),
                 "output": tuple(orders["output"]),
             }
-            for index, orders in complete_port_orders.items()
+            for index, orders in {
+                str(node["index"]): {"input": node["input_labels"], "output": node["output_labels"]}
+                for node in nodes
+            }.items()
         },
     )
+    from .editor import project_port_orders
+
+    return project_port_orders(baseline, {
+        int(index): sides for index, sides in complete_port_orders.items()
+        if isinstance(projector_nodes[int(index)], (Symmetriser, Antisymmetriser))
+    })
 
 
 def _expand_from_canvas_request(
     projector: Projector, request: Mapping[str, object]
 ) -> ProjectorSum:
-    """Apply either the legacy full expansion or an edge-selected recursion."""
+    """Apply either a full expansion or an edge-selected recursion."""
     from .simplification import (
         expand_node,
         recursive_expand_node,
@@ -1832,20 +1839,6 @@ def _boundary_from_order(
         fixed_label: ports[moved_label]
         for fixed_label, moved_label in zip(fixed_labels, order)
     }
-
-
-def _relative_order_is_odd(current: list[int], initial: object) -> bool:
-    initial_order = list(initial)
-    if sorted(current) != sorted(initial_order):
-        raise ValueError("saved port order must permute the node's support")
-    rank = {label: index for index, label in enumerate(initial_order)}
-    values = [rank[label] for label in current]
-    inversions = sum(
-        left > right
-        for index, left in enumerate(values)
-        for right in values[index + 1 :]
-    )
-    return bool(inversions % 2)
 
 
 __all__ = [

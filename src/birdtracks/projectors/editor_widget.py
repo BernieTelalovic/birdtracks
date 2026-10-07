@@ -1,4 +1,4 @@
-"""Opt-in adapter between the existing canvas and the shared port editor."""
+"""Shared evaluate-mode command adapter for every projector editing surface."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ _PRESENTATION = ("positions", "free_levels", "boundary_orders", "line_colors")
 
 
 def attach_editor(editor: Any, outer_factor: Fraction = Fraction(1)) -> None:
-    """Attach to an evaluation term only; existing whiteboard/create paths remain legacy."""
+    """Attach to an evaluation occurrence; structural creation stays separate."""
     if getattr(editor, "_editor_session", None) is not None:
         return
     import traitlets
@@ -56,11 +56,10 @@ def attach_editor(editor: Any, outer_factor: Fraction = Fraction(1)) -> None:
         graph = deepcopy(editor.graph)
         graph["coefficient"] = _rational(state.projector.coefficient)
         graph["base_coefficient"] = graph["coefficient"]
-        graph["port_swap_sign"] = 1
         graph["editor_value"] = dict(projector_codec.encode(state.projector))
         graph["term_sign"] = "-" if state.outer_factor < 0 else "" if editor.term_leading else "+"
         graph["term_leading"] = editor.term_leading
-        # The exact ordered value is authoritative, not the legacy layout sign.
+        # The exact ordered value is authoritative.
         orders = {str(i): {side: list(order) for side, order in sides.items()}
                   for i, sides in state.projector.port_orders.items()}
         for node in graph["nodes"]:
@@ -84,6 +83,8 @@ def attach_editor(editor: Any, outer_factor: Fraction = Fraction(1)) -> None:
             "version": 1, "revision": state.revision,
             "term_id": state.term_id, "node_ids": list(state.node_ids),
             "strand_ids": list(state.strand_ids), "selection": list(state.selection),
+            "editor_payload": session.payload(),
+            "effective_coefficient": snapshot["effective_coefficient"],
             "graph": graph, "port_orders": orders, **presentation, "display": display,
             "can_undo": bool(session._undo), "can_redo": bool(session._redo),
         }
@@ -150,7 +151,7 @@ def attach_editor(editor: Any, outer_factor: Fraction = Fraction(1)) -> None:
     def on_mode(change: dict[str, object]) -> None:
         if change["new"] == "create":
             # Structural creation is a later migration. Retain the exact value
-            # as the legacy starting point, but release shared command ownership.
+            # as the creation starting point, but release shared command ownership.
             editor.editor_state = {}
             editor._editor_session = None
             editor.unobserve(on_request, names="editor_request")

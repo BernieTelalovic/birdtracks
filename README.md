@@ -78,8 +78,11 @@ Later lines can use that name. Start a line with `&` to continue the preceding
 logical line.
 
 Projector expressions support ordered products, grouped expressions, exact
-coefficients, and traces such as `\tr A` or `\tr(A + B)`. Pair expressions use
-`\oplus` for direct sums and `\otimes` for ordered tensor products. For example,
+coefficients, traces such as `\tr A` or `\tr(A + B)`, and `A \otimes B` for an
+ordered tensor product with A drawn above B. In Python the same tensor product
+is written `A @ B`; it returns a new projector whose boundary lines are freshly
+numbered with A's lines first. Pair expressions use `\oplus` for direct sums and
+`\otimes` for ordered tensor products. For example,
 `2_4\pair` gives an embedded pair coefficient 2 with `N₀ = 4`.
 
 Evaluating a projector expression applies automatic identities and exposes
@@ -186,6 +189,26 @@ trace = collapsed.trace()
 product = expression * expression
 ```
 
+Algebraic identities available to simplification operations are controlled
+process-wide in `birdtracks.settings.SIMPLIFICATION_RULES`. All rules are
+enabled by default:
+
+- multiply-connected symmetriser/antisymmetriser annihilation
+- mismatched Young-layer annihilation
+- same-type nested absorption
+- symmetriser recursion
+- antisymmetriser recursion
+- left and right permutation absorption for symmetrisers
+- left and right permutation absorption for antisymmetrisers
+
+Disable a rule before simplifying by setting its named entry to `False`:
+
+```python
+from birdtracks.settings import SIMPLIFICATION_RULES
+
+SIMPLIFICATION_RULES["same_type_nested_absorption"] = False
+```
+
 Saved calculator sessions use versioned `.canvas.json` sidecars. Reload the
 final exact expression with `bt.load("my-equation")`, or reopen its complete
 interactive history with `bt.create(session="my-equation")`.
@@ -194,6 +217,18 @@ Architecture and mathematical conventions are documented in
 [`docs/`](docs/), including the [notation](docs/notation.md),
 [calculator architecture](docs/calculator-app.md), and
 [Young-diagram integration](docs/pair-multiplication.md).
+
+Standard Young tableaux can be constructed from either reading word and
+enumerated deterministically:
+
+```python
+import birdtracks as bt
+
+diagram = bt.Pair(((), (2, 1)))
+tableau = bt.tableau(diagram, row_word=(1, 3, 2))
+all_tableaux = bt.standard_tableaux(diagram)
+projector = bt.mold_projector(tableau)
+```
 
 ## License
 

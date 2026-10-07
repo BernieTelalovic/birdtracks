@@ -12,14 +12,30 @@ STATIC = Path(__file__).parents[2] / "src/birdtracks/projectors/static"
 
 
 @pytest.fixture
-def connected_canvas(tmp_path):
-    from birdtracks import Antisymmetriser, Projector, ProjectorSum, Symmetriser
+def connected_canvas(tmp_path, request):
+    from birdtracks import Antisymmetriser, Permutation, PermutationNode, Projector, ProjectorSum, Symmetriser
     from birdtracks.projectors.widget import projector_sum_widget
 
     p = Projector([Antisymmetriser((1, 2, 3)), Symmetriser((3, 4))], coefficient=Fraction(-2, 3))
+    surface_kind = getattr(request, "param", "")
+    if surface_kind and not surface_kind.startswith("surface:"):
+        permutation = PermutationNode(Permutation.from_cycle(1, 2), support=(1, 2, 3))
+        nodes = {
+            "operator": [Antisymmetriser((1, 2, 3))],
+            "trailing": [Antisymmetriser((1, 2, 3)), permutation],
+            "interior": [Antisymmetriser((1, 2, 3)), permutation, Symmetriser((3, 4))],
+            "pure": [permutation],
+        }[request.param]
+        p = Projector(nodes, coefficient=Fraction(-2, 3))
     canvas = projector_sum_widget(ProjectorSum((p,)), shared_editor=True,
                                   session=tmp_path / "gestures", detangler=False, debug=True)
     child = canvas._term_editors[0]
+    document = None
+    if surface_kind.startswith("surface:"):
+        from tests.conformance.test_editor_surfaces import surface
+        kind = surface_kind.split(":", 1)[1]
+        child, canvas, _reopen, p = surface(kind, Fraction(-2, 3), tmp_path / "interface.whiteboard")
+        document = getattr(child, "_conformance_document", None)
     requests = []
     with playwright.sync_playwright() as runtime:
         try:
@@ -33,15 +49,29 @@ def connected_canvas(tmp_path):
         def command(_source, request):
             requests.append(deepcopy(request))
             child.editor_request = request
-            return {key: value for key, value in child.get_state().items()
-                    if not key.startswith("_") and key not in {"editor_request", "save_command", "local_undo_command"}}
+            reply = {key: value for key, value in child.get_state().items()
+                     if not key.startswith("_") and key not in {"editor_request", "save_command", "local_undo_command"}}
+            if document is not None:
+                reply["document_blocks"] = ([block for block in document.blocks if block['id'] == 'line']
+                                            if kind == 'parsed' else document.blocks)
+            return reply
 
         page.expose_binding("pythonEditorCommand", command)
         page.set_content('<div class="birdtracks-projector-sum"><div id="canvas"></div></div>')
         page.add_style_tag(content=(STATIC / "projector-widget.css").read_text())
         state = {key: value for key, value in child.get_state().items() if not key.startswith("_")}
         source = base64.b64encode((STATIC / "projector-widget.js").read_bytes()).decode()
-        page.evaluate("""async ({state, source}) => {
+        board_source = base64.b64encode((STATIC / "whiteboard-widget.js").read_bytes()).decode()
+        board_state = None
+        if document is not None:
+            page.add_style_tag(content=(STATIC / "whiteboard-widget.css").read_text())
+            board_state = {"widget_role": "whiteboard", "title": "", "blocks": ([block for block in document.blocks if block['id'] == 'line']
+                                                                                   if kind == 'parsed' else document.blocks),
+                           "embedded_projector_ids": document.embedded_projector_ids,
+                           "backend_projector_ids": document.backend_projector_ids,
+                           "embedded_projectors": ["child"] * len(document.embedded_projector_ids),
+                           "backend_projectors": ["child"] * len(document.backend_projector_ids)}
+        page.evaluate("""async ({state, source, boardSource, boardState}) => {
           const values = structuredClone(state), listeners = new Map();
           window.model = {
             model_id: 'python-connected-canvas', get: key => values[key],
@@ -61,19 +91,34 @@ def connected_canvas(tmp_path):
               this.lastSent = request.request_id;
               window.pythonEditorCommand(structuredClone(request)).then(reply => {
                 for (const [key,value] of Object.entries(reply))
-                  if (!['editor_state','editor_feedback'].includes(key)) model.set(key,value);
+                  if (!['editor_state','editor_feedback','document_blocks'].includes(key)) model.set(key,value);
                 model.set('editor_state',reply.editor_state);
                 model.set('editor_feedback',reply.editor_feedback);
+                if(reply.document_blocks) board.set('blocks',reply.document_blocks);
               });
             },
           };
           const module = await import('data:text/javascript;base64,'+source);
-          window.cleanup = module.default.render({model,el:document.querySelector('#canvas')});
+          let render=()=>module.default.render({model,el:document.querySelector('#canvas')});
+          if(boardState){
+            const boardModule=await import('data:text/javascript;base64,'+boardSource);
+            const values=structuredClone(boardState), listeners=new Map();
+            window.board={get:key=>values[key],set(key,value){
+              if(JSON.stringify(values[key])===JSON.stringify(value)) return;
+              values[key]=value; for(const fn of listeners.get('change:'+key)||[]) fn(this,value,{});
+            },on(names,fn){for(const name of names.split(' ')){
+              if(!listeners.has(name))listeners.set(name,new Set());listeners.get(name).add(fn);
+            }},off(names,fn){for(const name of names.split(' '))listeners.get(name)?.delete(fn);},save_changes(){}};
+            render=()=>boardModule.default.render({model:board,el:document.querySelector('#canvas'),
+              host:{getModel:async()=>model,getWidget:async()=>({render:({el})=>module.default.render({model,el})})}});
+          }
+          window.cleanup = render();
           window.remount = () => {
             cleanup(); document.querySelector('#canvas').replaceChildren();
-            window.cleanup=module.default.render({model,el:document.querySelector('#canvas')});
+            window.cleanup=render();
           };
-        }""", {"state": state, "source": source})
+        }""", {"state": state, "source": source, "boardSource": board_source, "boardState": board_state})
+        page.wait_for_selector('[aria-label="right-anchor:0"]', state='attached')
         yield page, canvas, child, requests, p
         page.evaluate("cleanup()")
         browser.close()
@@ -88,6 +133,130 @@ def drag(page, side, source_label, destination_label):
     page.mouse.down()
     page.mouse.move(b["x"] + b["width"] / 2, b["y"] + b["height"] / 2, steps=5)
     page.mouse.up()
+
+
+@pytest.mark.parametrize("connected_canvas", ["surface:widget", "surface:canvas", "surface:generated", "surface:inline", "surface:parsed", "surface:symbolic"], indirect=True)
+def test_identical_drag_sequences_use_one_shared_transaction_on_every_surface(connected_canvas):
+    page, value, child, requests, original = connected_canvas
+    for side, source_label, target_label in [("input", 1, 2), ("output", 1, 2),
+                                             ("input", 2, 3), ("input", 1, 2), ("output", 2, 1)]:
+        old = deepcopy(child.editor_state)
+        count = len(requests)
+        history = len(child._editor_session._undo)
+        drag(page, side, source_label, target_label)
+        page.wait_for_function("revision=>model.get('editor_state').revision>revision", arg=old['revision'])
+        assert len(requests) == count + 1
+        assert requests[-1]['action'] == 'reorder'
+        assert len(child._editor_session._undo) == history + 1
+        assert value().collapse() == original.collapse()
+        page.keyboard.press('Control+z')
+        page.wait_for_function("revision=>model.get('editor_state').revision===revision", arg=old['revision'] + 2)
+        assert child.editor_state['port_orders'] == old['port_orders']
+        assert value().collapse() == original.collapse()
+        page.keyboard.press('Control+Shift+z')
+        page.wait_for_function("revision=>model.get('editor_state').revision===revision", arg=old['revision'] + 3)
+        accepted = deepcopy(child.editor_state)
+        ports = page.locator('[aria-label^="input:0:"]').evaluate_all("nodes=>nodes.map(n=>[n.getAttribute('aria-label'),n.getAttribute('cy')])")
+        page.evaluate("old=>{for(const key of ['graph','port_orders','positions','free_levels','boundary_orders','line_colors'])model.set(key,old[key]);}", old)
+        page.evaluate("old=>model.set('editor_state',old)", old)
+        assert page.evaluate("model.get('editor_state').revision") == accepted['revision']
+        page.evaluate('remount()')
+        page.wait_for_selector(f'[aria-label^="{side}:0:{target_label};"]', state='attached')
+        assert child.editor_state == accepted
+        assert page.locator('[aria-label^="input:0:"]').evaluate_all("nodes=>nodes.map(n=>[n.getAttribute('aria-label'),n.getAttribute('cy')])") == ports
+
+
+@pytest.mark.parametrize("connected_canvas", ["surface:widget", "surface:canvas", "surface:generated", "surface:inline", "surface:parsed", "surface:symbolic"], indirect=True)
+def test_delayed_reorder_and_remount_keep_shared_save_order_on_every_surface(connected_canvas):
+    page, value, child, requests, original = connected_canvas
+    before = deepcopy(child.editor_state)
+    page.evaluate("""() => {
+      const send=pythonEditorCommand;
+      window.pythonEditorCommand=async request=>{
+        const reply=await send(request);
+        if(request.action==='reorder') await new Promise(resolve=>window.releaseMigrationAck=resolve);
+        return reply;
+      };
+    }""")
+    drag(page, 'input', 1, 2)
+    page.wait_for_function("typeof releaseMigrationAck==='function'")
+    page.evaluate("model.set('save_command',1); remount(); releaseMigrationAck()")
+    page.wait_for_function("model.get('saved_revision')>=1")
+    assert [request['action'] for request in requests] == ['reorder', 'save']
+    accepted = deepcopy(child.editor_state)
+    page.evaluate("old=>model.set('editor_state',old)", before)
+    assert page.evaluate("model.get('editor_state').revision") == accepted['revision']
+    assert child.configuration.state()['editor_state']['state']['revision'] == accepted['revision']
+    assert value().collapse() == original.collapse()
+
+
+@pytest.mark.parametrize("connected_canvas", ["surface:symbolic"], indirect=True)
+def test_symbolic_drag_uses_python_compiled_factor_preview(connected_canvas):
+    page, _value, child, requests, _original = connected_canvas
+    accepted = deepcopy(child.editor_state)
+    blocks = page.evaluate("board.get('blocks')")
+    prefix = page.locator('.birdtracks-whiteboard-embedded-projector').locator('xpath=preceding-sibling::span[1]')
+    assert '−' in prefix.inner_text()
+    a = page.locator('[aria-label^="input:0:1;"]').bounding_box()
+    b = page.locator('[aria-label^="input:0:2;"]').bounding_box()
+    page.mouse.move(a['x'] + a['width']/2, a['y'] + a['height']/2)
+    page.mouse.down()
+    page.mouse.move(b['x'] + b['width']/2, b['y'] + b['height']/2, steps=5)
+    assert '−' not in prefix.inner_text()
+    assert page.evaluate("board.get('blocks')") == blocks
+    assert child.editor_state == accepted
+    assert requests == []
+    page.mouse.up()
+    page.wait_for_function("model.get('editor_state').revision===1")
+    assert '−' not in prefix.inner_text()
+    assert page.evaluate("board.get('blocks')[0].calculation_terms[0].scalar_terms") == blocks[0]['calculation_terms'][0]['scalar_terms']
+
+
+@pytest.mark.parametrize("connected_canvas", ["operator", "trailing", "interior", "pure"], indirect=True)
+def test_evaluate_bounds_ignore_hidden_positions_and_preserve_visible_placement(connected_canvas):
+    page, canvas, child, _requests, _p = connected_canvas
+    accepted = deepcopy(child.editor_state)
+    value = canvas.current_projector_sum
+    geometry = accepted["graph"]["geometry"]
+    def right():
+        return float(page.locator('[aria-label="right-anchor:0"]').get_attribute("cx"))
+    assert right() == pytest.approx(geometry["right_boundary"])
+    paths = page.locator(".birdtracks-display-strand").evaluate_all("nodes => nodes.map(n => n.getAttribute('d'))")
+    drawing = {key: deepcopy(accepted[key])
+               for key in ("positions", "free_levels", "boundary_orders", "line_colors")}
+    for node in accepted["graph"]["nodes"]:
+        if node["kind"] == "permutation":
+            drawing["positions"][str(node["index"])]["x"] = 30
+    page.evaluate("""drawing => {
+      const state=model.get('editor_state');
+      model.set('editor_request',{request_id:'hidden-placement',action:'presentation',
+        term_id:state.term_id,base_revision:state.revision,presentation:drawing});
+      model.save_changes();
+    }""", drawing)
+    page.wait_for_function("model.get('editor_feedback').request_id === 'hidden-placement'")
+    assert "error" not in child.editor_feedback
+    assert right() == pytest.approx(geometry["right_boundary"])
+    assert page.locator(".birdtracks-display-strand").evaluate_all("nodes => nodes.map(n => n.getAttribute('d'))") == paths
+    visible = [n for n in accepted["graph"]["nodes"] if n["kind"] != "permutation"]
+    if visible:
+        index = str(visible[-1]["index"])
+        drawing["positions"][index]["x"] = 8
+        page.evaluate("""drawing => {
+          const state=model.get('editor_state');
+          model.set('editor_request',{request_id:'visible-placement',action:'presentation',
+            term_id:state.term_id,base_revision:state.revision,presentation:drawing});
+          model.save_changes();
+        }""", drawing)
+        page.wait_for_function("model.get('editor_feedback').request_id === 'visible-placement'")
+        assert "error" not in child.editor_feedback
+        assert right() == pytest.approx(8 + geometry["node_width"] / 2 + geometry["step"] / 2)
+    page.evaluate("remount()")
+    expected_right = (8 + geometry["node_width"] / 2 + geometry["step"] / 2
+                      if visible else geometry["right_boundary"])
+    assert right() == pytest.approx(expected_right)
+    assert child.editor_state["positions"] == drawing["positions"]
+    assert child.editor_state["graph"]["display"] == accepted["graph"]["display"]
+    assert canvas.current_projector_sum == value
 
 
 def test_real_gesture_python_sign_undo_redo_save_and_reload(connected_canvas):
@@ -120,6 +289,74 @@ def test_real_gesture_python_sign_undo_redo_save_and_reload(connected_canvas):
     assert restored.editor_state["positions"] == accepted["positions"]
     assert reopened.current_projector_sum.collapse() == p.collapse()
     page.screenshot(path='/tmp/birdtracks-port-editor-gesture.png')
+
+
+@pytest.mark.parametrize("side", ["input", "output"])
+@pytest.mark.parametrize("finish", ["commit", "cancel", "reject"])
+@pytest.mark.parametrize("prior_swap", [False, True])
+def test_drag_sign_preview_is_local_and_resolves_once(connected_canvas, side, finish, prior_swap):
+    page, canvas, child, requests, p = connected_canvas
+    if prior_swap:
+        drag(page, "output" if side == "input" else "input", 1, 2)
+        page.wait_for_function("model.get('editor_state').revision === 1")
+        requests.clear()
+    accepted = deepcopy(child.editor_state)
+    configured = deepcopy(child.configuration.state())
+    value = canvas.current_projector_sum
+    points = [page.locator(f'[aria-label^="{side}:0:{label};"]').bounding_box()
+              for label in (1, 2, 3)]
+    if finish == "commit":
+        page.evaluate("""() => {
+          const send=window.pythonEditorCommand;
+          window.pythonEditorCommand=async request=>{
+            const reply=await send(request);
+            await new Promise(resolve=>window.releasePreviewAck=resolve);
+            return reply;
+          };
+        }""")
+    elif finish == "reject":
+        page.evaluate("""() => {
+          const send=window.pythonEditorCommand;
+          window.pythonEditorCommand=request=>send({...request,base_revision:-1});
+        }""")
+    page.mouse.move(points[0]['x'] + points[0]['width']/2,
+                    points[0]['y'] + points[0]['height']/2)
+    page.mouse.down()
+    for slot, sign_count in [(1, 0), (2, 1), (0, 1), (1, 0)]:
+        if prior_swap:
+            sign_count = 1 - sign_count
+        point = points[slot]
+        page.mouse.move(point['x'] + point['width']/2,
+                        point['y'] + point['height']/2, steps=5)
+        assert page.locator('.birdtracks-term-sign').count() == sign_count
+        assert page.locator('.birdtracks-coefficient-minus').count() == 0
+        assert requests == []
+        assert child.editor_state == accepted
+        assert child.configuration.state() == configured
+        assert canvas.current_projector_sum == value
+        assert page.evaluate("model.get('editor_state')") == accepted
+        assert page.evaluate("model.get('port_orders')") == accepted['port_orders']
+    if finish == "cancel":
+        page.evaluate("document.dispatchEvent(new PointerEvent('pointercancel'))")
+    page.mouse.up()
+    if finish == "commit":
+        page.wait_for_function("typeof window.releasePreviewAck === 'function'")
+        assert page.locator('.birdtracks-term-sign').count() == (1 if prior_swap else 0)
+        assert page.evaluate("model.get('editor_state').revision") == accepted['revision']
+        page.evaluate("releasePreviewAck()")
+        page.wait_for_function("revision => model.get('editor_state').revision === revision", arg=accepted['revision'] + 1)
+        assert child.editor_state['display']['sign'] == ('-' if prior_swap else '')
+        assert page.locator('.birdtracks-term-sign').count() == (1 if prior_swap else 0)
+        assert len(requests) == 1
+        assert child.editor_state['can_undo']
+    else:
+        if finish == "reject":
+            page.wait_for_function("Boolean(model.get('editor_feedback').error)")
+        assert page.locator('.birdtracks-term-sign').count() == (0 if prior_swap else 1)
+        assert child.editor_state == accepted
+        assert child.configuration.state() == configured
+        assert len(requests) == (1 if finish == "reject" else 0)
+    assert canvas.current_projector_sum.collapse() == p.collapse()
 
 
 def test_output_even_reorder_and_save_queued_behind_python(connected_canvas):
@@ -190,4 +427,29 @@ def test_same_model_remount_does_not_reuse_successful_request_ids(connected_canv
     page.wait_for_function("model.get('editor_state').revision === 2")
     assert requests[-1]['request_id'] != first_request
     assert child.editor_state['display']['sign'] == '-'
+    assert canvas.current_projector_sum.collapse() == p.collapse()
+
+
+@pytest.mark.parametrize('feedback_before_remount', [False, True])
+def test_result_view_remount_keeps_save_queued_behind_reorder(connected_canvas, feedback_before_remount):
+    page, canvas, child, requests, p = connected_canvas
+    page.evaluate("""() => {
+      const send=window.pythonEditorCommand;
+      window.pythonEditorCommand=async request=>{
+        const reply=await send(request);
+        if(request.action==='reorder') await new Promise(resolve=>window.releaseReorder=resolve);
+        return reply;
+      };
+    }""")
+    drag(page, "input", 1, 2)
+    page.wait_for_function("typeof window.releaseReorder === 'function'")
+    if feedback_before_remount:
+        page.evaluate("model.set('save_command', 1); cleanup(); releaseReorder()")
+        page.wait_for_function("model.get('editor_state').revision === 1")
+        page.evaluate('remount()')
+    else:
+        page.evaluate("model.set('save_command', 1); remount(); releaseReorder()")
+    page.wait_for_function("model.get('saved_revision') >= 1", timeout=3000)
+    assert [r['action'] for r in requests] == ['reorder', 'save']
+    assert child.editor_state['revision'] == 1
     assert canvas.current_projector_sum.collapse() == p.collapse()
