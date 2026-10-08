@@ -1,3 +1,32 @@
+# Shared-editor architecture review
+
+Status: complete. The six blocking issues below were resolved in the
+shared-editor refactor released as `v0.2.2` on `main`. This review is retained as
+a historical record: its code descriptions and line references describe the
+pre-refactor implementation, not current behavior.
+
+## Resolution record
+
+1. Exact editor payloads own saved algebra; drawing graphs cannot recover or
+   override orientation. Ambiguous old graph-only diagrams require regeneration.
+2. Every editor uses a revisioned Python owner; competing sign, snapshot, and
+   expansion handlers have been removed. Save waits for pending commits.
+3. Editor equality compares ordered representation and presentation, separately
+   from mathematical equality; compensated redraws remain undoable.
+4. Exact outer factors are retained through projection, rewriting, and reload.
+   Source-owned prefactors use a derived Python body projection exactly once.
+5. Structural rewrites carry term-scoped survivor/branch provenance before
+   cleanup, preserving surviving IDs and manual presentation.
+6. Interactive editing uses bounded structural cleanup, not full collapse or
+   factorial expansion. Full expansion remains a separate explicit calculation.
+
+See [ADR 0008](adr/0008-mandatory-editor-protocol.md) for the final boundary,
+verification, and compatibility decisions, and
+[the maintenance guide](editor-layer-maintenance.md) for future changes. Optional
+profiling optimizations are not outstanding blockers for this completed refactor.
+
+## Original review
+
 Blocking design issues:
 1. Legacy migration cannot safely reuse _projector_from_state unchanged.
    The [migration proposal (line 510)](/home/anduril/Documents/birdtracks/docs/editor-layer-plan.md:510) assumes reconstruction preserves meaning. However, [widget_graph (line 210)](/home/anduril/Documents/birdtracks/src/birdtracks/projectors/layout.py:210) applies a presentation sign, while [reconstruction (line 1693)](/home/anduril/Documents/birdtracks/src/birdtracks/projectors/widget.py:1693) applies that sign again before installing explicit orders.

@@ -1,5 +1,9 @@
 # Architecture
 
+Status: shared-editor refactor complete; merged to `main` and released in
+`v0.2.2`. Future changes must follow
+[the separation-of-concerns guide](editor-layer-maintenance.md).
+
 Immutable Python permutation, projector, pair, and exact linear-combination
 values define mathematical meaning. Algorithms, caches, and rendering are
 separate from those values; Python remains the semantic reference.

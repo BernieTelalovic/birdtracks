@@ -1,6 +1,6 @@
 # 0006: Shared structural editing and explicit rewrite provenance
 
-Status: implemented on `feature/shared-editor-layer`.
+Status: complete; merged to `main` and released in `v0.2.2`.
 
 ## Boundary and ownership
 

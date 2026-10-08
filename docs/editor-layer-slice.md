@@ -1,5 +1,8 @@
 # Shared port-reordering slice
 
+Status: complete; included in `v0.2.2`. The first-slice notes below are
+historical; current rules live in [the maintenance guide](editor-layer-maintenance.md).
+
 Historical first-stage guide. Movement, routing, connectivity, and local rewrites
 have since migrated too: see [the structural editor guide](editor-structural-slice.md).
 In particular, movement/routes are now undoable transactions, and complete

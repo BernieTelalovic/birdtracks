@@ -5,7 +5,11 @@ communication boundary and latest verification, see
 [ADR 0008](adr/0008-mandatory-editor-protocol.md). The requirements below remain
 intact; references to legacy behavior describe the inspected baseline.
 
-Status: inspection and proposal only, 2026-10-07 (Europe/Copenhagen).
+Status: complete for the agreed shared-editor refactor; merged to `main` and
+released in `v0.2.2`. See [the maintenance guide](editor-layer-maintenance.md)
+before extending the editor. The original audit status was inspection and
+proposal only, 2026-10-07 (Europe/Copenhagen); the baseline and supplied brief
+below are preserved as historical material, not a list of unfinished work.
 Branch: feature/shared-editor-layer, created from feature/permutation-core at
 8396c4f04663ea01e8f692a1a60b723f56a7cc65.
 

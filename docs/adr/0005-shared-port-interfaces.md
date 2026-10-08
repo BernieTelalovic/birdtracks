@@ -1,5 +1,8 @@
 # ADR 0005: One port command across projector interfaces
 
+Status: complete; shipped in `v0.2.2` on `main`. Transitional remaining scope is
+superseded by [ADR 0008](0008-mandatory-editor-protocol.md).
+
 ## Decision
 
 The transitional remaining-scope statements below are historical. See

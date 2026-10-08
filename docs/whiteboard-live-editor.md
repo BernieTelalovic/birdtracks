@@ -1,5 +1,8 @@
 # In-place whiteboard editor
 
+Status: complete; released in `v0.2.2`. Retain this walkthrough for regression
+verification; new behavior must follow [the maintenance guide](editor-layer-maintenance.md).
+
 The shared Python document owns committed notation and embedded values.
 Typing renders immediately, but incomplete source remains a draft with the last
 valid value retained internally. There is no separate preview below the draft.

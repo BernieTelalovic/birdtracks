@@ -1,6 +1,6 @@
 # 0007: One document for in-place whiteboard editing
 
-Status: implemented on `feature/shared-editor-layer`.
+Status: complete; merged to `main` and released in `v0.2.2`.
 
 ## Ownership and boundaries
 

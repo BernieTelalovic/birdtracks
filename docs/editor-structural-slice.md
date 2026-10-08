@@ -1,5 +1,8 @@
 # Shared structural editor: verification guide
 
+Status: complete; released in `v0.2.2`. This remains a verification guide, not
+an open implementation task. See [the maintenance guide](editor-layer-maintenance.md).
+
 See [ADR 0006](adr/0006-shared-structural-editor.md) for ownership, coefficient,
 provenance, and persistence decisions. This extends the port slice without
 changing the visual design.

@@ -1,5 +1,9 @@
 # Cross-interface port verification
 
+Status: migration complete; released in `v0.2.2`. Retain this checklist for
+regression verification; follow [the maintenance guide](editor-layer-maintenance.md)
+for new code.
+
 Use the repository venv and restart a running kernel/app after pulling this
 change. Launch the canvas demo as described in [the slice guide](editor-layer-slice.md),
 or run `.venv/bin/birdtracks-whiteboard --help` for the

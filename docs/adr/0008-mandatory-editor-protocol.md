@@ -1,5 +1,8 @@
 # ADR 0008: Mandatory Python-owned editor protocol
 
+Status: complete; merged to `main` and released in `v0.2.2`. Future changes must
+follow [the maintenance guide](../editor-layer-maintenance.md).
+
 ## Decision
 
 Every projector editor, including a blank Create diagram, attaches an

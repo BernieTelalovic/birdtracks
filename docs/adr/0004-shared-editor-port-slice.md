@@ -1,5 +1,8 @@
 # ADR 0004: Shared state for projector port redraws
 
+Status: complete; shipped in `v0.2.2` on `main`. Transitional protocol details
+are superseded by [ADR 0008](0008-mandatory-editor-protocol.md).
+
 ## Decision
 
 The transitional opt-in and creation protocol below are historical.
