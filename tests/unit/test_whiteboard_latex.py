@@ -433,6 +433,92 @@ def test_compiled_export_orders_repacked_disjoint_operators_vertically() -> None
     assert r"\freelines{2}\antisymmetriser{2}\symmetriser{2}" not in result
 
 
+def _export_projector_widget(widget) -> str:
+    return whiteboard_latex({
+        "blocks": [{"id": "line", "source": r"\birdtracks"}],
+        "embedded_projector_ids": ["line:projector:0"],
+        "embedded_projectors": [widget],
+    })
+
+
+def test_moved_three_layer_export_uses_repaired_display_routes() -> None:
+    from copy import deepcopy
+    from birdtracks.projectors.widget import projector_widget
+
+    value = Projector([Symmetriser((1, 2)), Symmetriser((3, 4)),
+                       Antisymmetriser((2, 3)), Antisymmetriser((3, 5))])
+    widget = projector_widget(value, mode="evaluate")
+    session = widget._editor_session
+    session.move({session.state.node_ids[3]: {**widget.positions["3"], "y": 5}},
+                 base_revision=session.state.revision, geometry=widget.graph["geometry"])
+    widget._publish_editor()
+    before = deepcopy(widget.editor_state)
+    result = _export_projector_widget(widget)
+    layers = [line.strip() for line in result.splitlines() if line.strip().startswith(r"\layer")]
+    assert layers == [
+        r"\layer{\symmetriser{2}\symmetriser{2}\freelines{1}}",
+        r"\layer{\permute{1,2,3,4,5}{1,2,3,4,5}}",
+        r"\layer{\freelines{1}\antisymmetriser{2}\freelines{2}}",
+        r"\layer{\permute{1,2,3,4,5}{1,2,4,3,5}}",
+        r"\layer{\freelines{3}\antisymmetriser{2}}",
+        r"\layer{\permute{1,2,3,4,5}{1,2,4,3,5}}",
+    ]
+    assert widget.editor_state == before
+    assert widget.projector == value
+
+
+def test_compiled_connector_exports_visible_strand_colour_through_hidden_permutation() -> None:
+    from birdtracks.projectors.widget import projector_widget
+
+    value = Projector([Symmetriser((1, 2)),
+                       PermutationNode(Permutation.from_cycle(1, 2)), Symmetriser((1, 2))])
+    widget = projector_widget(value, mode="evaluate")
+    widget.line_colors = {"output:2:1->input:0:2": "#9141ac"}
+    result = _export_projector_widget(widget)
+    assert "{HTML}{9141AC}" in result
+    assert r"\layer{\symmetriser[,][,draw=btcolor0]{2}}" in result
+    assert r"\layer{\permute[,draw=btcolor0]{1,2}{2,1}}" in result
+    assert r"\layer{\symmetriser[draw=btcolor0,][,]{2}}" in result
+
+
+def test_compiled_coloured_boundary_permutations_match_start_and_end_nodes() -> None:
+    from birdtracks.projectors.widget import projector_widget
+
+    swap = PermutationNode(Permutation.from_cycle(1, 2))
+    widget = projector_widget(Projector([swap, Symmetriser((1, 2)), swap]), mode="evaluate")
+    widget.line_colors = {"output:1:2->left-anchor:0": "#9141ac",
+                          "right-anchor:0->input:1:2": "#9141ac"}
+    result = _export_projector_widget(widget)
+    assert r"\startnodes[draw=btcolor0,]" in result
+    assert r"\endnodes[draw=btcolor0,]" in result
+    assert r"\layer{\permute[draw=btcolor0,]{1,2}{2,1}}" in result
+    assert r"\layer{\symmetriser[,draw=btcolor0]{2}}" in result
+    assert r"\layer{\permute[,draw=btcolor0]{1,2}{2,1}}" in result
+
+
+def test_single_operator_export_omits_identity_connectors() -> None:
+    from birdtracks.projectors.widget import projector_widget
+
+    result = _export_projector_widget(projector_widget(Projector([Symmetriser((1, 2))])))
+    assert r"\layer{\symmetriser{2}}" in result
+    assert r"\permute" not in result
+
+
+def test_compiled_identity_connector_preserves_coloured_pass_through_and_boundary() -> None:
+    from birdtracks.projectors.widget import projector_widget
+
+    widget = projector_widget(Projector([Symmetriser((1, 2)), Antisymmetriser((2, 3))]),
+                              mode="evaluate")
+    # Strand 1 passes through the second column, sharing its visible colour
+    # with the right boundary and the operator's input face.
+    widget.line_colors = {"right-anchor:0->input:0:1": "#9141ac"}
+    result = _export_projector_widget(widget)
+    assert r"\layer{\symmetriser[,][draw=btcolor0,]{2}\freelines{1}}" in result
+    assert r"\layer{\permute[draw=btcolor0,,]{1,2,3}{1,2,3}}" in result
+    assert r"\layer{\freelines[draw=btcolor0]{1}\antisymmetriser{2}}" in result
+    assert r"\endnodes[draw=btcolor0,,]" in result
+
+
 def test_free_line_label_collision_does_not_hide_layer_permutation() -> None:
     graph = {
         "geometry": {"top_margin": 0, "level_spacing": 1},
@@ -753,6 +839,16 @@ def test_new_syntax_export_compiles(tmp_path: Path) -> None:
             "mode": "evaluate",
         }],
     }, include_preamble=True)
+    from birdtracks.projectors.widget import projector_widget
+
+    swap = PermutationNode(Permutation.from_cycle(1, 2))
+    compiled = projector_widget(Projector([swap, Symmetriser((1, 2)),
+                                          swap, Symmetriser((1, 2))]), mode="evaluate")
+    compiled.line_colors = {"output:1:2->left-anchor:0": "#9141ac",
+                            "output:3:2->input:1:1": "#9141ac",
+                            "right-anchor:0->input:3:1": "#9141ac"}
+    source = source.replace(r"\end{document}",
+                            "\n$" + _export_projector_widget(compiled) + "$\n" + r"\end{document}")
     source = source.replace(
         r"\end{document}",
         "\n" + r"\birdtracksetup{box_size=2.4em}"

@@ -916,6 +916,21 @@ class _ProjectorLatex:
             return "{" + ",".join(options) + "}"
 
         connections = self._connections()
+        if self.compiled:
+            # Use the same visible endpoint keys as whiteboard paint. A strand
+            # can span hidden permutation nodes, so its colour is not stored
+            # on any one of the concrete algebra edges.
+            connections = [
+                (
+                    self._display_endpoint(strand["source"]),
+                    self._display_endpoint(strand["target"]),
+                    strand.get("strand_label"),
+                )
+                for strand in self.graph["display"]["strands"]
+                if isinstance(strand, Mapping)
+                and isinstance(strand.get("source"), Mapping)
+                and isinstance(strand.get("target"), Mapping)
+            ]
 
         def connection_label(
             item: tuple[_Endpoint, _Endpoint, object],
@@ -976,7 +991,7 @@ class _ProjectorLatex:
             ))
 
         def level_options(layer: int, level: int) -> str:
-            assignments = self.free_levels.get(str(layer), {})
+            assignments = layer_assignments(layer)
             label = next((
                 int(raw_label) for raw_label, raw_level in assignments.items()
                 if int(raw_level) == level
@@ -1016,20 +1031,6 @@ class _ProjectorLatex:
             )
 
         topology_connections = connections
-        if self.compiled:
-            display = self.graph.get("display", {})
-            strands = display.get("strands", []) if isinstance(display, Mapping) else []
-            topology_connections = [
-                (
-                    self._display_endpoint(strand.get("source", {})),
-                    self._display_endpoint(strand.get("target", {})),
-                    strand.get("strand_label"),
-                )
-                for strand in strands
-                if isinstance(strand, Mapping)
-                and isinstance(strand.get("source"), Mapping)
-                and isinstance(strand.get("target"), Mapping)
-            ]
 
         def endpoint_level(endpoint: _Endpoint) -> int:
             if endpoint.kind != "port":
@@ -1040,16 +1041,22 @@ class _ProjectorLatex:
             ]
             return int(node.get("level", 0)) + list(order).index(endpoint.label)
 
-        def graph_layer(export_layer: int) -> int:
-            if not self.compiled:
-                return export_layer
-            column = self.columns[export_layer]
-            return int(self.nodes[column[0]].get("layer", export_layer))
+        def layer_assignments(export_layer: int) -> Mapping[str, object]:
+            if self.compiled:
+                display_levels = self.graph.get("display_free_levels")
+                if isinstance(display_levels, Mapping):
+                    # Python repairs these column routes after movement and
+                    # rerouting. The Create/algebra namespace may be stale or
+                    # alias multiple packed columns; never merge it over them.
+                    return display_levels.get(str(export_layer), {})
+                column = self.columns[export_layer]
+                export_layer = int(self.nodes[column[0]].get("layer", export_layer))
+            return self.free_levels.get(str(export_layer), {})
 
         def bypass_level(
             item: tuple[_Endpoint, _Endpoint, object], export_layer: int,
         ) -> int:
-            assignments = self.free_levels.get(str(graph_layer(export_layer)), {})
+            assignments = layer_assignments(export_layer)
             label = connection_label(item)
             if isinstance(assignments, Mapping) and label is not None:
                 assigned = assignments.get(str(label))
@@ -1093,8 +1100,8 @@ class _ProjectorLatex:
                     return None
                 targets[left_level] = target
             if 0 <= cut < self.layers - 1:
-                left_free = self.free_levels.get(str(graph_layer(cut)), {})
-                right_free = self.free_levels.get(str(graph_layer(cut + 1)), {})
+                left_free = layer_assignments(cut)
+                right_free = layer_assignments(cut + 1)
                 if isinstance(left_free, Mapping) and isinstance(right_free, Mapping):
                     for label in left_free.keys() & right_free.keys():
                         left_level = int(left_free[label])

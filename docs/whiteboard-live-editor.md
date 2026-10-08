@@ -121,3 +121,14 @@ checks: **133 passed** (0.77 s), followed by the intermediate-direction regressi
 The final complete suite passed with **1,292 passed, 8 skipped** (664.57 s).
 Skips remain the same optional Cython/Torch checks. No tensor algebra, LaTeX
 connector rule, or `birdtracks.sty` behavior changed.
+
+LaTeX connector/color follow-up: packed Evaluate exports use Python's repaired
+`display_free_levels` column routes and the same visible strand endpoint keys
+as whiteboard paint. Every adjacent operator layer retains its actual connector,
+including identity permutations; a single operator omits identity connectors.
+Boundary nodes and operator faces inherit the color of their visible entering
+or exiting strand, including paths through hidden permutation nodes. Export
+does not change committed state or manual placement; `birdtracks.sty` is unchanged.
+Per the requested focused verification, export and display-graph tests only:
+**33 passed** (0.57 s), including compilation of colored exported connectors
+with `pdflatex`. `git diff --check` passed; the full suite was not rerun.
