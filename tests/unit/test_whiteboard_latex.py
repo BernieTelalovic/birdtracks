@@ -830,7 +830,7 @@ def test_new_syntax_export_compiles(tmp_path: Path) -> None:
         "display": {"operator_columns": [], "strands": []},
     }
     source = whiteboard_latex({
-        "blocks": [{"id": "line", "source": r"$\pair\quad\birdtracks$"}],
+        "blocks": [{"id": "line", "source": r"$\pair\quad\tr \birdtracks$"}],
         "embedded_pair_ids": ["line:pair:0"],
         "embedded_pairs": [pair],
         "embedded_projector_ids": ["line:projector:0"],
