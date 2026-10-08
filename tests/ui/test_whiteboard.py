@@ -67,7 +67,6 @@ def test_painted_line_survives_save_port_renumbering(page, prefactor, saved_labe
     assert page.locator(f'[data-line-key="output:0:{label}->left-anchor:0"].birdtracks-line').evaluate(
         'el => el.style.stroke') == ''
     page.evaluate("childModel.set('active_line', true)")
-    page.once('dialog', lambda dialog: dialog.accept())
     page.locator('.birdtracks-symmetriser').first.dblclick()
     child.editor_request = page.evaluate("childModel.get('editor_request')")
     # Expansion waits for the Python-owned save acknowledgement. No frontend
@@ -2737,7 +2736,7 @@ def test_operator_completion_inserts_a_trailing_space(page, typed, completed):
 @pytest.mark.parametrize('kind', ['symmetriser', 'antisymmetriser'])
 @pytest.mark.parametrize('edge', ['top', 'bottom'])
 @pytest.mark.parametrize('size', [2, 3])
-def test_recursive_tear_uses_bounded_command_and_full_expansion_requires_confirmation(page, kind, edge, size):
+def test_recursive_tear_is_bounded_and_double_click_expands_without_warning(page, kind, edge, size):
     from birdtracks import Antisymmetriser, Projector, Symmetriser
     from birdtracks.projectors.widget import projector_widget
 
@@ -2762,13 +2761,11 @@ def test_recursive_tear_uses_bounded_command_and_full_expansion_requires_confirm
     assert tear['action'] == 'expand'
     assert tear['edge'] == edge
     assert child.expanded_projector_sum.collapse() == child.projector.collapse()
-    page.once('dialog', lambda dialog: dialog.dismiss())
+    page.evaluate("() => {window.expansionWarnings=0; window.confirm=()=>{window.expansionWarnings+=1;return true;};}")
     page.locator(f'.birdtracks-{kind}').first.dblclick()
-    assert not page.evaluate("childModel.get('expand_node_request')?.revision")
-    page.once('dialog', lambda dialog: dialog.accept())
-    page.wait_for_timeout(500)
-    page.locator(f'.birdtracks-{kind}').first.dblclick()
-    page.wait_for_function("childModel.get('expand_node_request').confirmed_full===true")
+    page.wait_for_function("childModel.get('expand_node_request')?.revision>0")
     full = page.evaluate("childModel.get('expand_node_request')")
+    assert page.evaluate("window.expansionWarnings") == 0
+    assert 'confirmed_full' not in full
     assert 'recursive_edge' not in full
     assert full['term_id'] == tear['term_id']

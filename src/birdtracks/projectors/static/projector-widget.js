@@ -4245,14 +4245,13 @@ function renderCreator({ model, el }) {
         requestEditor("expand", {node_id:sharedState.node_ids[expandNode], edge:recursiveEdge});
         return;
       }
-      if (expandNode !== null && !window.confirm("Full expansion can create factorially many terms. Run this calculation?")) return;
       const expansionId = expandNode === null ? null : sharedState.node_ids[expandNode];
       requestEditor("save", {save_revision: Number(model.get("save_command") || 0)}, expandNode === null ? null : () => {
           const currentIndex = sharedState.node_ids.indexOf(expansionId);
           if (currentIndex < 0) { message.textContent = "The selected operator no longer exists."; return; }
           model.set("expand_node_request", {node: currentIndex,node_id:expansionId,
             term_id:sharedState.term_id,base_revision:sharedState.revision,
-            ...(recursiveEdge === null ? {confirmed_full:true} : {recursive_edge: recursiveEdge}), revision: Date.now()});
+            revision: Date.now()});
           model.save_changes();
         });
       return;

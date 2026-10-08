@@ -53,8 +53,8 @@ Repeat on the canvas, standalone widget, and supported whiteboard occurrences:
    its exact drawing. Repeat with an odd input ordering and the opposite triangle.
    For composite authored whiteboard formulas, first evaluate and expand their
    result line; a single inline diagram with a rational prefactor is supported.
-5. **Full expansion:** double-click S/A. Cancel the confirmation: nothing changes.
-   Repeat and confirm: the separate factorial calculation creates a next line.
+5. **Full expansion:** double-click S/A. The separate factorial calculation
+   creates a next line immediately, without a confirmation popup.
    It must not silently run during movement, routing, or recursive expansion.
 6. **Replacement:** in the standalone demo, move S(34) first, then click
    `Identity: A → A A`. Only the A neighbourhood is replaced. S's ID/position,

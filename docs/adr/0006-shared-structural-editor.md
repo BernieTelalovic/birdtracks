@@ -78,8 +78,9 @@ to adopt the improved automatic spacing.
 Top/bottom recursive expansion uses the existing raw two-branch identity for
 every supported size, including size two. No collapse, detangler, factorial
 node expansion, or mixed-term equivalence search runs in that command.
-Double-click retains full expansion but asks for confirmation first; it is a
-separate calculation. That calculation may remove known zeros and collect
+Double-click requests full expansion directly, without a warning popup, as
+requested by the author. It remains a separate calculation rather than an
+interactive editing command. That calculation may remove known zeros and collect
 fully expanded permutation occurrences, retaining the first drawing. A linear
 boundary traversal supplies the algebraic aggregate for completely expanded
 wiring; it never rewrites the committed drawings or collapses mixed S/A terms.
