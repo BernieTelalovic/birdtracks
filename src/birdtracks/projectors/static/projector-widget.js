@@ -1756,6 +1756,8 @@ function renderCreator({ model, el }) {
     creationDirty = false;
     undoStack.length = 0;
     template = next.graph;
+    directionMode = template.in_direction === "left"
+      ? "left-in" : template.in_direction === "right" ? "left-out" : "neutral";
     displayGraph = template.display || {};
     displayRoutes = projectedDisplayRoutes();
     compiledDisplayValid = null;
@@ -1835,6 +1837,7 @@ function renderCreator({ model, el }) {
       nextLabel,
       coefficientNumerator,
       coefficientDenominator,
+      directionMode,
       termNegative: model.get("term_sign") === "-",
     };
   }
@@ -1858,6 +1861,7 @@ function renderCreator({ model, el }) {
       nodes = previous.nodes; connections = previous.connections; nextLabel = previous.nextLabel;
       coefficientNumerator = previous.coefficientNumerator;
       coefficientDenominator = previous.coefficientDenominator;
+      directionMode = previous.directionMode;
       creationDirty = undoStack.length > 0;
       localUndo.disabled = !creationDirty && !sharedState.can_undo;
       redraw();
@@ -1872,6 +1876,7 @@ function renderCreator({ model, el }) {
     nextLabel = previous.nextLabel;
     coefficientNumerator = previous.coefficientNumerator;
     coefficientDenominator = previous.coefficientDenominator;
+    directionMode = previous.directionMode;
     if ((model.get("term_sign") === "-") !== previous.termNegative) {
       setTermNegative(previous.termNegative);
     }
@@ -3510,6 +3515,7 @@ function renderCreator({ model, el }) {
         if (!event.ctrlKey) return;
         event.preventDefault();
         event.stopPropagation();
+        rememberEditorState();
         directionMode = directionMode === "neutral"
           ? side === "right" ? "left-in" : "left-out"
           : side === "right"
@@ -3620,6 +3626,7 @@ function renderCreator({ model, el }) {
         if (!event.ctrlKey) return;
         event.preventDefault();
         event.stopPropagation();
+        rememberEditorState();
         directionMode = directionMode === "neutral"
           ? side === "right" ? "left-in" : "left-out"
           : side === "right"

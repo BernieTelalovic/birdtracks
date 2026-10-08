@@ -859,11 +859,18 @@ def whiteboard(
                 and assignment.group("name") in pair_assignment_names
             )
         ]
-        stores_projectors, terms = calculate_projector_blocks(
-            projector_blocks,
-            explicit,
-            initial_definitions,
-        )
+        try:
+            stores_projectors, terms = calculate_projector_blocks(
+                projector_blocks,
+                explicit,
+                initial_definitions,
+            )
+        except NotImplementedError:
+            # Individual valid commits may temporarily make a compound value
+            # unsupported (e.g. changing both tensor factors' directions).
+            # Keep the last valid projection; explicit evaluation reports the
+            # unsupported operation if the user leaves that state unfinished.
+            return
         stored_terms: list[BackendTerm] = []
         for block in widget.blocks:
             block_id = str(block.get("id") or "")

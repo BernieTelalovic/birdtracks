@@ -65,6 +65,14 @@ For the compact-command/menu regressions, also check:
   and press Enter to insert a row. The caret and viewport stay at the insertion,
   including after delayed replies. An earlier automatic calculation-follow
   target cannot redirect this manual edit; the calculation itself is unchanged.
+- Use `A \def \birdtracks \otimes \birdtracks`, give both diagrams the same
+  direction with Ctrl-hover/click on their direction controls, and Shift-Enter.
+  The generated tensor projector retains all boundary arrows. Repeat with the
+  opposite direction, then save/reload. Direction-only Create changes are draft
+  edits committed through Python; the shared render projection refreshes direction
+  even when topology/routes are reused. While changing factors one at a time,
+  the compound display keeps its last valid value until their directions agree.
+  Explicit evaluation still rejects a tensor of mismatched directions.
 
 ## Verification
 
@@ -105,3 +113,11 @@ whiteboard was inspected/evaluated in memory only and was not changed.
 Final follow-up complete configured suite: **1,287 passed, 8 skipped**
 (666.90 s), with no failures. The skips remain three unbuilt optional Cython
 checks and five unavailable Torch checks. `git diff --check` also passed.
+
+Direction-only creation/tensor follow-up: both Ctrl direction gestures,
+Shift-Enter rendering, and save/reload passed in the Python-connected frontend;
+the generated arrows were visually inspected. Focused unit/export/document
+checks: **133 passed** (0.77 s), followed by the intermediate-direction regression.
+The final complete suite passed with **1,292 passed, 8 skipped** (664.57 s).
+Skips remain the same optional Cython/Torch checks. No tensor algebra, LaTeX
+connector rule, or `birdtracks.sty` behavior changed.

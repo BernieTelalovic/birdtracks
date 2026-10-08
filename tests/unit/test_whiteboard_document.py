@@ -41,6 +41,32 @@ def send(board, action, **args):
     assert not board.document_feedback.get('error'), board.document_feedback
 
 
+def test_direction_commits_keep_last_valid_tensor_until_factors_agree():
+    from tests.unit.test_projector_editor import send as editor_command
+    from birdtracks.projectors.whiteboard.calculation import calculate_projector_blocks
+
+    p=Projector([Antisymmetriser((1,2))])
+    board=whiteboard(debug=True)
+    board.blocks=[{'id':'line','source':r'A \def \birdtracks \otimes \birdtracks',
+                   'projector_snapshots':{'0':projector_widget(p).configuration.state(),
+                                          '1':projector_widget(p).configuration.state()}},
+                  {'id':'reference','source':'+ A'}]
+    before=board.backend_projectors[0].projector
+    for index,editor in enumerate(board.embedded_projectors):
+        snapshot=editor.configuration.state()
+        snapshot['graph']['in_direction']='left'
+        snapshot['graph']['out_direction']='right'
+        editor_command(editor,'creation',snapshot=snapshot,node_ids=editor.editor_state['node_ids'],
+                       strand_ids=editor.editor_state['strand_ids'])
+        if index==0:
+            assert board.backend_projectors[0].projector==before
+            explicit=dict(zip(board.embedded_projector_ids,board.embedded_projectors,strict=True))
+            with pytest.raises(NotImplementedError,match='different directions'):
+                calculate_projector_blocks(board.blocks,explicit)
+    assert board.backend_projectors[0].projector.in_direction=='left'
+    assert board.backend_projectors[0].graph['in_direction']=='left'
+
+
 def test_draft_reload_keeps_live_diagram_identity_value_and_definition(tmp_path):
     p = Projector([Antisymmetriser((1,2))], coefficient=Fraction(-2,3))
     seed = projector_widget(p)

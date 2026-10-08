@@ -141,6 +141,29 @@ def send(widget, action, **arguments):
     assert not widget.editor_feedback.get("error"), widget.editor_feedback
 
 
+@pytest.mark.parametrize('directions',[('left','right'),('right','left')])
+def test_creation_direction_updates_committed_render_and_undo_without_topology_change(directions):
+    from birdtracks.projectors.widget import projector_widget
+    from birdtracks.projectors.editor import EditorSession
+
+    widget=projector_widget(Projector([Antisymmetriser((1,2))]),mode='create')
+    original=deepcopy(widget.editor_state)
+    snapshot=widget.configuration.state()
+    snapshot['graph']['in_direction'],snapshot['graph']['out_direction']=directions
+    send(widget,'creation',snapshot=snapshot,node_ids=original['node_ids'],strand_ids=original['strand_ids'])
+    assert (widget.projector.in_direction,widget.projector.out_direction)==directions
+    assert (widget.graph['in_direction'],widget.graph['out_direction'])==directions
+    assert widget.editor_state['graph']==widget.graph
+    assert widget.editor_state['node_ids']==original['node_ids']
+    assert widget.editor_state['strand_ids']==original['strand_ids']
+    assert widget.editor_state['positions']==original['positions']
+    assert EditorSession.decode(widget.configuration.state()['editor_state']).state.projector==widget.projector
+    send(widget,'undo')
+    assert widget.graph['in_direction']==widget.graph['out_direction']=='neutral'
+    send(widget,'redo')
+    assert (widget.graph['in_direction'],widget.graph['out_direction'])==directions
+
+
 def test_canvas_sum_save_reload_and_stale_snapshot(tmp_path):
     pytest.importorskip("anywidget")
     a = Projector([Antisymmetriser((1, 2)), Symmetriser((2, 3))])

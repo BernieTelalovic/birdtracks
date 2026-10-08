@@ -65,6 +65,10 @@ def attach_editor(editor: Any, outer_factor: Fraction = Fraction(1)) -> None:
         editor._editor_render_edges = (state.projector.connections, dict(state.projector.input_boundary), dict(state.projector.output_boundary))
         graph["coefficient"] = _rational(state.projector.coefficient)
         graph["base_coefficient"] = graph["coefficient"]
+        # Directions can change without changing nodes or connectivity, so
+        # refresh them even when reusing the topology/routing projection.
+        graph["in_direction"] = state.projector.in_direction
+        graph["out_direction"] = state.projector.out_direction
         graph["editor_value"] = dict(projector_codec.encode(state.projector))
         graph["term_sign"] = "-" if state.outer_factor < 0 else "" if editor.term_leading else "+"
         graph["term_leading"] = editor.term_leading

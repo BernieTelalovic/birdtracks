@@ -28,6 +28,11 @@ def live_document(tmp_path, request):
     elif kind == 'pair':
         source = r'B\def \pair'
         block = {'id':'line','source':source}
+    elif kind == 'tensor':
+        source = r'A \def \birdtracks \otimes \birdtracks'
+        values = [Projector([Antisymmetriser((1,2))]), Projector([Symmetriser((1,2))])]
+        block = {'id':'line','source':source,'projector_snapshots':{
+            str(i):projector_widget(p).configuration.state() for i,p in enumerate(values)}}
     board.blocks = [block]
     calls = []
 
@@ -116,6 +121,35 @@ def live_document(tmp_path, request):
 
 def settled(page):
     page.wait_for_function("model.get('document_feedback')?.request_id===model.get('document_request')?.request_id")
+
+
+@pytest.mark.parametrize('live_document',['tensor'],indirect=True)
+@pytest.mark.parametrize('side,direction',[('right','left'),('left','right')])
+def test_tensor_evaluation_preserves_created_line_direction(live_document,side,direction):
+    page,board,calls,path=live_document
+    anchors=page.locator('[data-block-id="line"] .birdtracks-whiteboard-embedded-projector')
+    for i in range(2):
+        anchor=anchors.nth(i)
+        anchor.click(position={'x':2,'y':2})
+        page.keyboard.down('Control')
+        anchor.hover()
+        anchor.locator(f'[aria-label="Set {side} projector direction"] .birdtracks-direction-control-hit').click()
+        page.keyboard.up('Control')
+        assert anchor.locator('.birdtracks-direction-arrow').count()>0
+    page.locator('[data-block-id="line"] textarea').press('Shift+Enter')
+    page.wait_for_selector('[data-block-id="calculation-line-1"] .birdtracks-node rect')
+    assert all(e.projector.in_direction==direction for e in board.embedded_projectors)
+    generated=page.locator('[data-block-id="calculation-line-1"]')
+    assert generated.locator('.birdtracks-direction-arrow').count()==8
+    result=board.backend_projectors[-1]
+    assert result.projector.in_direction==direction
+    assert result.graph['in_direction']==direction
+    page.get_by_role('button',name='Save',exact=True).click()
+    page.wait_for_function("model.get('save_request')>0")
+    from birdtracks import whiteboard
+    loaded=whiteboard(path,debug=True)
+    assert loaded.backend_projectors[-1].projector==result.projector
+    assert loaded.backend_projectors[-1].graph['in_direction']==direction
 
 
 def test_scrolled_toolbar_name_retains_pointer_focus_and_commits_rename(live_document):
