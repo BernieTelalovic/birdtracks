@@ -4,12 +4,15 @@
 % package.  It provides presentation primitives only.
 
 \NeedsTeXFormat{LaTeX2e}
-\ProvidesPackage{birdtracks}[2026/09/30 v0.2.1 Birdtrack and Young-diagram notation]
+\ProvidesPackage{birdtracks}[2026/10/08 v0.2.2 Birdtrack and Young-diagram notation]
 
 \RequirePackage{tikz}
 \usetikzlibrary{arrows.meta,calc,decorations.markings}
 \RequirePackage{array}
 \RequirePackage{expl3}
+
+% Trace notation emitted by whiteboard LaTeX export.
+\newcommand{\tr}{\mathrm{tr}}
 
 \makeatletter
 

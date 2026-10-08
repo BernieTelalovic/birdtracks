@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from heapq import heappop, heappush
 
 from .permutation_node import PermutationNode
 from .projector import NodePort, Projector
@@ -71,22 +72,6 @@ def compile_display_graph(projector: Projector) -> DisplayGraph:
         for index, node in enumerate(projector.nodes)
         if not isinstance(node, PermutationNode) and len(node.support) > 1
     }
-    # Hidden permutation nodes must not leave artificial gaps between visible
-    # operators. Repack the remaining S/A sequence into maximal disjoint sets.
-    columns_list: list[tuple[int, ...]] = []
-    column: list[int] = []
-    occupied: set[int] = set()
-    for index in sorted(operators):
-        support = set(projector.nodes[index].support)
-        if occupied & support:
-            columns_list.append(tuple(column))
-            column = []
-            occupied.clear()
-        column.append(index)
-        occupied.update(support)
-    if column:
-        columns_list.append(tuple(column))
-    columns = tuple(columns_list)
     connection_target = {
         connection.source: connection.target for connection in projector.connections
     }
@@ -195,6 +180,33 @@ def compile_display_graph(projector: Projector) -> DisplayGraph:
                 strand.target.label,
             ),
         )
+    )
+    # Local port labels are not global strand identities. Schedule operators
+    # by actual dependencies, including wires through hidden permutations.
+    dependencies = {index: set() for index in operators}
+    parents = {index: set() for index in operators}
+    for strand in ordered:
+        if strand.source.node is not None and strand.target.node is not None:
+            dependencies[strand.source.node].add(strand.target.node)
+            parents[strand.target.node].add(strand.source.node)
+    remaining = {index: len(targets) for index, targets in dependencies.items()}
+    ready = []
+    for index in sorted(operators):
+        if not remaining[index]:
+            heappush(ready, index)
+    depth: dict[int, int] = {}
+    while ready:
+        index = heappop(ready)
+        depth[index] = max((depth[target] + 1 for target in dependencies[index]), default=0)
+        for parent in sorted(parents[index]):
+            remaining[parent] -= 1
+            if not remaining[parent]:
+                heappush(ready, parent)
+    if len(depth) != len(operators):
+        raise ValueError("display operator dependencies contain a cycle")
+    columns = tuple(
+        tuple(index for index in sorted(operators) if depth[index] == column)
+        for column in range(max(depth.values(), default=-1) + 1)
     )
     boundary_mapping = {
         strand.source.label: strand.target.label

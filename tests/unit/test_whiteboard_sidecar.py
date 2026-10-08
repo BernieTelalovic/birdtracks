@@ -6,6 +6,10 @@ import json
 
 import pytest
 
+from tests.editor_protocol_helpers import present_editor
+
+from tests.editor_protocol_helpers import expand_editor, create_editor, send_editor
+
 from birdtracks import (
     Antisymmetriser,
     NodePort,
@@ -31,6 +35,14 @@ from birdtracks.projectors.whiteboard import (
     write_sidecar,
     write_typed_sidecar,
 )
+
+
+def install_created_value(editor, projector):
+    """Seed a coherent create-mode snapshot instead of changing algebra alone."""
+    from birdtracks.projectors.widget import projector_widget
+
+    seeded = projector_widget(projector, mode="create")
+    create_editor(editor, seeded.configuration.state())
 
 
 def example_projector() -> Projector:
@@ -286,7 +298,7 @@ def test_whiteboard_restores_saved_definition_without_evaluating_it(tmp_path) ->
         {"id": "text-1", "source": r"P \def \birdtracks"},
     ]
     editor = document.embedded_projectors[0]  # type: ignore[attr-defined]
-    editor._configured_projector = projector
+    install_created_value(editor, projector)
     editor.saved_revision = 1
 
     reopened = whiteboard(path, debug=True)
@@ -316,10 +328,13 @@ def test_whiteboard_round_trips_embedded_projector_snapshot(tmp_path) -> None:
     document.blocks = [  # type: ignore[attr-defined]
         {"id": "text-1", "source": r"P \def \birdtracks"},
     ]
-    document.embedded_projectors[0].save_snapshot = snapshot  # type: ignore[attr-defined]
+    create_editor(document.embedded_projectors[0], snapshot)
 
     raw = json.loads((tmp_path / "snapshot.whiteboard").read_text())
-    assert raw["document"]["blocks"][0]["projector_snapshots"]["0"] == snapshot
+    committed = raw["document"]["blocks"][0]["projector_snapshots"]["0"]
+    assert committed["editor_state"]["format"] == "birdtracks-editor"
+    assert projector_codec.decode(committed["graph"]["editor_value"]) == projector
+    assert committed["line_colors"] == snapshot["line_colors"]
 
     reopened = whiteboard(path, debug=True)
     restored = reopened.embedded_projectors[0]  # type: ignore[attr-defined]
@@ -395,7 +410,7 @@ def test_whiteboard_simplification_locks_and_restores_connected_lines(tmp_path) 
         {"id": "text-1", "source": r"X \def \birdtracks"},
     ]
     editor = document.embedded_projectors[0]  # type: ignore[attr-defined]
-    editor._configured_projector = Projector([Symmetriser((1, 2, 3))])
+    install_created_value(editor, Projector([Symmetriser((1, 2, 3))]))
     editor.saved_revision = 1
     document.simplify_request = {  # type: ignore[attr-defined]
         "line_id": "text-1", "action": "evaluate", "revision": 1,
@@ -458,10 +473,8 @@ def test_whiteboard_trace_evaluates_an_assigned_projector(
         "effective_coefficient": saved.effective_coefficient,
     }
 
-    document.simplify_request = {  # type: ignore[attr-defined]
-        "line_id": "trace", "action": "evaluate", "revision": 1,
-        "snapshots": {"definition:projector:0": snapshot},
-    }
+    create_editor(document.embedded_projectors[0], snapshot)
+    document.calculate('trace')
 
     result = document.blocks[-1]  # type: ignore[attr-defined]
     assert result["calculation_scalar"] is True
@@ -476,7 +489,7 @@ def test_whiteboard_manual_expansion_appends_a_new_calculation_line(tmp_path) ->
         {"id": "text-1", "source": r"X \def \birdtracks"},
     ]
     editor = document.embedded_projectors[0]  # type: ignore[attr-defined]
-    editor._configured_projector = Projector([Symmetriser((1, 2, 3))])
+    install_created_value(editor, Projector([Symmetriser((1, 2, 3))]))
     editor.saved_revision = 1
     document.simplify_request = {  # type: ignore[attr-defined]
         "line_id": "text-1", "action": "evaluate", "revision": 1,
@@ -484,7 +497,7 @@ def test_whiteboard_manual_expansion_appends_a_new_calculation_line(tmp_path) ->
 
     first_line = document.blocks[-1]  # type: ignore[attr-defined]
     child = document.backend_projectors[0]  # type: ignore[attr-defined]
-    child.expand_node_request = {"node": 0, "revision": 1}
+    expand_editor(child, {"node": 0, "revision": 1})
 
     assert document.blocks[-1]["calculation_step"] == 2  # type: ignore[attr-defined]
     assert len(document.blocks[-1]["calculation_terms"]) > len(  # type: ignore[attr-defined]
@@ -507,14 +520,14 @@ def test_whiteboard_manual_expansion_discards_double_s_a_branch(tmp_path) -> Non
             Antisymmetriser((1, 3)),
         ]
     )
-    editor._configured_projector = projector
+    install_created_value(editor, projector)
     editor.saved_revision = 1
     document.simplify_request = {  # type: ignore[attr-defined]
         "line_id": "text-1", "action": "evaluate", "revision": 1,
     }
 
     child = document.backend_projectors[0]  # type: ignore[attr-defined]
-    child.expand_node_request = {"node": 1, "revision": 1}
+    expand_editor(child, {"node": 1, "revision": 1})
 
     value = projector_codec.decode(  # type: ignore[attr-defined]
         document.blocks[-1]["calculation_value"]
@@ -532,7 +545,7 @@ def test_whiteboard_full_expansion_collects_equal_permutations(tmp_path) -> None
     document = whiteboard(tmp_path / "permutation-collection", debug=True)
     document.blocks = [{"id": "text-1", "source": r"X \def \birdtracks"}]
     editor = document.embedded_projectors[0]  # type: ignore[attr-defined]
-    editor._configured_projector = Projector(
+    install_created_value(editor, Projector(
         [
             Symmetriser((1, 2)),
             Antisymmetriser((2, 3)),
@@ -541,6 +554,7 @@ def test_whiteboard_full_expansion_collects_equal_permutations(tmp_path) -> None
             Symmetriser((1, 2)),
         ]
     )
+    )
     original = editor._configured_projector
     editor.saved_revision = 1
     document.simplify_request = {  # type: ignore[attr-defined]
@@ -548,7 +562,7 @@ def test_whiteboard_full_expansion_collects_equal_permutations(tmp_path) -> None
     }
 
     revision = 1
-    while True:
+    for _ in range(100):
         generated = document.blocks[-1]  # type: ignore[attr-defined]
         prefix = f"{generated['id']}:backend:"
         children = dict(
@@ -565,7 +579,7 @@ def test_whiteboard_full_expansion_collects_equal_permutations(tmp_path) -> None
                 if key.startswith(prefix)
                 and any(
                     isinstance(node, (Symmetriser, Antisymmetriser))
-                    for node in child._source_projector.nodes
+                    for node in child.projector.nodes
                 )
             ),
             None,
@@ -574,11 +588,14 @@ def test_whiteboard_full_expansion_collects_equal_permutations(tmp_path) -> None
             break
         node_index = next(
             index
-            for index, node in enumerate(selected._source_projector.nodes)
+            for index, node in enumerate(selected.projector.nodes)
             if isinstance(node, (Symmetriser, Antisymmetriser))
         )
         revision += 1
-        selected.expand_node_request = {"node": node_index, "revision": revision}
+        expand_editor(selected, {"node": node_index, "revision": revision})
+        assert not selected.editor_feedback.get('error'), selected.editor_feedback
+    else:
+        pytest.fail('bounded expansion sequence made no progress')
 
     value = projector_codec.decode(document.blocks[-1]["calculation_value"])  # type: ignore[attr-defined]
     assert isinstance(value, ProjectorSum)
@@ -626,28 +643,19 @@ def test_generated_terms_inherit_parent_line_colors() -> None:
     }
 
 
-def test_expansion_uses_saved_parent_port_labels(tmp_path):
-    from birdtracks.projectors.widget import projector_widget
-
+def test_expansion_preserves_accepted_parent_port_labels_and_colors(tmp_path):
     document = whiteboard(tmp_path / "renumbered-expansion", debug=True)
     document.blocks = [{"id": "text-1", "source": r"\birdtracks"}]
     editor = document.embedded_projectors[0]
-    editor._configured_projector = Projector([Symmetriser((10, 11))])
+    install_created_value(editor, Projector([Symmetriser((10, 11))]))
     editor.saved_revision = 1
     document.simplify_request = {"line_id": "text-1", "action": "evaluate", "revision": 1}
     child = document.backend_projectors[-1]
-    saved = projector_widget(Projector([Symmetriser((1, 2))]), embedded=True)
-    child.graph = saved.graph
-    child.port_orders = saved.port_orders
-    child.boundary_orders = saved.boundary_orders
-    child.save_snapshot = {
-        "revision": 1, "graph": saved.graph, "positions": saved.positions,
-        "port_orders": saved.port_orders, "free_levels": saved.free_levels,
-        "boundary_orders": saved.boundary_orders,
-        "effective_coefficient": saved.effective_coefficient,
-        "line_colors": {"right-anchor:0->input:0:1": "#ff0000"},
-    }
-    child.expand_node_request = {"node": 0, "revision": 1}
+    # Generated editors retain stable ports; frontend snapshots cannot renumber
+    # or replace accepted algebra. Paint through the presentation boundary.
+    present_editor(child, line_colors={"right-anchor:0->input:0:10": "#ff0000"})
+    assert child.projector.nodes[0].support == frozenset((10, 11))
+    expand_editor(child, {"node": 0, "revision": 1})
     result = document.blocks[-1]
     assert result["calculation_step"] == 2
     for key, descendant in zip(document.backend_projector_ids, document.backend_projectors):
@@ -664,15 +672,15 @@ def test_expansion_extends_color_to_entire_visible_line(tmp_path, recursive, sid
     document = whiteboard(tmp_path / "expanded-colors", debug=True)
     document.blocks = [{"id": "text-1", "source": r"\birdtracks"}]
     editor = document.embedded_projectors[0]
-    editor._configured_projector = Projector([Symmetriser((1, 2, 3))])
+    install_created_value(editor, Projector([Symmetriser((1, 2, 3))]))
     editor.saved_revision = 1
     document.simplify_request = {"line_id": "text-1", "action": "evaluate", "revision": 1}
     child = document.backend_projectors[-1]
     key = ("right-anchor:2->input:0:3" if side == "input"
            else "output:0:3->left-anchor:2")
-    child.line_colors = {key: "#ff0000"}
-    child.expand_node_request = {"node": 0, "revision": 1,
-                                **({"recursive_edge": "bottom"} if recursive else {})}
+    present_editor(child, line_colors={key: "#ff0000"})
+    expand_editor(child, {"node": 0, "revision": 1,
+                                **({"recursive_edge": "bottom"} if recursive else {})})
     generated = document.blocks[-1]
     assert generated["calculation_step"] == 2
     children = dict(zip(document.backend_projector_ids, document.backend_projectors))
@@ -713,12 +721,8 @@ def test_shift_enter_snapshot_colors_reach_generated_projector(tmp_path) -> None
         {"id": "text-1", "source": r"X \def \birdtracks"},
     ]
 
-    document.simplify_request = {  # type: ignore[attr-defined]
-        "line_id": "text-1",
-        "action": "evaluate",
-        "revision": 1,
-        "snapshots": {"text-1:projector:0": snapshot},
-    }
+    create_editor(document.embedded_projectors[0], snapshot)
+    document.calculate('text-1')
 
     generated = document.blocks[-1]  # type: ignore[attr-defined]
     generated_id = generated["id"]
@@ -743,7 +747,7 @@ def test_generated_term_presentation_survives_whiteboard_reopen(tmp_path) -> Non
         {"id": "text-1", "source": r"X \def \birdtracks"},
     ]
     source_editor = document.embedded_projectors[0]  # type: ignore[attr-defined]
-    source_editor._configured_projector = Projector([Symmetriser((1, 2))])
+    install_created_value(source_editor, Projector([Symmetriser((1, 2))]))
     source_editor.saved_revision = 1
     document.simplify_request = {  # type: ignore[attr-defined]
         "line_id": "text-1", "action": "evaluate", "revision": 1,
@@ -760,15 +764,8 @@ def test_generated_term_presentation_survives_whiteboard_reopen(tmp_path) -> Non
     positions = deepcopy(child.positions)
     positions["0"]["y"] += 2.0
     free_levels = deepcopy(child.free_levels)
-    free_levels.setdefault("0", {})["99"] = 3
-    presentation = {
-        "graph": deepcopy(child.graph),
-        "positions": positions,
-        "free_levels": free_levels,
-        "port_orders": deepcopy(child.port_orders),
-        "boundary_orders": deepcopy(child.boundary_orders),
-        "effective_coefficient": deepcopy(child.effective_coefficient),
-    }
+    present_editor(child, positions=positions, free_levels=free_levels)
+    presentation = child.configuration.state()
     generated["backend_presentations"] = {"0": presentation}
     blocks = list(document.blocks)  # type: ignore[attr-defined]
     blocks[-1] = generated

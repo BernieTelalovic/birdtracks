@@ -39,7 +39,6 @@ class ProjectorAlgebraBackend:
             for right_projector, right_coefficient in right_terms
         )
 
-
 def _terms(value: ProjectorValue) -> tuple[tuple[Projector, Fraction], ...]:
     if isinstance(value, Projector):
         return ((value, Fraction(1)),)

@@ -99,14 +99,8 @@ def test_game_save_records_a_round_and_opens_the_next_one(tmp_path) -> None:
     editor = canvas._term_editors[0]
 
     canvas._save_step_button.click()
-    editor.save_snapshot = {
-        "revision": editor.save_command,
-        "positions": editor.positions,
-        "port_orders": editor.port_orders,
-        "free_levels": editor.free_levels,
-        "boundary_orders": editor.boundary_orders,
-        "effective_coefficient": editor.effective_coefficient,
-    }
+    from tests.unit.test_projector_editor import send
+    send(editor, "save", save_revision=editor.save_command)
 
     saved = _read_dataset(destination)
     assert len(saved["examples"]) == 1

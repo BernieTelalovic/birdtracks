@@ -36,7 +36,7 @@
 
 \section{Birdtrack projectors}
 
-The \texttt{projector} environment is set up with the structure that symmetrisers and antisymmetrisers can appear under each other, separated by any number of \texttt{freelines}, wrapped in a \texttt{layer}. In-between layers carrying symmetrisers, antisymmetrisers and the more agnostic \texttt{operator} rectangles, permutations between lines can be added in a layer, with a \texttt{permutation}.\\
+The \texttt{projector} environment is set up with the structure that symmetrisers and antisymmetrisers can appear under each other, separated by any number of \texttt{freelines}, wrapped in a \texttt{layer}. With a \texttt{permutation}, we can add permutations between layers carrying symmetrisers, antisymmetrisers and the more agnostic \texttt{operator} rectangles.\\
 
 \begin{equation}\label{eq:projector}
     \begin{projector}[permutation min width=1.75em]
@@ -336,8 +336,8 @@ Setting & Scope & Description \\
 \hline
 \multirow{2}{*}{TikZ node options} & \multirow{2}{*}{\texttt{ydpair}} & Style each \texttt{\string\covar} or \texttt{\string\convar} box independently, e.g., \texttt{[fill=blue!10]} \\\hline
 \texttt{\string\hpad\{n\}} & & Fractional box-size gap between the diagrams \\\hline
-TikZ line options & \multirow{2}{*}{Projector layer} & Used by \texttt{\string\freelines}, \texttt{\string\permute}, \texttt{\string\startnodes}, and \texttt{\string\endnodes}; a leading $<$ or $>$ adds an arrow \\\hline
-Up to two line-option lists & & Used by \texttt{\string\symmetriser}, \texttt{\string\antisymmetriser}, and \texttt{\string\operator} for left- and right-side lines \\
+\multirow{2}{*}{TikZ line options} & \multirow{2}{*}{Projector layer} & Used by \texttt{\string\freelines}, \texttt{\string\permute}, \texttt{\string\startnodes}, and \texttt{\string\endnodes}; a leading $<$ or $>$ adds an arrow \\\hline
+\multirow{2}{*}{Up to two line-option lists} & \multirow{2}{*}{Projector layer} & Used by \texttt{\string\symmetriser}, \texttt{\string\antisymmetriser}, and \texttt{\string\operator} for left- and right-side lines \\
 \hline\hline
     \end{tabular}
     \label{tab:locals}

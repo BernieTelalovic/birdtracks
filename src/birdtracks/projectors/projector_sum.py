@@ -186,6 +186,22 @@ class ProjectorSum:
     def __rmul__(self, scalar: object) -> ProjectorSum:
         return self.__mul__(scalar)
 
+    def __matmul__(self, other: object) -> ProjectorSum:
+        promoted = _promote_addend(other)
+        if promoted is NotImplemented:
+            return NotImplemented
+        return ProjectorSum(
+            (left @ right, left_coefficient * right_coefficient)
+            for left, left_coefficient in self._terms
+            for right, right_coefficient in promoted._terms
+        )
+
+    def __rmatmul__(self, other: object) -> ProjectorSum:
+        promoted = _promote_addend(other)
+        if promoted is NotImplemented:
+            return NotImplemented
+        return promoted @ self
+
     def __iter__(self) -> Iterator[tuple[Projector, Fraction]]:
         return self.items()
 

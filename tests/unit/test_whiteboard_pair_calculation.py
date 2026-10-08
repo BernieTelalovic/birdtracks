@@ -390,6 +390,32 @@ def test_whiteboard_squares_an_assigned_two_term_pair_sum() -> None:
     } == {((2,), "4", 1), ((1, 1), "4", 2)}
 
 
+@pytest.mark.parametrize('separator',['',' '])
+@pytest.mark.parametrize('prefactor',['','2_1'])
+def test_compact_pair_assignment_dispatches_tensor_to_pair_backend(tmp_path,separator,prefactor):
+    from birdtracks import whiteboard
+
+    path = tmp_path/'compact-pair.whiteboard'
+    document = whiteboard(path,debug=True)
+    source = rf'B\def{separator}\pair\oplus{prefactor}\pair'
+    document.document_request = {'request_id':'definition','base_revision':document.document_state['revision'],
+                                 'action':'source','block_id':'definition','source':source}
+    pair = PairExpression((PairTerm(unbarred=(1,), n0=1),)).state()
+    for editor in document.embedded_pairs:
+        editor.pair_expression = pair
+    document.document_request = {'request_id':'tensor','base_revision':document.document_state['revision'],
+                                 'action':'source','block_id':'use','source':r'B\otimes B'}
+    # Reload also rebuilds the definition from saved committed notation/values.
+    document = whiteboard(path,debug=True)
+    document.simplify_request = {'line_id':'use','action':'evaluate','revision':1,'snapshots':{}}
+    assert document.calculation_feedback['action']=='completed',document.calculation_feedback
+    result = PairExpression.from_state(document.blocks[-1]['pair_calculation']['result'])
+    coefficient = '9' if prefactor else '4'
+    assert {(term.unbarred,str(term.coefficient),term.n0) for term in result.terms} == {
+        ((2,),coefficient,1),((1,1),coefficient,2),
+    }
+
+
 def test_finished_pair_calculation_clears_pending_feedback() -> None:
     pytest.importorskip("anywidget")
     pytest.importorskip("pair_multiplication")

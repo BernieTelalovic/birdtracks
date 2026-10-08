@@ -6,6 +6,7 @@ This repository extends `BernieTelalovic/pair_multiplication` from multiplicatio
 
 ## Working agreements
 
+- Make the smallest complete change. Do not perform optional cleanup or broad investigation. Ask before expanding scope.
 - Ask the author for clarification before choosing or implementing any unspecified approach; never assume a particular implementation. Request pseudocode when it would resolve ambiguity efficiently.
 - Minimize token usage. If a requirement is unclear, ask a concise question instead of spending tokens exploring guessed interpretations.
 - Clarify the mathematical object, normalization, coefficient domain, and canonical form before fixing a public API around it.

@@ -1,0 +1,65 @@
+{
+  "document": {
+    "blocks": [
+      {
+        "id": "text-1",
+        "line_id": "text-1",
+        "pair_snapshots": {
+          "0": {
+            "kind": "sum",
+            "terms": [
+              {
+                "barred": [],
+                "coefficient": "1",
+                "kind": "pair",
+                "n0": "1",
+                "unbarred": [
+                  1
+                ]
+              }
+            ],
+            "version": 1
+          }
+        },
+        "source": "A\\def \\pair"
+      }
+    ],
+    "title": "test"
+  },
+  "format": "birdtracks-whiteboard",
+  "stores": {
+    "diagrams": {
+      "backend": "diagram",
+      "codec": "diagram-v1",
+      "definitions": [
+        {
+          "name": "A",
+          "value": {
+            "kind": "sum",
+            "syntax": [
+              "pair"
+            ],
+            "terms": [
+              {
+                "barred": [],
+                "coefficient": "1",
+                "kind": "pair",
+                "n0": "1",
+                "unbarred": [
+                  1
+                ]
+              }
+            ],
+            "version": 1
+          }
+        }
+      ]
+    },
+    "projectors": {
+      "backend": "projector",
+      "codec": "projector-v1",
+      "definitions": []
+    }
+  },
+  "version": 2
+}

@@ -35,6 +35,9 @@ width is a minimum; an operator grows to fit wider content.
 
 ## Traced projectors
 
+In math mode, `\tr A` renders as `\mathrm{tr} A`, including in whiteboard
+exports.
+
 `tracedprojector` places a top and bottom projector together and joins their
 lines with curved connectors. Use `\topprojector` and `\bottomprojector` to
 define the two diagrams, and `\leftconnect` and `\rightconnect` to define

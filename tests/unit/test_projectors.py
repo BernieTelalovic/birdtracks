@@ -82,6 +82,52 @@ def test_projector_multiplication_is_associative_and_multiplies_coefficients() -
     assert (p * q).coefficient == Fraction(-2, 5)
 
 
+def test_projector_tensor_places_left_operand_above_and_freshly_numbers_lines() -> None:
+    above = Projector([Symmetriser((8, 3))])
+    below = Projector([Antisymmetriser((20, 10))])
+
+    tensor = above @ below
+
+    assert tensor.nodes == (
+        Symmetriser((2, 1)),
+        Antisymmetriser((4, 3)),
+    )
+    assert tensor.connections == ()
+    assert tensor.support == frozenset({1, 2, 3, 4})
+    assert above.support == frozenset({3, 8})
+    assert below.support == frozenset({10, 20})
+
+
+def test_projector_tensor_is_associative_and_multiplies_coefficients() -> None:
+    a = Fraction(2, 3) * Projector([Symmetriser((9,))])
+    b = Fraction(-3, 5) * Projector([Antisymmetriser((4, 7))])
+    c = Projector([Symmetriser((12,))])
+
+    assert (a @ b) @ c == a @ (b @ c)
+    assert (a @ b).coefficient == Fraction(-2, 5)
+
+
+def test_projector_sum_tensor_is_bilinear() -> None:
+    a = Projector([Symmetriser((1,))])
+    b = Projector([Antisymmetriser((1,))])
+    c = Projector([Symmetriser((5, 6))])
+
+    assert (a + b) @ c == (a @ c) + (b @ c)
+    assert a @ (b + c) == (a @ b) + (a @ c)
+
+
+def test_projector_tensor_rejects_different_line_directions() -> None:
+    points_right = Projector(
+        [Symmetriser((1,))], in_direction="left", out_direction="right"
+    )
+    points_left = Projector(
+        [Symmetriser((1,))], in_direction="right", out_direction="left"
+    )
+
+    with pytest.raises(NotImplementedError, match="tensor product.*different directions"):
+        points_right @ points_left
+
+
 @pytest.mark.parametrize(
     ("in_direction", "out_direction"),
     [("left", "right"), ("right", "left")],

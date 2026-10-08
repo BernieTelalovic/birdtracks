@@ -25,7 +25,8 @@
 
 .birdtracks-whiteboard-toolbar {
   position: relative;
-  z-index: 2;
+  /* Stay above transparent source overlays (2) and their custom caret (3). */
+  z-index: 5;
   background: var(--birdtracks-background, #fff);
 }
 
@@ -353,6 +354,42 @@
   font-family: Georgia, serif;
   font-size: 1.15rem;
   line-height: 1.5;
+}
+
+/* Invalid drafts use the same source-mapped editing surface, not a second row. */
+.birdtracks-whiteboard-parse-status {
+  display: block;
+  padding: 0 0.55rem;
+  color: #9a3412;
+  font: 0.75rem/1.4 system-ui, sans-serif;
+}
+.birdtracks-whiteboard-parse-status[hidden] { display: none; }
+.shared-document .birdtracks-whiteboard-block.draft-error .birdtracks-whiteboard-rendered {
+  border: 0;
+}
+.shared-document .birdtracks-whiteboard-embedded-projector,
+.shared-document .birdtracks-whiteboard-embedded-projector .birdtracks-young-term,
+.shared-document .birdtracks-whiteboard-embedded-projector input {
+  background: transparent;
+  font-family: inherit;
+  color: inherit;
+}
+.shared-document .birdtracks-whiteboard-embedded-projector .birdtracks-young-coefficient-editor input,
+.shared-document .birdtracks-whiteboard-embedded-projector .birdtracks-local-fraction input {
+  background: var(--birdtracks-background, #fff);
+  font-family: inherit;
+}
+.shared-document .birdtracks-whiteboard-embedded-projector:not(.inline-active) .birdtracks-creator-endpoint,
+.shared-document .birdtracks-whiteboard-embedded-projector:not(.inline-active) .birdtracks-node-control,
+.shared-document .birdtracks-whiteboard-embedded-projector:not(.inline-active) .birdtracks-add-line-control,
+.shared-document .birdtracks-whiteboard-embedded-projector:not(.inline-active) .birdtracks-line-control,
+.shared-document .birdtracks-whiteboard-embedded-projector:not(.inline-active) .birdtracks-direction-control,
+.shared-document .birdtracks-whiteboard-embedded-projector:not(.inline-active) .birdtracks-expand-control,
+.shared-document .birdtracks-whiteboard-embedded-projector:not(.inline-active) .birdtracks-young-grid,
+.shared-document .birdtracks-whiteboard-embedded-projector:not(.inline-active) .birdtracks-young-axis,
+.shared-document .birdtracks-whiteboard-embedded-projector:not(.inline-active) .birdtracks-local-undo,
+.shared-document .birdtracks-whiteboard-embedded-projector:not(.inline-active) .birdtracks-young-cell-target {
+  visibility: hidden;
 }
 .birdtracks-whiteboard-block.connected-line::before {
   content: "";

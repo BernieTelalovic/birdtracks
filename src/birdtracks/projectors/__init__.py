@@ -18,6 +18,7 @@ from .identities import (
     AlgebraicIdentity,
     ANTISYMMETRISER_RECURSION,
     IDENTITIES,
+    MISMATCHED_YOUNG_LAYERS_ANNIHILATION,
     MULTIPLY_CONNECTED_S_A_ANNIHILATION,
     SAME_TYPE_NESTED_ABSORPTION,
     SYMMETRISER_RECURSION,
@@ -53,10 +54,12 @@ from .simplification import (
     expand_node,
     permute_node_ports,
     recursive_expand_node,
+    remove_automatically_vanishing_terms,
     remove_multiply_connected_s_a_terms,
     simplify_step,
 )
 from .symmetrisers import Antisymmetriser, Symmetriser
+from .young_layers import BracketingYoungLayers, YoungLayerPair
 from .whiteboard import (
     AlgebraBackend,
     DiagramAlgebraBackend,
@@ -89,6 +92,7 @@ from .whiteboard.widget import whiteboard
 
 __all__ = [
     "Antisymmetriser",
+    "BracketingYoungLayers",
     "AlgebraBackend",
     "DiagramAlgebraBackend",
     "DiagramValueCodec",
@@ -97,6 +101,7 @@ __all__ = [
     "AlgebraicIdentity",
     "ANTISYMMETRISER_RECURSION",
     "Connection",
+    "MISMATCHED_YOUNG_LAYERS_ANNIHILATION",
     "NodePort",
     "IDENTITIES",
     "MULTIPLY_CONNECTED_S_A_ANNIHILATION",
@@ -125,6 +130,7 @@ __all__ = [
     "ProjectorSum",
     "PermutationNode",
     "Symmetriser",
+    "YoungLayerPair",
     "ProductExpression",
     "SymbolDefinition",
     "SymbolReference",
@@ -162,6 +168,7 @@ __all__ = [
     "load_resolver_problems",
     "random_exposure_problem",
     "random_resolver_problem",
+    "remove_automatically_vanishing_terms",
     "remove_multiply_connected_s_a_terms",
     "simplify_step",
     "resolve_sa_target_step",

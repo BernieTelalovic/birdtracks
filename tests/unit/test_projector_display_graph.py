@@ -105,7 +105,7 @@ def test_pure_corridor_width_is_capped_at_two_operator_footprint() -> None:
     assert graph["display"]["corridor_width"] <= 2.4 * geometry["step"]
 
 
-def test_mixed_boundary_corridors_inherit_the_widest_growth() -> None:
+def test_attached_permutations_use_connector_width_without_growth() -> None:
     from birdtracks.projectors.layout import widget_graph
 
     graph = widget_graph(
@@ -122,6 +122,21 @@ def test_mixed_boundary_corridors_inherit_the_widest_growth() -> None:
     widths = graph["display"]["corridor_widths"]
     step = graph["geometry"]["step"]
 
-    assert all(step <= width <= 1.2 * step for width in widths)
-    assert widths[0] == max(widths)
-    assert widths[-1] == max(widths)
+    assert widths == [step, step, step]
+
+
+def test_boundary_permutation_adds_no_operator_column_or_padding() -> None:
+    from birdtracks.projectors.layout import widget_graph, default_positions
+
+    a = Antisymmetriser((1, 2, 3))
+    swap = PermutationNode(Permutation.from_cycle(1, 3), support=(1, 2, 3))
+    ordinary = widget_graph(Projector([a]))
+    for nodes, index in (([a, swap], 0), ([swap, a], 1)):
+        p = Projector(nodes)
+        graph = widget_graph(p)
+        assert graph["display"]["operator_columns"] == [[index]]
+        assert graph["display"]["corridor_widths"] == ordinary["display"]["corridor_widths"]
+        assert graph["geometry"]["right_boundary"] == ordinary["geometry"]["right_boundary"]
+        assert default_positions(p)[str(index)] == default_positions(Projector([a]))["0"]
+    pure = widget_graph(Projector([swap]))
+    assert pure["display"]["corridor_width"] > ordinary["geometry"]["step"]

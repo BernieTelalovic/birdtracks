@@ -86,19 +86,20 @@ class ProjectorCanvasSession:
         """Return the active representation document or latest projector sum."""
         if self._state.get("create_kind") == "young":
             from ..young_diagrams import PairExpression
+            from .pair_editor import PairEditorSession
 
+            if 'pair_editor_state' in self._state:
+                return PairEditorSession.decode(self._state['pair_editor_state']).value
             return PairExpression.from_state(self._state["pair_expression"])
-        from .projector_sum import ProjectorSum
-        from .widget import _projector_from_state
+        from .editor_rewrites import expression_value
+        from .editor import EditorSession
 
         terms: list[object] = []
         for term in self._state["lines"][-1]["terms"]:
             state = term["state"]
-            projector = _projector_from_state(
-                state["graph"], state["port_orders"], state["boundary_orders"]
-            )
-            terms.append(int(term["sign"]) * projector)
-        return ProjectorSum(terms)
+            accepted = EditorSession.decode(state['editor_state']).state
+            terms.append(accepted.outer_factor * accepted.projector)
+        return expression_value(terms)
 
     def open(
         self,
@@ -134,6 +135,10 @@ def _validate_canvas_state(state: dict[str, Any]) -> None:
         from ..young_diagrams import PairExpression
 
         PairExpression.from_state(state["pair_expression"])
+    if 'pair_editor_state' in state:
+        from .pair_editor import PairEditorSession
+
+        PairEditorSession.decode(state['pair_editor_state'])
     if not isinstance(state.get("lines"), list) or not state["lines"]:
         raise ValueError("projector canvas session must contain equation lines")
     whiteboard = state.get("whiteboard", [])

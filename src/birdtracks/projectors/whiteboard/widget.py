@@ -40,6 +40,7 @@ from .pair_calculation import (
 )
 from .projector_backend import projector_backend
 from .projector_codec import projector_codec
+from .result_projection import result_source as _result_source, projector_terms_source
 from .sidecar import (
     TypedWhiteboardSidecar,
     WhiteboardSidecar,
@@ -160,43 +161,6 @@ def _expanded_line_colors(
     return result
 
 
-def _result_source(value: ProjectorSum | SymbolicProjectorSum) -> tuple[str, list[dict[str, object]]]:
-    """Typeset exact results through the ordinary whiteboard renderer."""
-    from ..layout import _crossing_reduced_port_orders
-
-    source = "= "
-    terms: list[dict[str, object]] = []
-    if isinstance(value, SymbolicProjectorSum):
-        for index, (projector, coefficient) in enumerate(value.terms):
-            _, presentation_sign = _crossing_reduced_port_orders(projector)
-            displayed = coefficient * projector.coefficient * presentation_sign
-            if index:
-                source += " + "
-            source += displayed.latex_factor()
-            if projector.nodes:
-                start = len(source)
-                source += "R"
-                terms.append({"start": start, "end": len(source),
-                              "value": projector_codec.encode(projector)})
-        return source if value.terms else "= 0", terms
-    for index, (projector, coefficient) in enumerate(value.items()):
-        term = projector * coefficient
-        _, presentation_sign = _crossing_reduced_port_orders(term)
-        number = term.coefficient * presentation_sign
-        source += "- " if number < 0 else "+ " if index else ""
-        magnitude = abs(number)
-        if magnitude != 1 or not term.nodes:
-            source += (str(magnitude.numerator) if magnitude.denominator == 1
-                       else rf"\frac{{{magnitude.numerator}}}{{{magnitude.denominator}}}")
-        if term.nodes:
-            start = len(source)
-            source += "R"
-            terms.append({"start": start, "end": len(source),
-                          "value": projector_codec.encode(term)})
-        source += " "
-    return source.rstrip() if value.terms else "= 0", terms
-
-
 def _projector_color_candidates(
     blocks: list[dict[str, object]],
     explicit: dict[str, object],
@@ -304,6 +268,9 @@ def whiteboard_section_widget(
 
         widget_role = traitlets.Unicode("whiteboard").tag(sync=True)
         blocks = traitlets.List(trait=traitlets.Dict()).tag(sync=True)
+        document_state = traitlets.Dict().tag(sync=True)
+        document_request = traitlets.Dict().tag(sync=True)
+        document_feedback = traitlets.Dict().tag(sync=True)
         title = traitlets.Unicode().tag(sync=True)
         embedded_projector_ids = traitlets.List(
             trait=traitlets.Unicode()
@@ -333,6 +300,19 @@ def whiteboard_section_widget(
         export_content = traitlets.Unicode().tag(sync=True)
         recent_colors = traitlets.List(trait=traitlets.Unicode()).tag(sync=True)
 
+        def set_state(self, sync_data: dict[str, object]) -> None:
+            protected = {'blocks','document_state','embedded_projector_ids','embedded_projectors',
+                         'backend_projector_ids','backend_projectors','embedded_pair_ids','embedded_pairs',
+                         'calculation_feedback','document_feedback','export_content'}
+            incoming={key:value for key,value in sync_data.items() if key not in protected}
+            calculation=incoming.get('simplify_request')
+            if calculation is not None and calculation.get('base_revision')!=self.document_state['revision']:
+                incoming.pop('simplify_request')
+                self.calculation_feedback={'line_id':calculation.get('line_id',''),'action':'rejected',
+                                           'message':'stale calculation command; use committed document state'}
+            super().set_state(incoming)
+            self.send_state(['document_state','blocks'])
+
         @property
         def latex(self) -> str:
             """Return the current synchronized whiteboard as LaTeX."""
@@ -361,6 +341,12 @@ def whiteboard_section_widget(
                 include_equation_alignment=include_equation_alignment,
             )
 
+        def calculate(self,line_id: str, *, action: str='evaluate') -> None:
+            """Request calculation against the current committed document."""
+            self.simplify_request={'line_id':line_id,'action':action,
+                                   'base_revision':self.document_state['revision'],
+                                   'revision':int(self.simplify_request.get('revision',0))+1}
+
     initial_blocks = (
         deepcopy(blocks)
         if blocks is not None
@@ -387,6 +373,66 @@ def whiteboard_section_widget(
     )
     widget.layout.width = "100%"
     widget.debug = debug
+    from .document import DocumentSession
+
+    document = DocumentSession(widget.blocks)
+    widget._document_session = document
+    seen = set()
+    publishing = False
+
+    def publish_document(change=None):
+        nonlocal publishing
+        if publishing:
+            return
+        publishing = True
+        try:
+            document.reconcile(widget.blocks)
+            with widget.hold_trait_notifications():
+                widget.blocks = document.blocks
+                widget.document_state = document.payload()
+        finally:
+            publishing = False
+
+    def document_request(change):
+        request = change['new']
+        identity = request.get('request_id')
+        try:
+            if not isinstance(identity, str) or not identity:
+                raise ValueError('document command requires a request ID')
+            if identity in seen:
+                widget.document_feedback = {'request_id': identity, 'revision': document.revision}
+                return
+            document.check_revision(request.get('base_revision'))
+            action = request.get('action')
+            if action == 'source':
+                widget.blocks = document.edit_source(request.get('block_id'), request.get('source'),
+                                                     base_revision=document.revision)
+            elif action == 'blocks':
+                widget.blocks = document.patch_blocks(request['changes'], request['order'], base_revision=document.revision)
+            elif action == 'pair':
+                from ...young_diagrams import PairExpression
+
+                editor = document.occurrences.get(request.get('occurrence_id'))
+                if editor is None or not hasattr(editor, 'pair_expression') or editor.read_only and (
+                    'value' in request or request.get('operation') in {'undo','redo'}):
+                    raise ValueError('pair command references an inactive or read-only occurrence')
+                if request.get('session_id') != editor._pair_session.identity:
+                    raise ValueError('pair command references a replaced editor')
+                editor._pair_session.commit(request.get('value'),request.get('styles'),
+                                            operation=request.get('operation','edit'))
+                editor._publish_pair_editor()
+            else:
+                raise ValueError('unknown document command')
+            publish_document()
+            seen.add(identity)
+            widget.document_feedback = {'request_id': identity, 'revision': document.revision}
+        except (KeyError, TypeError, ValueError) as exc:
+            widget.document_feedback = {'request_id': identity, 'revision': document.revision,
+                                        'error': str(exc), 'state': document.payload()}
+
+    widget.observe(publish_document, names='blocks')
+    widget.observe(document_request, names='document_request')
+    publish_document()
     return widget
 
 
@@ -411,7 +457,14 @@ def _blank_pair_widget() -> object:
         pair_expression = traitlets.Dict().tag(sync=True)
         pair_drawing_state = traitlets.Dict().tag(sync=True)
         pair_cell_styles = traitlets.Dict().tag(sync=True)
+        pair_editor_state = traitlets.Dict().tag(sync=True)
         read_only = traitlets.Bool(False).tag(sync=True)
+
+        def set_state(self,sync_data):
+            protected={'pair_expression','pair_cell_styles','pair_editor_state','pair_drawing_state',
+                       'pair_editor_feedback','read_only'}
+            super().set_state({key:value for key,value in sync_data.items() if key not in protected})
+            self._publish_pair_editor()
 
         @traitlets.default("pair_expression")
         def _default_pair_expression(self) -> dict[str, object]:
@@ -497,127 +550,167 @@ def whiteboard(
     embedded_pairs: dict[str, object] = {}
     backend_embedded: dict[str, object] = {}
     projector_listeners: dict[str, object] = {}
-    projector_color_listeners: dict[str, object] = {}
     pair_listeners: dict[str, object] = {}
-    backend_projector_listeners: dict[str, object] = {}
-    backend_color_listeners: dict[str, object] = {}
+    backend_editor_listeners: dict[str, object] = {}
+    backend_rewrite_listeners: dict[str, object] = {}
     pair_style_listeners: dict[str, object] = {}
 
-    def append_backend_expansion(
-        block_id: str,
-        term_index: int,
-        expanded: ProjectorSum,
-        expanded_node: int,
-        expansion_parent: Projector,
-        expansion_colors: dict[str, object],
-    ) -> None:
-        """Append a line after manually expanding one displayed term."""
+    def append_shared_rewrite(block_id, term_index, editor, rewrite, *, inline=False):
+        """Insert ordered descendants through the result translation layer."""
+        from dataclasses import replace
+        from uuid import uuid4
+        from ..editor import EditorState
+        from ..editor_widget import configuration_for_state
+        from .result_projection import symbolic_projector_terms_source
 
+        session = getattr(editor, "_editor_session", None)
+        if (not rewrite or session is None or rewrite["parent_term_id"] != session.state.term_id
+                or rewrite["base_revision"] != session.state.revision
+                or (embedded if inline else backend_embedded).get(f"{block_id}:{'projector' if inline else 'backend'}:{term_index}") is not editor):
+            return
         blocks = list(widget.blocks)
-        selected = next(
-            (
-                block
-                for block in blocks
-                if str(block.get("id") or "") == block_id
-                and isinstance(block.get("calculation_terms"), list)
-            ),
-            None,
-        )
-        if selected is None or term_index < 0:
+        selected = next((b for b in blocks if b.get("id") == block_id), None)
+        if selected is None:
             return
-        raw_terms = selected["calculation_terms"]
-        assert isinstance(raw_terms, list)
-        decoded_terms: list[Projector] = []
-        for item in raw_terms:
-            if not isinstance(item, dict) or "value" not in item:
-                return
-            try:
-                value = projector_codec.decode(item["value"])
-            except (TypeError, ValueError):
-                return
-            if not isinstance(value, Projector):
-                return
-            decoded_terms.append(value)
-        if term_index >= len(decoded_terms):
-            return
-
-        next_terms: list[Projector | tuple[Projector, Fraction]] = []
-        for index, value in enumerate(decoded_terms):
-            if index == term_index:
-                next_terms.extend(expanded.items())
-            else:
-                next_terms.append(value)
-        stored_value = projector_codec.decode(selected["calculation_value"])
-        if isinstance(stored_value, ProjectorSum):
-            next_terms.extend((term, coefficient) for term, coefficient in stored_value.items()
-                              if not term.nodes)
-        next_value = ProjectorSum(next_terms)
-        from ..simplification import (
-            collect_fully_expanded_permutations,
-            remove_multiply_connected_s_a_terms,
-        )
-
-        next_value = collect_fully_expanded_permutations(
-            remove_multiply_connected_s_a_terms(next_value)
-        )
-
-        parent_colors = selected.get("backend_line_colors", {})
-        candidates: list[tuple[Projector, dict[str, object]]] = []
-        if isinstance(parent_colors, dict):
-            for index, value in enumerate(decoded_terms):
-                if index == term_index:
-                    continue
-                colors = parent_colors.get(f"{block_id}:backend:{index}")
-                if isinstance(colors, dict) and colors:
-                    candidates.append((value, deepcopy(colors)))
-            expanded_colors = expansion_colors
-            if isinstance(expanded_colors, dict) and expanded_colors:
-                candidates.extend(
-                    (value, _expanded_line_colors(
-                        expansion_parent, value, expanded_colors, expanded_node,
-                    ))
-                    for value, _coefficient in expanded.items()
-                )
-
-        group = str(selected.get("calculation_group") or "")
-        group_indexes = [
-            index
-            for index, block in enumerate(blocks)
-            if str(block.get("calculation_group") or "") == group
-        ]
-        if not group or not group_indexes:
-            return
-        step = max(
-            int(block.get("calculation_step", 0))
-            for block in blocks
-            if str(block.get("calculation_group") or "") == group
-        ) + 1
-        display_source, calculation_terms = _result_source(next_value)
+        raw_terms = selected.get("calculation_terms", [])
+        symbolic = bool(raw_terms) and all("outer_factor" in t for t in raw_terms)
+        descendants, factors = [], []
+        if inline:
+            from .result_projection import inline_rewrite_factor
+            source = str(selected.get("source") or "")
+            markers = list(_PROJECTOR_MARKER.finditer(source))
+            if len(markers) != 1:
+                raise ValueError("expand composite expressions on their evaluated result line")
+            factor = inline_rewrite_factor(source,markers[0].start(),editor._whiteboard_source_value,session.state.projector)
+            states = [EditorState.decode(s) for s in rewrite["states"]]
+            descendants = [replace(s,projector=s.projector*factor) for s in states]
+            factors = [Fraction(1)] * len(descendants)
+        index = 0
+        while not inline and (current := backend_embedded.get(f"{block_id}:backend:{index}")) is not None:
+            states = ([EditorState.decode(s) for s in rewrite["states"]] if index == term_index else
+                      [replace(current._editor_session.state, term_id=uuid4().hex, revision=0)])
+            descendants.extend(states)
+            factors.extend([projector_codec.decode(raw_terms[index]["outer_factor"]) if symbolic else Fraction(1)] * len(states))
+            index += 1
+        from ..editor_rewrites import cleanup_occurrences
+        if symbolic:
+            descendants = [replace(s, outer_factor=s.outer_factor*factor)
+                           for s, factor in zip(descendants, factors, strict=True)]
+        descendants = cleanup_occurrences(tuple(descendants), geometry=editor.graph["geometry"])
+        if symbolic:
+            factors = [s.outer_factor for s in descendants]
+            descendants = tuple(replace(s, outer_factor=Fraction(1)) for s in descendants)
+        occurrences = [s.projector * s.outer_factor for s in descendants]
+        if symbolic:
+            pairs = list(zip(occurrences, factors, strict=True))
+            for scalar in raw_terms[0].get("scalar_terms", []):
+                pairs.append((projector_codec.decode(scalar["value"]), projector_codec.decode(scalar["outer_factor"])))
+            source, terms = symbolic_projector_terms_source(pairs)
+            value_fields = {}
+        else:
+            aggregate = projector_codec.decode(selected["calculation_value"]) if "calculation_value" in selected else None
+            if isinstance(aggregate, ProjectorSum):
+                occurrences.extend(p*c for p, c in aggregate.items() if not p.nodes)
+            source, terms = projector_terms_source(occurrences)
+            value_fields = {"calculation_value": projector_codec.encode(ProjectorSum(occurrences))}
+        group = str(selected.get("calculation_group") or block_id)
+        group_indexes = [i for i, b in enumerate(blocks) if b.get("calculation_group") == group or b.get("id") == block_id]
+        step = max(int(blocks[i].get("calculation_step", 0)) for i in group_indexes) + 1
         generated_id = f"calculation-{group}-{step}"
-        generated_colors = _calculation_color_map(
-            generated_id, calculation_terms, candidates,
-        )
-        generated = {
-            "id": generated_id,
-            "source": display_source,
-            "line_id": generated_id,
-            "read_only": True,
-            "calculation_group": group,
-            "calculation_step": step,
-            "calculation_value": projector_codec.encode(next_value),
-            "calculation_terms": calculation_terms,
-        }
-        if generated_colors:
-            generated["backend_line_colors"] = generated_colors
-        updated = list(blocks)
-        updated.insert(max(group_indexes) + 1, generated)
-        widget.blocks = updated
+        generated = {"id":generated_id,"line_id":generated_id,"source":source,"read_only":True,
+                     "calculation_group":group,"calculation_step":step,"calculation_terms":terms,
+                     "editor_rewrite_parent":block_id,
+                     "backend_presentations":{str(i):configuration_for_state(s, editor.graph["geometry"]).state()
+                                              for i, s in enumerate(descendants)}, **value_fields}
+        blocks.insert(max(group_indexes)+1, generated)
+        widget.blocks = blocks
+
+    def backend_document_command(action, block_id, key, editor, *, inline=False):
+        if (embedded if inline else backend_embedded).get(key) is not editor:
+            return
+        blocks = deepcopy(widget.blocks)
+        selected = next((b for b in blocks if b.get("id") == block_id), None)
+        if selected is None:
+            return
+        if action == "undo" and selected.get("editor_rewrite_parent"):
+            group = selected.get("calculation_group")
+            if any(b.get("calculation_group") == group and b.get("calculation_step",0) > selected.get("calculation_step",0) for b in blocks):
+                return
+            parent = next((b for b in blocks if b.get("id") == selected["editor_rewrite_parent"]), None)
+            if parent is None:
+                return
+            parent["editor_rewrite_redo"] = selected
+            blocks.remove(selected)
+        elif action == "redo" and isinstance(selected.get("editor_rewrite_redo"), dict):
+            generated = selected.pop("editor_rewrite_redo")
+            blocks.insert(blocks.index(selected)+1,generated)
+        else:
+            return
+        widget.blocks = blocks
+
+    def backend_document_history(block_id):
+        selected = next((b for b in widget.blocks if b.get("id") == block_id), {})
+        latest = not any(b.get("calculation_group") == selected.get("calculation_group")
+                         and b.get("calculation_step",0) > selected.get("calculation_step",0) for b in widget.blocks)
+        return bool(selected.get("editor_rewrite_parent")) and latest, bool(selected.get("editor_rewrite_redo"))
+
+    def publish_backend_line(block_id: str) -> None:
+        """Project accepted editor occurrences and text as one document update."""
+        updated = []
+        for block in widget.blocks:
+            if block.get("id") != block_id:
+                updated.append(block)
+                continue
+            if "calculation_terms" not in block:
+                presentations = deepcopy(block.get("backend_presentations", {}))
+                prefix = f"{block_id}:backend:"
+                for key, editor in backend_embedded.items():
+                    if key.startswith(prefix) and getattr(editor, "_editor_session", None) is not None:
+                        presentations[key[len(prefix):]] = editor.configuration.state()
+                        presentations[key[len(prefix):]]["backend_basis_value"] = projector_codec.encode(editor._source_projector)
+                updated.append({**block, "backend_presentations": presentations})
+                continue
+            aggregate = projector_codec.decode(block["calculation_value"]) if "calculation_value" in block else None
+            occurrences = []
+            presentations = deepcopy(block.get("backend_presentations", {}))
+            for index, item in enumerate(block["calculation_terms"]):
+                editor = backend_embedded.get(f"{block_id}:backend:{index}")
+                if editor is not None and getattr(editor, "_editor_session", None) is not None:
+                    occurrences.append(editor.projector)
+                    presentations[str(index)] = editor.configuration.state()
+                else:
+                    occurrences.append(projector_codec.decode(item["value"]))
+            # Scalar-only terms do not have an embedded editor occurrence.
+            if isinstance(aggregate, ProjectorSum):
+                occurrences.extend(p * c for p, c in aggregate.items() if not p.nodes)
+                source, terms = projector_terms_source(occurrences)
+            elif all("outer_factor" in item for item in block["calculation_terms"]):
+                from .result_projection import project_symbolic_occurrences
+
+                source, terms = project_symbolic_occurrences(occurrences, block["calculation_terms"])
+            else:
+                # Historical symbolic rows lack an encoded outer factor. Keep
+                # their source and value rather than infer algebra from text.
+                updated.append({**block, "backend_presentations": presentations})
+                continue
+            if isinstance(aggregate, ProjectorSum):
+                from ..editor_rewrites import expression_value
+                aggregate_fields = {"calculation_value":projector_codec.encode(expression_value(occurrences))}
+            else:
+                aggregate_fields = {}
+            updated.append({**block, "source": source, "calculation_terms": terms,
+                            "backend_presentations": presentations,
+                            "backend_line_colors": {f"{block_id}:backend:{i}":s['line_colors']
+                                                    for i,s in presentations.items()}, **aggregate_fields})
+        if updated != widget.blocks:
+            widget.blocks = updated
 
     def sync_backend_calculation(
         change: dict[str, object] | None = None,
     ) -> None:
         del change
         nonlocal stores
+        committed_blocks = widget._document_session.committed_blocks
         explicit = dict(zip(
             widget.embedded_projector_ids,
             widget.embedded_projectors,
@@ -625,7 +718,7 @@ def whiteboard(
         ))
         pair_assignment_names = {
             match.group("name")
-            for block in widget.blocks
+            for block in committed_blocks
             if _PAIR_MARKER.search(str(block.get("source") or ""))
             and (match := re.match(
                 r"^\s*(?P<name>\S+?)\s*(?:\\def\b|:=)",
@@ -634,7 +727,7 @@ def whiteboard(
         }
         try:
             pair_assignment_names.update(
-                pair_definitions(widget.blocks, explicit, {}).keys()
+                pair_definitions(committed_blocks, explicit, {}).keys()
             )
         except (TypeError, ValueError, LookupError, NotImplementedError):
             pass
@@ -645,7 +738,7 @@ def whiteboard(
         # A simplified definition is represented by a generated equality line
         # in the same calculation group.  Use its exact value when rebuilding
         # the environment so later references see the newest state.
-        for block in widget.blocks:
+        for block in committed_blocks:
             source = str(block.get("source") or "")
             assignment = re.match(r"^\s*(?P<name>\S+?)\s*(?:\\def\b|:=)", source)
             if not assignment:
@@ -654,7 +747,7 @@ def whiteboard(
                 continue
             group = str(block.get("calculation_group") or block.get("line_id") or "")
             candidates = [
-                item for item in widget.blocks
+                item for item in committed_blocks
                 if group
                 and str(item.get("calculation_group") or "") == group
                 and "calculation_step" in item
@@ -670,7 +763,7 @@ def whiteboard(
             except (KeyError, TypeError, ValueError):
                 continue
         projector_blocks = [
-            block for block in widget.blocks
+            block for block in committed_blocks
             if not (
                 (assignment := re.match(
                     r"^\s*(?P<name>\S+?)\s*(?:\\def\b|:=)",
@@ -679,11 +772,18 @@ def whiteboard(
                 and assignment.group("name") in pair_assignment_names
             )
         ]
-        stores_projectors, terms = calculate_projector_blocks(
-            projector_blocks,
-            explicit,
-            initial_definitions,
-        )
+        try:
+            stores_projectors, terms = calculate_projector_blocks(
+                projector_blocks,
+                explicit,
+                initial_definitions,
+            )
+        except NotImplementedError:
+            # Individual valid commits may temporarily make a compound value
+            # unsupported (e.g. changing both tensor factors' directions).
+            # Keep the last valid projection; explicit evaluation reports the
+            # unsupported operation if the user leaves that state unfinished.
+            return
         stored_terms: list[BackendTerm] = []
         for block in widget.blocks:
             block_id = str(block.get("id") or "")
@@ -721,12 +821,12 @@ def whiteboard(
             editor = backend_embedded.pop(key, None)
             if editor is None:
                 return
-            listener = backend_projector_listeners.pop(key, None)
+            listener = backend_editor_listeners.pop(key, None)
             if listener is not None:
-                editor.unobserve(listener, names="expand_node_request")
-            color_listener = backend_color_listeners.pop(key, None)
-            if color_listener is not None:
-                editor.unobserve(color_listener, names="line_colors")
+                editor.unobserve(listener, names="editor_state")
+            listener = backend_rewrite_listeners.pop(key, None)
+            if listener is not None:
+                editor.unobserve(listener, names="editor_rewrite")
 
         for term in terms:
             index = per_block_index.get(term.block_id, 0)
@@ -738,114 +838,80 @@ def whiteboard(
                  if str(block.get("id") or "") == term.block_id),
                 None,
             )
+            stored_presentations = (source_block.get("backend_presentations", {})
+                                    if isinstance(source_block, dict) else {})
             existing = backend_embedded.get(key)
             if (
                 existing is not None
                 and getattr(existing, "_source_projector", None) != term.value
+                and existing.projector != term.value
             ):
                 discard_backend_editor(key)
+            elif existing is not None and existing.projector == term.value:
+                existing._source_projector = term.value
             if key not in backend_embedded:
                 from ..widget import projector_widget
+                from ..configuration import ProjectorConfiguration
+
+                presentation = stored_presentations.get(str(index))
+                configuration = None
+                render_value = term.value
+                if isinstance(presentation, dict):
+                    from ..editor import EditorSession
+
+                    accepted = EditorSession.decode(presentation['editor_state']).state.projector
+                    basis = presentation.get("backend_basis_value")
+                    if (accepted == term.value
+                            or basis is not None and projector_codec.decode(basis) == term.value):
+                        render_value = accepted
+                        configuration = ProjectorConfiguration.from_state(render_value, presentation)
 
                 editor = projector_widget(
-                    term.value,
+                    render_value,
+                    configuration=configuration,
                     mode="evaluate",
                     embedded=True,
                     debug=debug,
                 )
                 editor.widget_role = "embedded"
+                editor._source_projector = term.value
+                if configuration is None and isinstance(source_block, dict):
+                    colors = source_block.get("backend_line_colors", {}).get(key, source_block.get("line_colors", {}))
+                    if colors:
+                        drawing = editor._editor_session.state.presentation
+                        drawing["line_colors"] = deepcopy(colors)
+                        editor._editor_session.presentation_checkpoint(drawing, base_revision=editor._editor_session.state.revision)
+                        editor._publish_editor()
                 backend_embedded[key] = editor
-                stored_presentations = (
-                    source_block.get("backend_presentations", {})
-                    if isinstance(source_block, dict)
-                    and isinstance(source_block.get("backend_presentations"), dict)
-                    else {}
-                )
-                presentation = stored_presentations.get(str(index))
-                if (
-                    isinstance(presentation, dict)
-                    and presentation.get("graph") == editor.graph
-                ):
-                    for field in (
-                        "positions",
-                        "free_levels",
-                        "port_orders",
-                        "boundary_orders",
-                        "effective_coefficient",
-                    ):
-                        value = presentation.get(field)
-                        if isinstance(value, dict):
-                            setattr(editor, field, deepcopy(value))
+                editor._editor_document_command = lambda action, block_id=term.block_id, key=key, editor=editor: backend_document_command(action, block_id, key, editor)
+                editor._editor_document_history = lambda block_id=term.block_id: backend_document_history(block_id)
+                if getattr(editor, "_editor_session", None) is not None:
+                    def on_editor_state(change, *, block_id=term.block_id, key=key, editor=editor):
+                        if change["new"] and backend_embedded.get(key) is editor:
+                            if change.get("old") and change["new"]["revision"] != change["old"]["revision"]:
+                                widget.blocks = [{k:v for k,v in b.items() if k != "editor_rewrite_redo"}
+                                                 if b.get("id") == block_id else b for b in widget.blocks]
+                            publish_backend_line(block_id)
 
-                def on_backend_expand(
-                    change: dict[str, object],
-                    *,
-                    block_id=term.block_id,
-                    term_index=index,
-                    editor=editor,
-                ) -> None:
-                    request = change.get("new")
-                    if not isinstance(request, dict) or not request:
-                        return
-                    expanded = getattr(editor, "expanded_projector_sum", None)
-                    if isinstance(expanded, ProjectorSum):
-                        from ..widget import _projector_from_state
+                    editor.observe(on_editor_state, names="editor_state")
+                    backend_editor_listeners[key] = on_editor_state
+                    def on_shared_rewrite(change, *, block_id=term.block_id, index=index, editor=editor):
+                        append_shared_rewrite(block_id, index, editor, change["new"])
+                    editor.observe(on_shared_rewrite, names="editor_rewrite")
+                    backend_rewrite_listeners[key] = on_shared_rewrite
 
-                        append_backend_expansion(
-                            block_id, term_index, expanded, int(request["node"]),
-                            _projector_from_state(
-                                editor.graph, editor.port_orders, editor.boundary_orders,
-                            ),
-                            deepcopy(editor.line_colors),
-                        )
-
-                editor.observe(on_backend_expand, names="expand_node_request")
-                backend_projector_listeners[key] = on_backend_expand
-
-                def on_backend_line_colors(
-                    change: dict[str, object],
-                    *,
-                    key: str = key,
-                    block_id: str = term.block_id,
-                ) -> None:
-                    colors = change.get("new")
-                    if not isinstance(colors, dict):
-                        return
-                    updated = []
-                    changed = False
-                    for block in widget.blocks:
-                        copy = deepcopy(block)
-                        if str(block.get("id") or "") == block_id:
-                            stored = copy.setdefault("backend_line_colors", {})
-                            if not isinstance(stored, dict):
-                                stored = {}
-                                copy["backend_line_colors"] = stored
-                            stored[key] = deepcopy(colors)
-                            changed = copy != block
-                        updated.append(copy)
-                    if changed:
-                        widget.blocks = updated
-
-                backend_color_listeners[key] = on_backend_line_colors
-                editor.observe(on_backend_line_colors, names="line_colors")
-            stored_colors = (
-                source_block.get("backend_line_colors", {}).get(key, {})
-                if isinstance(source_block, dict)
-                and isinstance(source_block.get("backend_line_colors"), dict)
-                else {}
-            )
-            if (
-                not stored_colors
-                and isinstance(source_block, dict)
-                and isinstance(source_block.get("line_colors"), dict)
-            ):
-                stored_colors = source_block["line_colors"]
-            if isinstance(stored_colors, dict):
-                backend_embedded[key].line_colors = deepcopy(stored_colors)
+            committed = backend_embedded[key]._editor_session
+            undo, redo = backend_document_history(term.block_id)
+            if (backend_embedded[key].editor_state.get("can_undo") != bool(committed._undo or undo)
+                    or backend_embedded[key].editor_state.get("can_redo") != bool(committed._redo or redo)):
+                backend_embedded[key]._publish_editor()
             backend_terms.setdefault(term.block_id, []).append({
                 "id": key,
                 "start": term.start,
                 "end": term.end,
+                **({"factor_preview": source_block["calculation_terms"][index]["factor_preview"]}
+                   if isinstance(source_block, dict) and index < len(source_block.get("calculation_terms", []))
+                   and "factor_preview" in source_block["calculation_terms"][index] else {}),
                 "prefactor_owned": any(
                     block.get("id") == term.block_id and "calculation_step" in block
                     for block in widget.blocks
@@ -857,6 +923,10 @@ def whiteboard(
                 discard_backend_editor(key)
         widget.backend_projector_ids = requested
         widget.backend_projectors = [backend_embedded[key] for key in requested]
+        widget._document_session.occurrences.update(backend_embedded)
+        for key in tuple(widget._document_session.occurrences):
+            if ':backend:' in key and key not in backend_embedded:
+                del widget._document_session.occurrences[key]
 
         updated_blocks = []
         for block in widget.blocks:
@@ -880,7 +950,7 @@ def whiteboard(
             widget.embedded_pairs,
             strict=False,
         ))
-        values = pair_definitions(widget.blocks, explicit, {})
+        values = pair_definitions(widget._document_session.committed_blocks, explicit, {})
         diagrams = EvaluationEnvironment(diagram_backend)
         for name, value in values.items():
             diagrams.define(name, value)
@@ -895,7 +965,11 @@ def whiteboard(
 
         def on_saved(change: dict[str, object]) -> None:
             del change
-            snapshot = getattr(editor, "save_snapshot", None)
+            if embedded.get(projector_id) is not editor:
+                return
+            snapshot = editor.configuration.state()
+            if isinstance(snapshot, dict) and snapshot and hasattr(editor, "_whiteboard_source_value"):
+                snapshot["source_value"] = projector_codec.encode(editor._whiteboard_source_value)
             if isinstance(snapshot, dict) and snapshot:
                 block_id, occurrence = projector_id.split(":projector:", 1)
                 updated = []
@@ -917,24 +991,60 @@ def whiteboard(
         projector_listeners[projector_id] = on_saved
         editor.observe(on_saved, names="saved_revision")
 
-        def on_line_colors(change: dict[str, object]) -> None:
-            colors = change.get("new")
-            if not isinstance(colors, dict):
+        stored = editor.configuration.state().get("source_value")
+        if not hasattr(editor, "_whiteboard_source_value"):
+            editor._whiteboard_source_value = (projector_codec.decode(stored) if stored else editor.projector)
+        block_id = projector_id.split(":projector:", 1)[0]
+        editor._editor_document_command = lambda action: backend_document_command(
+            action, block_id, projector_id, editor, inline=True)
+        editor._editor_document_history = lambda: backend_document_history(block_id)
+
+        def on_committed(change):
+            if embedded.get(projector_id) is not editor or not change["new"] or not change["old"]:
                 return
-            block_id = projector_id.split(":projector:", 1)[0]
+            from .result_projection import project_inline_occurrence
+
+            old = change["old"]["graph"]["coefficient"]
+            previous = Fraction(int(old["numerator"]), int(old["denominator"]))
+            current = editor.projector
+            block_id, occurrence = projector_id.split(":projector:", 1)
             updated = []
-            changed = False
             for block in widget.blocks:
                 copy = deepcopy(block)
                 if str(block.get("id") or "") == block_id:
-                    copy["line_colors"] = deepcopy(colors)
-                    changed = copy != block
+                    if change["new"]["revision"] != change["old"]["revision"]:
+                        copy.pop("editor_rewrite_redo", None)
+                    draft = copy.get('source_edit', {})
+                    source = str(draft.get('committed_source', block.get("source") or ""))
+                    markers = list(_PROJECTOR_MARKER.finditer(source))
+                    index = int(occurrence)
+                    if index >= len(markers):
+                        return
+                    start = markers[index].start()
+                    projected_source, editor._whiteboard_source_value = project_inline_occurrence(
+                        source, start, current, previous, editor._whiteboard_source_value,
+                    )
+                    if draft.get('error'):
+                        copy['source_edit'] = {**draft, 'committed_source': projected_source}
+                    else:
+                        copy['source'] = projected_source
+                    snapshot = editor.configuration.state()
+                    snapshot["source_value"] = projector_codec.encode(editor._whiteboard_source_value)
+                    copy['line_colors'] = deepcopy(snapshot['line_colors'])
+                    snapshots = copy.setdefault("projector_snapshots", {})
+                    snapshots[occurrence] = snapshot
                 updated.append(copy)
-            if changed:
+            if updated != widget.blocks:
                 widget.blocks = updated
+            sync_backend_calculation()
 
-        projector_color_listeners[projector_id] = on_line_colors
-        editor.observe(on_line_colors, names="line_colors")
+        editor.observe(on_committed, names="editor_state")
+        def on_inline_rewrite(change):
+            if embedded.get(projector_id) is not editor:
+                return
+            block_id, occurrence = projector_id.split(":projector:",1)
+            append_shared_rewrite(block_id,int(occurrence),editor,change["new"],inline=True)
+        editor.observe(on_inline_rewrite,names="editor_rewrite")
 
     def sync_embedded_projectors(
         change: dict[str, object] | None = None,
@@ -943,12 +1053,11 @@ def whiteboard(
         from ..configuration import ProjectorConfiguration
         from ..widget import (
             _blank_creator_widget,
-            _projector_from_state,
             projector_widget,
         )
 
         requested: list[str] = []
-        for block in widget.blocks:
+        for block in widget._document_session.committed_blocks:
             block_id = str(block.get("id", ""))
             source = str(block.get("source", ""))
             occurrence = 0
@@ -968,11 +1077,9 @@ def whiteboard(
                     )
                     mode = "evaluate" if block.get("read_only") else "create"
                     if isinstance(snapshot, dict):
-                        projector = _projector_from_state(
-                            snapshot["graph"],
-                            snapshot["port_orders"],
-                            snapshot["boundary_orders"],
-                        )
+                        from ..editor import EditorSession
+
+                        projector = EditorSession.decode(snapshot['editor_state']).state.projector
                         editor = projector_widget(
                             projector,
                             configuration=ProjectorConfiguration.from_state(
@@ -1014,12 +1121,21 @@ def whiteboard(
                                 debug=debug, embedded=True
                             )
                     editor.widget_role = "embedded"  # type: ignore[attr-defined]
+                    if not isinstance(snapshot, dict) and block.get("line_colors"):
+                        drawing = editor._editor_session.state.presentation
+                        drawing["line_colors"] = deepcopy(block["line_colors"])
+                        editor._editor_session.presentation_checkpoint(drawing, base_revision=editor._editor_session.state.revision)
+                        editor._publish_editor()
                     embedded[key] = editor
                 embedded[key].mode = "evaluate" if block.get("read_only") else "create"
-                colors = block.get("line_colors")
-                if isinstance(colors, dict):
-                    embedded[key].line_colors = deepcopy(colors)
                 watch_projector(key, embedded[key])
+                session = getattr(embedded[key], "_editor_session", None)
+                if session is not None:
+                    undo, redo = backend_document_history(block_id)
+                    state = embedded[key].editor_state
+                    if (state.get("can_undo") != bool(session._undo or undo)
+                            or state.get("can_redo") != bool(session._redo or redo)):
+                        embedded[key]._publish_editor()
                 occurrence += 1
                 position = match.end()
 
@@ -1030,12 +1146,13 @@ def whiteboard(
                 listener = projector_listeners.pop(key, None)
                 if listener is not None:
                     embedded[key].unobserve(listener, names="saved_revision")
-                color_listener = projector_color_listeners.pop(key, None)
-                if color_listener is not None:
-                    embedded[key].unobserve(color_listener, names="line_colors")
                 del embedded[key]
         widget.embedded_projector_ids = requested
         widget.embedded_projectors = [embedded[key] for key in requested]
+        widget._document_session.occurrences.update(embedded)
+        for key in tuple(widget._document_session.occurrences):
+            if ':projector:' in key and key not in embedded:
+                del widget._document_session.occurrences[key]
         sync_backend_calculation()
 
     def sync_embedded_pairs(
@@ -1045,7 +1162,7 @@ def whiteboard(
         from ...young_diagrams import PairExpression
 
         requested: list[str] = []
-        for block in widget.blocks:
+        for block in widget._document_session.committed_blocks:
             block_id = str(block.get("id", ""))
             source = str(block.get("source", ""))
             occurrence = 0
@@ -1100,6 +1217,9 @@ def whiteboard(
                             ).state()
                         )
                     editor.pair_cell_styles = styles
+                    from ..pair_editor import attach_pair_editor
+
+                    attach_pair_editor(editor,block.get('pair_editor_states',{}).get(str(occurrence)))
                     embedded_pairs[key] = editor
                     listener = (
                         lambda change, key=key: on_pair_changed(key, change)
@@ -1137,6 +1257,7 @@ def whiteboard(
                         if listener is not None:
                             editor.observe(listener, names="pair_expression")
                 embedded_pairs[key].read_only = bool(block.get("read_only"))
+                publish_pair_state(embedded_pairs[key])
                 occurrence += 1
                 position = match.end()
 
@@ -1152,7 +1273,14 @@ def whiteboard(
             del embedded_pairs[key]
         widget.embedded_pair_ids = requested
         widget.embedded_pairs = [embedded_pairs[key] for key in requested]
+        widget._document_session.occurrences.update(embedded_pairs)
+        for key in tuple(widget._document_session.occurrences):
+            if ':pair:' in key and key not in embedded_pairs:
+                del widget._document_session.occurrences[key]
         sync_pair_definitions()
+
+    def publish_pair_state(editor):
+        editor._publish_pair_editor()
 
     def on_pair_changed(key: str, change: dict[str, object]) -> None:
         expression = change.get("new")
@@ -1167,6 +1295,7 @@ def whiteboard(
                         snapshots = {}
                     snapshots[occurrence] = deepcopy(expression)
                     copy["pair_snapshots"] = snapshots
+                    copy.setdefault('pair_editor_states',{})[occurrence] = embedded_pairs[key]._pair_session.payload()
                 updated.append(copy)
             if updated != list(widget.blocks):
                 widget.blocks = updated
@@ -1174,6 +1303,8 @@ def whiteboard(
         sync_pair_definitions()
         if resolved is not None:
             persist()
+        if key in embedded_pairs:
+            publish_pair_state(embedded_pairs[key])
 
     def on_pair_styles_changed(key: str, change: dict[str, object]) -> None:
         styles = change.get("new")
@@ -1199,12 +1330,15 @@ def whiteboard(
                     stored = {occurrence: stored}
                 stored[occurrence] = deepcopy(styles)
                 copy["pair_cell_styles"] = stored
+                copy.setdefault('pair_editor_states',{})[occurrence] = embedded_pairs[key]._pair_session.payload()
                 changed = copy != block
             updated.append(copy)
         if changed:
             widget.blocks = updated
         if resolved is not None:
             persist()
+        if key in embedded_pairs:
+            publish_pair_state(embedded_pairs[key])
 
     widget.observe(sync_embedded_projectors, names="blocks")
     widget.observe(sync_embedded_pairs, names="blocks")
@@ -1224,6 +1358,13 @@ def whiteboard(
             else:
                 resolved = _title_path(title, default_directory)
             widget.session = resolved
+        blocks = deepcopy(widget.blocks)
+        for block in blocks:
+            for key, editor in embedded_pairs.items():
+                prefix = f"{block['id']}:pair:"
+                if key.startswith(prefix):
+                    occurrence = key[len(prefix):]
+                    block.setdefault('pair_editor_states', {})[occurrence] = editor._pair_session.payload()
         write_typed_sidecar(
             resolved,
             stores,
@@ -1233,7 +1374,7 @@ def whiteboard(
             diagram_codec=diagram_codec,
             document={
                 "title": title,
-                "blocks": deepcopy(widget.blocks),
+                "blocks": blocks,
                 "recent_colors": list(widget.recent_colors),
             },
         )
@@ -1316,6 +1457,12 @@ def whiteboard(
         line_id = request.get("line_id")
         if action not in {"evaluate", "restore"} or not isinstance(line_id, str):
             return
+        if 'base_revision' in request:
+            try:
+                widget._document_session.check_revision(request['base_revision'])
+            except ValueError as error:
+                feedback(line_id,'rejected',str(error))
+                return
         blocks = list(widget.blocks)
         selected = next(
             (block for block in blocks if str(block.get("id") or "") == line_id),
@@ -1540,11 +1687,6 @@ def whiteboard(
             strict=False,
         ))
         try:
-            snapshots = request.get("snapshots", {})
-            if isinstance(snapshots, dict):
-                for key, snapshot in snapshots.items():
-                    if key in explicit and isinstance(snapshot, dict) and snapshot:
-                        explicit[key].save_snapshot = snapshot
             if "calculation_value" in selected:
                 value = projector_codec.decode(selected["calculation_value"])
             else:
