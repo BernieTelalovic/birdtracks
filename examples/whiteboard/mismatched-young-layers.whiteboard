@@ -64213,6 +64213,903 @@
                 5
               ]
             },
+            "editor_state": {
+              "format": "birdtracks-editor",
+              "redo": [],
+              "state": {
+                "node_ids": [
+                  "young-stress-partial-identity-support-sa-as:node:0",
+                  "young-stress-partial-identity-support-sa-as:node:1",
+                  "young-stress-partial-identity-support-sa-as:node:2",
+                  "young-stress-partial-identity-support-sa-as:node:3",
+                  "young-stress-partial-identity-support-sa-as:node:4",
+                  "young-stress-partial-identity-support-sa-as:node:5",
+                  "young-stress-partial-identity-support-sa-as:node:6",
+                  "young-stress-partial-identity-support-sa-as:node:7",
+                  "young-stress-partial-identity-support-sa-as:node:8",
+                  "young-stress-partial-identity-support-sa-as:node:9",
+                  "young-stress-partial-identity-support-sa-as:node:10",
+                  "young-stress-partial-identity-support-sa-as:node:11",
+                  "young-stress-partial-identity-support-sa-as:node:12"
+                ],
+                "outer_factor": {
+                  "denominator": "1",
+                  "numerator": "1",
+                  "type": "rational"
+                },
+                "presentation": {
+                  "boundary_orders": {
+                    "input": [
+                      1,
+                      2,
+                      3,
+                      4,
+                      5
+                    ],
+                    "output": [
+                      1,
+                      2,
+                      3,
+                      4,
+                      5
+                    ]
+                  },
+                  "free_levels": {
+                    "0": {
+                      "4": 3,
+                      "5": 4
+                    },
+                    "1": {
+                      "2": 2,
+                      "3": 3,
+                      "5": 4
+                    },
+                    "10": {
+                      "5": 4
+                    },
+                    "2": {},
+                    "3": {},
+                    "4": {},
+                    "5": {},
+                    "6": {},
+                    "7": {},
+                    "8": {},
+                    "9": {
+                      "5": 4
+                    }
+                  },
+                  "line_colors": {},
+                  "positions": {
+                    "0": {
+                      "x": 3.3,
+                      "y": 2.5
+                    },
+                    "1": {
+                      "x": 5.3,
+                      "y": 2.0
+                    },
+                    "10": {
+                      "x": 7.3,
+                      "y": 4.0
+                    },
+                    "11": {
+                      "x": 9.3,
+                      "y": 2.0
+                    },
+                    "12": {
+                      "x": 9.3,
+                      "y": 4.0
+                    },
+                    "2": {
+                      "x": 6.8,
+                      "y": 3.0
+                    },
+                    "3": {
+                      "x": 8.8,
+                      "y": 3.0
+                    },
+                    "4": {
+                      "x": 10.8,
+                      "y": 3.0
+                    },
+                    "5": {
+                      "x": 12.8,
+                      "y": 2.0
+                    },
+                    "6": {
+                      "x": 14.8,
+                      "y": 3.0
+                    },
+                    "7": {
+                      "x": 16.8,
+                      "y": 3.0
+                    },
+                    "8": {
+                      "x": 18.8,
+                      "y": 3.0
+                    },
+                    "9": {
+                      "x": 7.3,
+                      "y": 2.0
+                    }
+                  }
+                },
+                "projector": {
+                  "coefficient": {
+                    "denominator": "1",
+                    "numerator": "1"
+                  },
+                  "connections": [
+                    {
+                      "source": {
+                        "label": 1,
+                        "node": 1
+                      },
+                      "target": {
+                        "label": 1,
+                        "node": 0
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 1,
+                        "node": 2
+                      },
+                      "target": {
+                        "label": 1,
+                        "node": 1
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 2,
+                        "node": 2
+                      },
+                      "target": {
+                        "label": 2,
+                        "node": 0
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 3,
+                        "node": 2
+                      },
+                      "target": {
+                        "label": 3,
+                        "node": 0
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 4,
+                        "node": 2
+                      },
+                      "target": {
+                        "label": 4,
+                        "node": 1
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 1,
+                        "node": 3
+                      },
+                      "target": {
+                        "label": 1,
+                        "node": 2
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 2,
+                        "node": 3
+                      },
+                      "target": {
+                        "label": 2,
+                        "node": 2
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 3,
+                        "node": 3
+                      },
+                      "target": {
+                        "label": 3,
+                        "node": 2
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 4,
+                        "node": 3
+                      },
+                      "target": {
+                        "label": 4,
+                        "node": 2
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 1,
+                        "node": 4
+                      },
+                      "target": {
+                        "label": 1,
+                        "node": 3
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 2,
+                        "node": 4
+                      },
+                      "target": {
+                        "label": 2,
+                        "node": 3
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 3,
+                        "node": 4
+                      },
+                      "target": {
+                        "label": 3,
+                        "node": 3
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 4,
+                        "node": 4
+                      },
+                      "target": {
+                        "label": 4,
+                        "node": 3
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 1,
+                        "node": 5
+                      },
+                      "target": {
+                        "label": 1,
+                        "node": 4
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 1,
+                        "node": 6
+                      },
+                      "target": {
+                        "label": 1,
+                        "node": 5
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 2,
+                        "node": 6
+                      },
+                      "target": {
+                        "label": 2,
+                        "node": 4
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 3,
+                        "node": 6
+                      },
+                      "target": {
+                        "label": 3,
+                        "node": 4
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 4,
+                        "node": 6
+                      },
+                      "target": {
+                        "label": 4,
+                        "node": 4
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 1,
+                        "node": 7
+                      },
+                      "target": {
+                        "label": 1,
+                        "node": 6
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 2,
+                        "node": 7
+                      },
+                      "target": {
+                        "label": 2,
+                        "node": 6
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 3,
+                        "node": 7
+                      },
+                      "target": {
+                        "label": 3,
+                        "node": 6
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 4,
+                        "node": 7
+                      },
+                      "target": {
+                        "label": 4,
+                        "node": 6
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 1,
+                        "node": 8
+                      },
+                      "target": {
+                        "label": 1,
+                        "node": 7
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 2,
+                        "node": 8
+                      },
+                      "target": {
+                        "label": 2,
+                        "node": 7
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 3,
+                        "node": 8
+                      },
+                      "target": {
+                        "label": 3,
+                        "node": 7
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 4,
+                        "node": 8
+                      },
+                      "target": {
+                        "label": 4,
+                        "node": 7
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 1,
+                        "node": 9
+                      },
+                      "target": {
+                        "label": 1,
+                        "node": 8
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 3,
+                        "node": 9
+                      },
+                      "target": {
+                        "label": 3,
+                        "node": 8
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 2,
+                        "node": 10
+                      },
+                      "target": {
+                        "label": 2,
+                        "node": 8
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 4,
+                        "node": 10
+                      },
+                      "target": {
+                        "label": 4,
+                        "node": 8
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 1,
+                        "node": 11
+                      },
+                      "target": {
+                        "label": 1,
+                        "node": 9
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 2,
+                        "node": 11
+                      },
+                      "target": {
+                        "label": 2,
+                        "node": 10
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 3,
+                        "node": 12
+                      },
+                      "target": {
+                        "label": 3,
+                        "node": 9
+                      }
+                    },
+                    {
+                      "source": {
+                        "label": 4,
+                        "node": 12
+                      },
+                      "target": {
+                        "label": 4,
+                        "node": 10
+                      }
+                    }
+                  ],
+                  "in_direction": "neutral",
+                  "input_boundary": [
+                    {
+                      "label": 1,
+                      "port": {
+                        "label": 1,
+                        "node": 11
+                      }
+                    },
+                    {
+                      "label": 2,
+                      "port": {
+                        "label": 2,
+                        "node": 11
+                      }
+                    },
+                    {
+                      "label": 3,
+                      "port": {
+                        "label": 3,
+                        "node": 12
+                      }
+                    },
+                    {
+                      "label": 4,
+                      "port": {
+                        "label": 4,
+                        "node": 12
+                      }
+                    },
+                    {
+                      "label": 5,
+                      "port": {
+                        "label": 5,
+                        "node": 5
+                      }
+                    }
+                  ],
+                  "nodes": [
+                    {
+                      "kind": "symmetriser",
+                      "labels": [
+                        1,
+                        2,
+                        3
+                      ]
+                    },
+                    {
+                      "kind": "antisymmetriser",
+                      "labels": [
+                        1,
+                        4
+                      ]
+                    },
+                    {
+                      "in_direction": "neutral",
+                      "kind": "permutation",
+                      "labels": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ],
+                      "mapping": [],
+                      "out_direction": "neutral"
+                    },
+                    {
+                      "in_direction": "neutral",
+                      "kind": "permutation",
+                      "labels": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ],
+                      "mapping": [],
+                      "out_direction": "neutral"
+                    },
+                    {
+                      "in_direction": "neutral",
+                      "kind": "permutation",
+                      "labels": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ],
+                      "mapping": [],
+                      "out_direction": "neutral"
+                    },
+                    {
+                      "in_direction": "neutral",
+                      "kind": "permutation",
+                      "labels": [
+                        1,
+                        5
+                      ],
+                      "mapping": [],
+                      "out_direction": "neutral"
+                    },
+                    {
+                      "in_direction": "neutral",
+                      "kind": "permutation",
+                      "labels": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ],
+                      "mapping": [],
+                      "out_direction": "neutral"
+                    },
+                    {
+                      "in_direction": "neutral",
+                      "kind": "permutation",
+                      "labels": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ],
+                      "mapping": [],
+                      "out_direction": "neutral"
+                    },
+                    {
+                      "in_direction": "neutral",
+                      "kind": "permutation",
+                      "labels": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ],
+                      "mapping": [],
+                      "out_direction": "neutral"
+                    },
+                    {
+                      "kind": "antisymmetriser",
+                      "labels": [
+                        1,
+                        3
+                      ]
+                    },
+                    {
+                      "kind": "antisymmetriser",
+                      "labels": [
+                        2,
+                        4
+                      ]
+                    },
+                    {
+                      "kind": "symmetriser",
+                      "labels": [
+                        1,
+                        2
+                      ]
+                    },
+                    {
+                      "kind": "symmetriser",
+                      "labels": [
+                        3,
+                        4
+                      ]
+                    }
+                  ],
+                  "out_direction": "neutral",
+                  "output_boundary": [
+                    {
+                      "label": 1,
+                      "port": {
+                        "label": 1,
+                        "node": 0
+                      }
+                    },
+                    {
+                      "label": 2,
+                      "port": {
+                        "label": 2,
+                        "node": 0
+                      }
+                    },
+                    {
+                      "label": 3,
+                      "port": {
+                        "label": 3,
+                        "node": 0
+                      }
+                    },
+                    {
+                      "label": 4,
+                      "port": {
+                        "label": 4,
+                        "node": 1
+                      }
+                    },
+                    {
+                      "label": 5,
+                      "port": {
+                        "label": 5,
+                        "node": 5
+                      }
+                    }
+                  ],
+                  "port_orders": [
+                    {
+                      "input": [
+                        1,
+                        2,
+                        3
+                      ],
+                      "node": 0,
+                      "output": [
+                        1,
+                        2,
+                        3
+                      ]
+                    },
+                    {
+                      "input": [
+                        1,
+                        4
+                      ],
+                      "node": 1,
+                      "output": [
+                        1,
+                        4
+                      ]
+                    },
+                    {
+                      "input": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ],
+                      "node": 2,
+                      "output": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ]
+                    },
+                    {
+                      "input": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ],
+                      "node": 3,
+                      "output": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ]
+                    },
+                    {
+                      "input": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ],
+                      "node": 4,
+                      "output": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ]
+                    },
+                    {
+                      "input": [
+                        1,
+                        5
+                      ],
+                      "node": 5,
+                      "output": [
+                        1,
+                        5
+                      ]
+                    },
+                    {
+                      "input": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ],
+                      "node": 6,
+                      "output": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ]
+                    },
+                    {
+                      "input": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ],
+                      "node": 7,
+                      "output": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ]
+                    },
+                    {
+                      "input": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ],
+                      "node": 8,
+                      "output": [
+                        1,
+                        2,
+                        3,
+                        4
+                      ]
+                    },
+                    {
+                      "input": [
+                        1,
+                        3
+                      ],
+                      "node": 9,
+                      "output": [
+                        1,
+                        3
+                      ]
+                    },
+                    {
+                      "input": [
+                        2,
+                        4
+                      ],
+                      "node": 10,
+                      "output": [
+                        2,
+                        4
+                      ]
+                    },
+                    {
+                      "input": [
+                        1,
+                        2
+                      ],
+                      "node": 11,
+                      "output": [
+                        1,
+                        2
+                      ]
+                    },
+                    {
+                      "input": [
+                        3,
+                        4
+                      ],
+                      "node": 12,
+                      "output": [
+                        3,
+                        4
+                      ]
+                    }
+                  ],
+                  "type": "projector"
+                },
+                "revision": 0,
+                "selection": [],
+                "strand_ids": [
+                  "young-stress-partial-identity-support-sa-as:strand:0",
+                  "young-stress-partial-identity-support-sa-as:strand:1",
+                  "young-stress-partial-identity-support-sa-as:strand:2",
+                  "young-stress-partial-identity-support-sa-as:strand:3",
+                  "young-stress-partial-identity-support-sa-as:strand:4",
+                  "young-stress-partial-identity-support-sa-as:strand:5",
+                  "young-stress-partial-identity-support-sa-as:strand:6",
+                  "young-stress-partial-identity-support-sa-as:strand:7",
+                  "young-stress-partial-identity-support-sa-as:strand:8",
+                  "young-stress-partial-identity-support-sa-as:strand:9",
+                  "young-stress-partial-identity-support-sa-as:strand:10",
+                  "young-stress-partial-identity-support-sa-as:strand:11",
+                  "young-stress-partial-identity-support-sa-as:strand:12",
+                  "young-stress-partial-identity-support-sa-as:strand:13",
+                  "young-stress-partial-identity-support-sa-as:strand:14",
+                  "young-stress-partial-identity-support-sa-as:strand:15",
+                  "young-stress-partial-identity-support-sa-as:strand:16",
+                  "young-stress-partial-identity-support-sa-as:strand:17",
+                  "young-stress-partial-identity-support-sa-as:strand:18",
+                  "young-stress-partial-identity-support-sa-as:strand:19",
+                  "young-stress-partial-identity-support-sa-as:strand:20",
+                  "young-stress-partial-identity-support-sa-as:strand:21",
+                  "young-stress-partial-identity-support-sa-as:strand:22",
+                  "young-stress-partial-identity-support-sa-as:strand:23",
+                  "young-stress-partial-identity-support-sa-as:strand:24",
+                  "young-stress-partial-identity-support-sa-as:strand:25",
+                  "young-stress-partial-identity-support-sa-as:strand:26",
+                  "young-stress-partial-identity-support-sa-as:strand:27",
+                  "young-stress-partial-identity-support-sa-as:strand:28",
+                  "young-stress-partial-identity-support-sa-as:strand:29",
+                  "young-stress-partial-identity-support-sa-as:strand:30",
+                  "young-stress-partial-identity-support-sa-as:strand:31",
+                  "young-stress-partial-identity-support-sa-as:strand:32",
+                  "young-stress-partial-identity-support-sa-as:strand:33",
+                  "young-stress-partial-identity-support-sa-as:strand:34",
+                  "young-stress-partial-identity-support-sa-as:strand:35",
+                  "young-stress-partial-identity-support-sa-as:strand:36",
+                  "young-stress-partial-identity-support-sa-as:strand:37",
+                  "young-stress-partial-identity-support-sa-as:strand:38",
+                  "young-stress-partial-identity-support-sa-as:strand:39",
+                  "young-stress-partial-identity-support-sa-as:strand:40",
+                  "young-stress-partial-identity-support-sa-as:strand:41",
+                  "young-stress-partial-identity-support-sa-as:strand:42",
+                  "young-stress-partial-identity-support-sa-as:strand:43"
+                ],
+                "term_id": "young-stress-partial-identity-support-sa-as"
+              },
+              "undo": [],
+              "version": 1
+            },
             "effective_coefficient": {
               "denominator": "1",
               "numerator": "1"
@@ -64227,15 +65124,17 @@
                 "3": 3,
                 "5": 4
               },
-              "2": {
-                "2": 4,
-                "3": 3,
-                "4": 0
-              },
-              "3": {
+              "10": {
                 "5": 4
               },
-              "4": {
+              "2": {},
+              "3": {},
+              "4": {},
+              "5": {},
+              "6": {},
+              "7": {},
+              "8": {},
+              "9": {
                 "5": 4
               }
             },
@@ -64257,6 +65156,7 @@
               },
               "connections": [
                 {
+                  "boundary_label": 1,
                   "source": {
                     "label": 1,
                     "node": 1
@@ -64267,56 +65167,7 @@
                   }
                 },
                 {
-                  "source": {
-                    "label": 1,
-                    "node": 5
-                  },
-                  "target": {
-                    "label": 1,
-                    "node": 3
-                  }
-                },
-                {
-                  "source": {
-                    "label": 2,
-                    "node": 5
-                  },
-                  "target": {
-                    "label": 2,
-                    "node": 4
-                  }
-                },
-                {
-                  "source": {
-                    "label": 3,
-                    "node": 6
-                  },
-                  "target": {
-                    "label": 3,
-                    "node": 3
-                  }
-                },
-                {
-                  "source": {
-                    "label": 4,
-                    "node": 6
-                  },
-                  "target": {
-                    "label": 4,
-                    "node": 4
-                  }
-                },
-                {
-                  "source": {
-                    "label": 1,
-                    "node": 3
-                  },
-                  "target": {
-                    "label": 1,
-                    "node": 2
-                  }
-                },
-                {
+                  "boundary_label": 1,
                   "source": {
                     "label": 1,
                     "node": 2
@@ -64327,9 +65178,10 @@
                   }
                 },
                 {
+                  "boundary_label": 2,
                   "source": {
                     "label": 2,
-                    "node": 4
+                    "node": 2
                   },
                   "target": {
                     "label": 2,
@@ -64337,62 +65189,1431 @@
                   }
                 },
                 {
+                  "boundary_label": 3,
+                  "source": {
+                    "label": 3,
+                    "node": 2
+                  },
+                  "target": {
+                    "label": 3,
+                    "node": 0
+                  }
+                },
+                {
+                  "boundary_label": 4,
+                  "source": {
+                    "label": 4,
+                    "node": 2
+                  },
+                  "target": {
+                    "label": 4,
+                    "node": 1
+                  }
+                },
+                {
+                  "boundary_label": 1,
+                  "source": {
+                    "label": 1,
+                    "node": 3
+                  },
+                  "target": {
+                    "label": 1,
+                    "node": 2
+                  }
+                },
+                {
+                  "boundary_label": 2,
+                  "source": {
+                    "label": 2,
+                    "node": 3
+                  },
+                  "target": {
+                    "label": 2,
+                    "node": 2
+                  }
+                },
+                {
+                  "boundary_label": 3,
                   "source": {
                     "label": 3,
                     "node": 3
                   },
                   "target": {
                     "label": 3,
-                    "node": 0
+                    "node": 2
                   }
                 },
                 {
+                  "boundary_label": 4,
                   "source": {
                     "label": 4,
-                    "node": 4
+                    "node": 3
                   },
                   "target": {
                     "label": 4,
-                    "node": 1
-                  }
-                }
-              ],
-              "created": true,
-              "creator": false,
-              "external_inputs": [
-                {
-                  "boundary_label": 5,
-                  "port": {
-                    "label": 5,
                     "node": 2
                   }
                 },
                 {
                   "boundary_label": 1,
-                  "port": {
+                  "source": {
+                    "label": 1,
+                    "node": 4
+                  },
+                  "target": {
+                    "label": 1,
+                    "node": 3
+                  }
+                },
+                {
+                  "boundary_label": 2,
+                  "source": {
+                    "label": 2,
+                    "node": 4
+                  },
+                  "target": {
+                    "label": 2,
+                    "node": 3
+                  }
+                },
+                {
+                  "boundary_label": 3,
+                  "source": {
+                    "label": 3,
+                    "node": 4
+                  },
+                  "target": {
+                    "label": 3,
+                    "node": 3
+                  }
+                },
+                {
+                  "boundary_label": 4,
+                  "source": {
+                    "label": 4,
+                    "node": 4
+                  },
+                  "target": {
+                    "label": 4,
+                    "node": 3
+                  }
+                },
+                {
+                  "boundary_label": 1,
+                  "source": {
+                    "label": 1,
+                    "node": 5
+                  },
+                  "target": {
+                    "label": 1,
+                    "node": 4
+                  }
+                },
+                {
+                  "boundary_label": 1,
+                  "source": {
+                    "label": 1,
+                    "node": 6
+                  },
+                  "target": {
                     "label": 1,
                     "node": 5
                   }
                 },
                 {
                   "boundary_label": 2,
-                  "port": {
+                  "source": {
                     "label": 2,
-                    "node": 5
+                    "node": 6
+                  },
+                  "target": {
+                    "label": 2,
+                    "node": 4
                   }
                 },
                 {
                   "boundary_label": 3,
-                  "port": {
+                  "source": {
+                    "label": 3,
+                    "node": 6
+                  },
+                  "target": {
+                    "label": 3,
+                    "node": 4
+                  }
+                },
+                {
+                  "boundary_label": 4,
+                  "source": {
+                    "label": 4,
+                    "node": 6
+                  },
+                  "target": {
+                    "label": 4,
+                    "node": 4
+                  }
+                },
+                {
+                  "boundary_label": 1,
+                  "source": {
+                    "label": 1,
+                    "node": 7
+                  },
+                  "target": {
+                    "label": 1,
+                    "node": 6
+                  }
+                },
+                {
+                  "boundary_label": 2,
+                  "source": {
+                    "label": 2,
+                    "node": 7
+                  },
+                  "target": {
+                    "label": 2,
+                    "node": 6
+                  }
+                },
+                {
+                  "boundary_label": 3,
+                  "source": {
+                    "label": 3,
+                    "node": 7
+                  },
+                  "target": {
                     "label": 3,
                     "node": 6
                   }
                 },
                 {
                   "boundary_label": 4,
-                  "port": {
+                  "source": {
+                    "label": 4,
+                    "node": 7
+                  },
+                  "target": {
                     "label": 4,
                     "node": 6
+                  }
+                },
+                {
+                  "boundary_label": 1,
+                  "source": {
+                    "label": 1,
+                    "node": 8
+                  },
+                  "target": {
+                    "label": 1,
+                    "node": 7
+                  }
+                },
+                {
+                  "boundary_label": 2,
+                  "source": {
+                    "label": 2,
+                    "node": 8
+                  },
+                  "target": {
+                    "label": 2,
+                    "node": 7
+                  }
+                },
+                {
+                  "boundary_label": 3,
+                  "source": {
+                    "label": 3,
+                    "node": 8
+                  },
+                  "target": {
+                    "label": 3,
+                    "node": 7
+                  }
+                },
+                {
+                  "boundary_label": 4,
+                  "source": {
+                    "label": 4,
+                    "node": 8
+                  },
+                  "target": {
+                    "label": 4,
+                    "node": 7
+                  }
+                },
+                {
+                  "boundary_label": 1,
+                  "source": {
+                    "label": 1,
+                    "node": 9
+                  },
+                  "target": {
+                    "label": 1,
+                    "node": 8
+                  }
+                },
+                {
+                  "boundary_label": 3,
+                  "source": {
+                    "label": 3,
+                    "node": 9
+                  },
+                  "target": {
+                    "label": 3,
+                    "node": 8
+                  }
+                },
+                {
+                  "boundary_label": 2,
+                  "source": {
+                    "label": 2,
+                    "node": 10
+                  },
+                  "target": {
+                    "label": 2,
+                    "node": 8
+                  }
+                },
+                {
+                  "boundary_label": 4,
+                  "source": {
+                    "label": 4,
+                    "node": 10
+                  },
+                  "target": {
+                    "label": 4,
+                    "node": 8
+                  }
+                },
+                {
+                  "boundary_label": 1,
+                  "source": {
+                    "label": 1,
+                    "node": 11
+                  },
+                  "target": {
+                    "label": 1,
+                    "node": 9
+                  }
+                },
+                {
+                  "boundary_label": 2,
+                  "source": {
+                    "label": 2,
+                    "node": 11
+                  },
+                  "target": {
+                    "label": 2,
+                    "node": 10
+                  }
+                },
+                {
+                  "boundary_label": 3,
+                  "source": {
+                    "label": 3,
+                    "node": 12
+                  },
+                  "target": {
+                    "label": 3,
+                    "node": 9
+                  }
+                },
+                {
+                  "boundary_label": 4,
+                  "source": {
+                    "label": 4,
+                    "node": 12
+                  },
+                  "target": {
+                    "label": 4,
+                    "node": 10
+                  }
+                }
+              ],
+              "display": {
+                "corridor_complexities": [
+                  0,
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "corridor_width": null,
+                "corridor_widths": [
+                  1.0,
+                  1.0,
+                  1.0,
+                  1.0,
+                  1.0
+                ],
+                "crossing_count": 0,
+                "operator_columns": [
+                  [
+                    0
+                  ],
+                  [
+                    1
+                  ],
+                  [
+                    9,
+                    10
+                  ],
+                  [
+                    11,
+                    12
+                  ]
+                ],
+                "pure_permutation": false,
+                "strands": [
+                  {
+                    "permutation_nodes": [],
+                    "source": {
+                      "kind": "operator_output",
+                      "label": 1,
+                      "node": 0
+                    },
+                    "strand_label": 1,
+                    "target": {
+                      "kind": "left_boundary",
+                      "label": 1
+                    }
+                  },
+                  {
+                    "permutation_nodes": [],
+                    "source": {
+                      "kind": "operator_output",
+                      "label": 2,
+                      "node": 0
+                    },
+                    "strand_label": 2,
+                    "target": {
+                      "kind": "left_boundary",
+                      "label": 2
+                    }
+                  },
+                  {
+                    "permutation_nodes": [],
+                    "source": {
+                      "kind": "operator_output",
+                      "label": 3,
+                      "node": 0
+                    },
+                    "strand_label": 3,
+                    "target": {
+                      "kind": "left_boundary",
+                      "label": 3
+                    }
+                  },
+                  {
+                    "permutation_nodes": [],
+                    "source": {
+                      "kind": "operator_output",
+                      "label": 1,
+                      "node": 1
+                    },
+                    "strand_label": 1,
+                    "target": {
+                      "kind": "operator_input",
+                      "label": 1,
+                      "node": 0
+                    }
+                  },
+                  {
+                    "permutation_nodes": [],
+                    "source": {
+                      "kind": "operator_output",
+                      "label": 4,
+                      "node": 1
+                    },
+                    "strand_label": 4,
+                    "target": {
+                      "kind": "left_boundary",
+                      "label": 4
+                    }
+                  },
+                  {
+                    "permutation_nodes": [
+                      8,
+                      7,
+                      6,
+                      5,
+                      4,
+                      3,
+                      2
+                    ],
+                    "source": {
+                      "kind": "operator_output",
+                      "label": 1,
+                      "node": 9
+                    },
+                    "strand_label": 1,
+                    "target": {
+                      "kind": "operator_input",
+                      "label": 1,
+                      "node": 1
+                    }
+                  },
+                  {
+                    "permutation_nodes": [
+                      8,
+                      7,
+                      6,
+                      4,
+                      3,
+                      2
+                    ],
+                    "source": {
+                      "kind": "operator_output",
+                      "label": 3,
+                      "node": 9
+                    },
+                    "strand_label": 3,
+                    "target": {
+                      "kind": "operator_input",
+                      "label": 3,
+                      "node": 0
+                    }
+                  },
+                  {
+                    "permutation_nodes": [
+                      8,
+                      7,
+                      6,
+                      4,
+                      3,
+                      2
+                    ],
+                    "source": {
+                      "kind": "operator_output",
+                      "label": 2,
+                      "node": 10
+                    },
+                    "strand_label": 2,
+                    "target": {
+                      "kind": "operator_input",
+                      "label": 2,
+                      "node": 0
+                    }
+                  },
+                  {
+                    "permutation_nodes": [
+                      8,
+                      7,
+                      6,
+                      4,
+                      3,
+                      2
+                    ],
+                    "source": {
+                      "kind": "operator_output",
+                      "label": 4,
+                      "node": 10
+                    },
+                    "strand_label": 4,
+                    "target": {
+                      "kind": "operator_input",
+                      "label": 4,
+                      "node": 1
+                    }
+                  },
+                  {
+                    "permutation_nodes": [],
+                    "source": {
+                      "kind": "operator_output",
+                      "label": 1,
+                      "node": 11
+                    },
+                    "strand_label": 1,
+                    "target": {
+                      "kind": "operator_input",
+                      "label": 1,
+                      "node": 9
+                    }
+                  },
+                  {
+                    "permutation_nodes": [],
+                    "source": {
+                      "kind": "operator_output",
+                      "label": 2,
+                      "node": 11
+                    },
+                    "strand_label": 2,
+                    "target": {
+                      "kind": "operator_input",
+                      "label": 2,
+                      "node": 10
+                    }
+                  },
+                  {
+                    "permutation_nodes": [],
+                    "source": {
+                      "kind": "operator_output",
+                      "label": 3,
+                      "node": 12
+                    },
+                    "strand_label": 3,
+                    "target": {
+                      "kind": "operator_input",
+                      "label": 3,
+                      "node": 9
+                    }
+                  },
+                  {
+                    "permutation_nodes": [],
+                    "source": {
+                      "kind": "operator_output",
+                      "label": 4,
+                      "node": 12
+                    },
+                    "strand_label": 4,
+                    "target": {
+                      "kind": "operator_input",
+                      "label": 4,
+                      "node": 10
+                    }
+                  },
+                  {
+                    "permutation_nodes": [],
+                    "source": {
+                      "kind": "right_boundary",
+                      "label": 1
+                    },
+                    "strand_label": 1,
+                    "target": {
+                      "kind": "operator_input",
+                      "label": 1,
+                      "node": 11
+                    }
+                  },
+                  {
+                    "permutation_nodes": [],
+                    "source": {
+                      "kind": "right_boundary",
+                      "label": 2
+                    },
+                    "strand_label": 2,
+                    "target": {
+                      "kind": "operator_input",
+                      "label": 2,
+                      "node": 11
+                    }
+                  },
+                  {
+                    "permutation_nodes": [],
+                    "source": {
+                      "kind": "right_boundary",
+                      "label": 3
+                    },
+                    "strand_label": 3,
+                    "target": {
+                      "kind": "operator_input",
+                      "label": 3,
+                      "node": 12
+                    }
+                  },
+                  {
+                    "permutation_nodes": [],
+                    "source": {
+                      "kind": "right_boundary",
+                      "label": 4
+                    },
+                    "strand_label": 4,
+                    "target": {
+                      "kind": "operator_input",
+                      "label": 4,
+                      "node": 12
+                    }
+                  },
+                  {
+                    "permutation_nodes": [
+                      5
+                    ],
+                    "source": {
+                      "kind": "right_boundary",
+                      "label": 5
+                    },
+                    "strand_label": 5,
+                    "target": {
+                      "kind": "left_boundary",
+                      "label": 5
+                    }
+                  }
+                ]
+              },
+              "display_free_levels": {
+                "0": {
+                  "4": 3,
+                  "5": 4
+                },
+                "1": {
+                  "2": 2,
+                  "3": 3,
+                  "5": 4
+                },
+                "2": {
+                  "5": 4
+                },
+                "3": {
+                  "5": 4
+                }
+              },
+              "editor_value": {
+                "coefficient": {
+                  "denominator": "1",
+                  "numerator": "1"
+                },
+                "connections": [
+                  {
+                    "source": {
+                      "label": 1,
+                      "node": 1
+                    },
+                    "target": {
+                      "label": 1,
+                      "node": 0
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 1,
+                      "node": 2
+                    },
+                    "target": {
+                      "label": 1,
+                      "node": 1
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 2,
+                      "node": 2
+                    },
+                    "target": {
+                      "label": 2,
+                      "node": 0
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 3,
+                      "node": 2
+                    },
+                    "target": {
+                      "label": 3,
+                      "node": 0
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 4,
+                      "node": 2
+                    },
+                    "target": {
+                      "label": 4,
+                      "node": 1
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 1,
+                      "node": 3
+                    },
+                    "target": {
+                      "label": 1,
+                      "node": 2
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 2,
+                      "node": 3
+                    },
+                    "target": {
+                      "label": 2,
+                      "node": 2
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 3,
+                      "node": 3
+                    },
+                    "target": {
+                      "label": 3,
+                      "node": 2
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 4,
+                      "node": 3
+                    },
+                    "target": {
+                      "label": 4,
+                      "node": 2
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 1,
+                      "node": 4
+                    },
+                    "target": {
+                      "label": 1,
+                      "node": 3
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 2,
+                      "node": 4
+                    },
+                    "target": {
+                      "label": 2,
+                      "node": 3
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 3,
+                      "node": 4
+                    },
+                    "target": {
+                      "label": 3,
+                      "node": 3
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 4,
+                      "node": 4
+                    },
+                    "target": {
+                      "label": 4,
+                      "node": 3
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 1,
+                      "node": 5
+                    },
+                    "target": {
+                      "label": 1,
+                      "node": 4
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 1,
+                      "node": 6
+                    },
+                    "target": {
+                      "label": 1,
+                      "node": 5
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 2,
+                      "node": 6
+                    },
+                    "target": {
+                      "label": 2,
+                      "node": 4
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 3,
+                      "node": 6
+                    },
+                    "target": {
+                      "label": 3,
+                      "node": 4
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 4,
+                      "node": 6
+                    },
+                    "target": {
+                      "label": 4,
+                      "node": 4
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 1,
+                      "node": 7
+                    },
+                    "target": {
+                      "label": 1,
+                      "node": 6
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 2,
+                      "node": 7
+                    },
+                    "target": {
+                      "label": 2,
+                      "node": 6
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 3,
+                      "node": 7
+                    },
+                    "target": {
+                      "label": 3,
+                      "node": 6
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 4,
+                      "node": 7
+                    },
+                    "target": {
+                      "label": 4,
+                      "node": 6
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 1,
+                      "node": 8
+                    },
+                    "target": {
+                      "label": 1,
+                      "node": 7
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 2,
+                      "node": 8
+                    },
+                    "target": {
+                      "label": 2,
+                      "node": 7
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 3,
+                      "node": 8
+                    },
+                    "target": {
+                      "label": 3,
+                      "node": 7
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 4,
+                      "node": 8
+                    },
+                    "target": {
+                      "label": 4,
+                      "node": 7
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 1,
+                      "node": 9
+                    },
+                    "target": {
+                      "label": 1,
+                      "node": 8
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 3,
+                      "node": 9
+                    },
+                    "target": {
+                      "label": 3,
+                      "node": 8
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 2,
+                      "node": 10
+                    },
+                    "target": {
+                      "label": 2,
+                      "node": 8
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 4,
+                      "node": 10
+                    },
+                    "target": {
+                      "label": 4,
+                      "node": 8
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 1,
+                      "node": 11
+                    },
+                    "target": {
+                      "label": 1,
+                      "node": 9
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 2,
+                      "node": 11
+                    },
+                    "target": {
+                      "label": 2,
+                      "node": 10
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 3,
+                      "node": 12
+                    },
+                    "target": {
+                      "label": 3,
+                      "node": 9
+                    }
+                  },
+                  {
+                    "source": {
+                      "label": 4,
+                      "node": 12
+                    },
+                    "target": {
+                      "label": 4,
+                      "node": 10
+                    }
+                  }
+                ],
+                "in_direction": "neutral",
+                "input_boundary": [
+                  {
+                    "label": 1,
+                    "port": {
+                      "label": 1,
+                      "node": 11
+                    }
+                  },
+                  {
+                    "label": 2,
+                    "port": {
+                      "label": 2,
+                      "node": 11
+                    }
+                  },
+                  {
+                    "label": 3,
+                    "port": {
+                      "label": 3,
+                      "node": 12
+                    }
+                  },
+                  {
+                    "label": 4,
+                    "port": {
+                      "label": 4,
+                      "node": 12
+                    }
+                  },
+                  {
+                    "label": 5,
+                    "port": {
+                      "label": 5,
+                      "node": 5
+                    }
+                  }
+                ],
+                "nodes": [
+                  {
+                    "kind": "symmetriser",
+                    "labels": [
+                      1,
+                      2,
+                      3
+                    ]
+                  },
+                  {
+                    "kind": "antisymmetriser",
+                    "labels": [
+                      1,
+                      4
+                    ]
+                  },
+                  {
+                    "in_direction": "neutral",
+                    "kind": "permutation",
+                    "labels": [
+                      1,
+                      2,
+                      3,
+                      4
+                    ],
+                    "mapping": [],
+                    "out_direction": "neutral"
+                  },
+                  {
+                    "in_direction": "neutral",
+                    "kind": "permutation",
+                    "labels": [
+                      1,
+                      2,
+                      3,
+                      4
+                    ],
+                    "mapping": [],
+                    "out_direction": "neutral"
+                  },
+                  {
+                    "in_direction": "neutral",
+                    "kind": "permutation",
+                    "labels": [
+                      1,
+                      2,
+                      3,
+                      4
+                    ],
+                    "mapping": [],
+                    "out_direction": "neutral"
+                  },
+                  {
+                    "in_direction": "neutral",
+                    "kind": "permutation",
+                    "labels": [
+                      1,
+                      5
+                    ],
+                    "mapping": [],
+                    "out_direction": "neutral"
+                  },
+                  {
+                    "in_direction": "neutral",
+                    "kind": "permutation",
+                    "labels": [
+                      1,
+                      2,
+                      3,
+                      4
+                    ],
+                    "mapping": [],
+                    "out_direction": "neutral"
+                  },
+                  {
+                    "in_direction": "neutral",
+                    "kind": "permutation",
+                    "labels": [
+                      1,
+                      2,
+                      3,
+                      4
+                    ],
+                    "mapping": [],
+                    "out_direction": "neutral"
+                  },
+                  {
+                    "in_direction": "neutral",
+                    "kind": "permutation",
+                    "labels": [
+                      1,
+                      2,
+                      3,
+                      4
+                    ],
+                    "mapping": [],
+                    "out_direction": "neutral"
+                  },
+                  {
+                    "kind": "antisymmetriser",
+                    "labels": [
+                      1,
+                      3
+                    ]
+                  },
+                  {
+                    "kind": "antisymmetriser",
+                    "labels": [
+                      2,
+                      4
+                    ]
+                  },
+                  {
+                    "kind": "symmetriser",
+                    "labels": [
+                      1,
+                      2
+                    ]
+                  },
+                  {
+                    "kind": "symmetriser",
+                    "labels": [
+                      3,
+                      4
+                    ]
+                  }
+                ],
+                "out_direction": "neutral",
+                "output_boundary": [
+                  {
+                    "label": 1,
+                    "port": {
+                      "label": 1,
+                      "node": 0
+                    }
+                  },
+                  {
+                    "label": 2,
+                    "port": {
+                      "label": 2,
+                      "node": 0
+                    }
+                  },
+                  {
+                    "label": 3,
+                    "port": {
+                      "label": 3,
+                      "node": 0
+                    }
+                  },
+                  {
+                    "label": 4,
+                    "port": {
+                      "label": 4,
+                      "node": 1
+                    }
+                  },
+                  {
+                    "label": 5,
+                    "port": {
+                      "label": 5,
+                      "node": 5
+                    }
+                  }
+                ],
+                "port_orders": [
+                  {
+                    "input": [
+                      1,
+                      2,
+                      3
+                    ],
+                    "node": 0,
+                    "output": [
+                      1,
+                      2,
+                      3
+                    ]
+                  },
+                  {
+                    "input": [
+                      1,
+                      4
+                    ],
+                    "node": 1,
+                    "output": [
+                      1,
+                      4
+                    ]
+                  },
+                  {
+                    "input": [
+                      1,
+                      2,
+                      3,
+                      4
+                    ],
+                    "node": 2,
+                    "output": [
+                      1,
+                      2,
+                      3,
+                      4
+                    ]
+                  },
+                  {
+                    "input": [
+                      1,
+                      2,
+                      3,
+                      4
+                    ],
+                    "node": 3,
+                    "output": [
+                      1,
+                      2,
+                      3,
+                      4
+                    ]
+                  },
+                  {
+                    "input": [
+                      1,
+                      2,
+                      3,
+                      4
+                    ],
+                    "node": 4,
+                    "output": [
+                      1,
+                      2,
+                      3,
+                      4
+                    ]
+                  },
+                  {
+                    "input": [
+                      1,
+                      5
+                    ],
+                    "node": 5,
+                    "output": [
+                      1,
+                      5
+                    ]
+                  },
+                  {
+                    "input": [
+                      1,
+                      2,
+                      3,
+                      4
+                    ],
+                    "node": 6,
+                    "output": [
+                      1,
+                      2,
+                      3,
+                      4
+                    ]
+                  },
+                  {
+                    "input": [
+                      1,
+                      2,
+                      3,
+                      4
+                    ],
+                    "node": 7,
+                    "output": [
+                      1,
+                      2,
+                      3,
+                      4
+                    ]
+                  },
+                  {
+                    "input": [
+                      1,
+                      2,
+                      3,
+                      4
+                    ],
+                    "node": 8,
+                    "output": [
+                      1,
+                      2,
+                      3,
+                      4
+                    ]
+                  },
+                  {
+                    "input": [
+                      1,
+                      3
+                    ],
+                    "node": 9,
+                    "output": [
+                      1,
+                      3
+                    ]
+                  },
+                  {
+                    "input": [
+                      2,
+                      4
+                    ],
+                    "node": 10,
+                    "output": [
+                      2,
+                      4
+                    ]
+                  },
+                  {
+                    "input": [
+                      1,
+                      2
+                    ],
+                    "node": 11,
+                    "output": [
+                      1,
+                      2
+                    ]
+                  },
+                  {
+                    "input": [
+                      3,
+                      4
+                    ],
+                    "node": 12,
+                    "output": [
+                      3,
+                      4
+                    ]
+                  }
+                ],
+                "type": "projector"
+              },
+              "external_inputs": [
+                {
+                  "boundary_label": 5,
+                  "port": {
+                    "label": 5,
+                    "node": 5
+                  }
+                },
+                {
+                  "boundary_label": 1,
+                  "port": {
+                    "label": 1,
+                    "node": 11
+                  }
+                },
+                {
+                  "boundary_label": 2,
+                  "port": {
+                    "label": 2,
+                    "node": 11
+                  }
+                },
+                {
+                  "boundary_label": 3,
+                  "port": {
+                    "label": 3,
+                    "node": 12
+                  }
+                },
+                {
+                  "boundary_label": 4,
+                  "port": {
+                    "label": 4,
+                    "node": 12
                   }
                 }
               ],
@@ -64429,7 +66650,7 @@
                   "boundary_label": 5,
                   "port": {
                     "label": 5,
-                    "node": 2
+                    "node": 5
                   }
                 }
               ],
@@ -64443,15 +66664,17 @@
                   "3": 3,
                   "5": 4
                 },
-                "2": {
-                  "2": 4,
-                  "3": 3,
-                  "4": 0
-                },
-                "3": {
+                "10": {
                   "5": 4
                 },
-                "4": {
+                "2": {},
+                "3": {},
+                "4": {},
+                "5": {},
+                "6": {},
+                "7": {},
+                "8": {},
+                "9": {
                   "5": 4
                 }
               },
@@ -64460,37 +66683,36 @@
                 "background_color": "white",
                 "border_color": "#d1d5db",
                 "coefficient_font_size": 0.75,
-                "coefficient_space": 0,
-                "first_layer_x": 1,
+                "coefficient_space": 1.8,
+                "first_layer_x": 2.8,
                 "fraction_bar_width": 0.1,
                 "fraction_font_size": 0.75,
                 "fraction_height": 0.8,
-                "fraction_line_width": 2,
+                "fraction_line_width": 2.0,
                 "free_line_handle_color": "#6b7280",
                 "handle_line_width": 0.06,
                 "handle_radius": 0.1,
-                "layer_step": 2,
-                "left_boundary": 0,
-                "level_spacing": 1,
+                "layer_step": 2.0,
+                "left_boundary": 1.8,
+                "level_spacing": 1.0,
                 "line_color": "black",
-                "line_width": 2,
-                "node_width": 1,
-                "operator_line_width": 2,
+                "line_width": 2.0,
+                "node_width": 1.0,
+                "operator_line_width": 2.0,
                 "operator_padding": 0.45,
                 "operator_padding_fraction": 0.45,
-                "operator_width": 1,
+                "operator_width": 1.0,
                 "port_handle_color": "#6b7280",
-                "right_boundary": 9,
-                "step": 1,
+                "right_boundary": 10.8,
+                "step": 1.0,
                 "symmetriser_color": "white",
                 "top_line_level": 1.5,
                 "top_margin": 1.5
               },
               "in_direction": "neutral",
-              "layer_count": 5,
+              "layer_count": 11,
               "nodes": [
                 {
-                  "in_direction": "neutral",
                   "index": 0,
                   "input_labels": [
                     1,
@@ -64505,7 +66727,6 @@
                   ],
                   "layer": 0,
                   "mapping": null,
-                  "out_direction": "neutral",
                   "output_labels": [
                     1,
                     2,
@@ -64513,7 +66734,6 @@
                   ]
                 },
                 {
-                  "in_direction": "neutral",
                   "index": 1,
                   "input_labels": [
                     1,
@@ -64526,15 +66746,136 @@
                   ],
                   "layer": 1,
                   "mapping": null,
-                  "out_direction": "neutral",
                   "output_labels": [
                     1,
                     4
                   ]
                 },
                 {
-                  "in_direction": "neutral",
                   "index": 2,
+                  "input_labels": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ],
+                  "kind": "permutation",
+                  "labels": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ],
+                  "layer": 2,
+                  "mapping": [
+                    [
+                      1,
+                      1
+                    ],
+                    [
+                      2,
+                      2
+                    ],
+                    [
+                      3,
+                      3
+                    ],
+                    [
+                      4,
+                      4
+                    ]
+                  ],
+                  "output_labels": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ]
+                },
+                {
+                  "index": 3,
+                  "input_labels": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ],
+                  "kind": "permutation",
+                  "labels": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ],
+                  "layer": 3,
+                  "mapping": [
+                    [
+                      1,
+                      1
+                    ],
+                    [
+                      2,
+                      2
+                    ],
+                    [
+                      3,
+                      3
+                    ],
+                    [
+                      4,
+                      4
+                    ]
+                  ],
+                  "output_labels": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ]
+                },
+                {
+                  "index": 4,
+                  "input_labels": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ],
+                  "kind": "permutation",
+                  "labels": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ],
+                  "layer": 4,
+                  "mapping": [
+                    [
+                      1,
+                      1
+                    ],
+                    [
+                      2,
+                      2
+                    ],
+                    [
+                      3,
+                      3
+                    ],
+                    [
+                      4,
+                      4
+                    ]
+                  ],
+                  "output_labels": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ]
+                },
+                {
+                  "index": 5,
                   "input_labels": [
                     1,
                     5
@@ -64544,7 +66885,7 @@
                     1,
                     5
                   ],
-                  "layer": 2,
+                  "layer": 5,
                   "mapping": [
                     [
                       1,
@@ -64555,76 +66896,191 @@
                       5
                     ]
                   ],
-                  "out_direction": "neutral",
                   "output_labels": [
                     1,
                     5
                   ]
                 },
                 {
-                  "in_direction": "neutral",
-                  "index": 3,
-                  "input_labels": [
-                    1,
-                    3
-                  ],
-                  "kind": "antisymmetriser",
-                  "labels": [
-                    1,
-                    3
-                  ],
-                  "layer": 3,
-                  "mapping": null,
-                  "out_direction": "neutral",
-                  "output_labels": [
-                    1,
-                    3
-                  ]
-                },
-                {
-                  "in_direction": "neutral",
-                  "index": 4,
-                  "input_labels": [
-                    2,
-                    4
-                  ],
-                  "kind": "antisymmetriser",
-                  "labels": [
-                    2,
-                    4
-                  ],
-                  "layer": 3,
-                  "mapping": null,
-                  "out_direction": "neutral",
-                  "output_labels": [
-                    2,
-                    4
-                  ]
-                },
-                {
-                  "in_direction": "neutral",
-                  "index": 5,
-                  "input_labels": [
-                    1,
-                    2
-                  ],
-                  "kind": "symmetriser",
-                  "labels": [
-                    1,
-                    2
-                  ],
-                  "layer": 4,
-                  "mapping": null,
-                  "out_direction": "neutral",
-                  "output_labels": [
-                    1,
-                    2
-                  ]
-                },
-                {
-                  "in_direction": "neutral",
                   "index": 6,
                   "input_labels": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ],
+                  "kind": "permutation",
+                  "labels": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ],
+                  "layer": 6,
+                  "mapping": [
+                    [
+                      1,
+                      1
+                    ],
+                    [
+                      2,
+                      2
+                    ],
+                    [
+                      3,
+                      3
+                    ],
+                    [
+                      4,
+                      4
+                    ]
+                  ],
+                  "output_labels": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ]
+                },
+                {
+                  "index": 7,
+                  "input_labels": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ],
+                  "kind": "permutation",
+                  "labels": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ],
+                  "layer": 7,
+                  "mapping": [
+                    [
+                      1,
+                      1
+                    ],
+                    [
+                      2,
+                      2
+                    ],
+                    [
+                      3,
+                      3
+                    ],
+                    [
+                      4,
+                      4
+                    ]
+                  ],
+                  "output_labels": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ]
+                },
+                {
+                  "index": 8,
+                  "input_labels": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ],
+                  "kind": "permutation",
+                  "labels": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ],
+                  "layer": 8,
+                  "mapping": [
+                    [
+                      1,
+                      1
+                    ],
+                    [
+                      2,
+                      2
+                    ],
+                    [
+                      3,
+                      3
+                    ],
+                    [
+                      4,
+                      4
+                    ]
+                  ],
+                  "output_labels": [
+                    1,
+                    2,
+                    3,
+                    4
+                  ]
+                },
+                {
+                  "index": 9,
+                  "input_labels": [
+                    1,
+                    3
+                  ],
+                  "kind": "antisymmetriser",
+                  "labels": [
+                    1,
+                    3
+                  ],
+                  "layer": 9,
+                  "mapping": null,
+                  "output_labels": [
+                    1,
+                    3
+                  ]
+                },
+                {
+                  "index": 10,
+                  "input_labels": [
+                    2,
+                    4
+                  ],
+                  "kind": "antisymmetriser",
+                  "labels": [
+                    2,
+                    4
+                  ],
+                  "layer": 9,
+                  "mapping": null,
+                  "output_labels": [
+                    2,
+                    4
+                  ]
+                },
+                {
+                  "index": 11,
+                  "input_labels": [
+                    1,
+                    2
+                  ],
+                  "kind": "symmetriser",
+                  "labels": [
+                    1,
+                    2
+                  ],
+                  "layer": 10,
+                  "mapping": null,
+                  "output_labels": [
+                    1,
+                    2
+                  ]
+                },
+                {
+                  "index": 12,
+                  "input_labels": [
                     3,
                     4
                   ],
@@ -64633,17 +67089,15 @@
                     3,
                     4
                   ],
-                  "layer": 4,
+                  "layer": 10,
                   "mapping": null,
-                  "out_direction": "neutral",
                   "output_labels": [
                     3,
                     4
                   ]
                 }
               ],
-              "out_direction": "neutral",
-              "port_swap_sign": 1
+              "out_direction": "neutral"
             },
             "line_colors": {},
             "port_orders": {
@@ -64669,85 +67123,193 @@
                   4
                 ]
               },
-              "2": {
-                "input": [
-                  1,
-                  5
-                ],
-                "output": [
-                  1,
-                  5
-                ]
-              },
-              "3": {
-                "input": [
-                  1,
-                  3
-                ],
-                "output": [
-                  1,
-                  3
-                ]
-              },
-              "4": {
+              "10": {
                 "input": [
                   2,
                   4
                 ],
                 "output": [
                   2,
+                  4
+                ]
+              },
+              "11": {
+                "input": [
+                  1,
+                  2
+                ],
+                "output": [
+                  1,
+                  2
+                ]
+              },
+              "12": {
+                "input": [
+                  3,
+                  4
+                ],
+                "output": [
+                  3,
+                  4
+                ]
+              },
+              "2": {
+                "input": [
+                  1,
+                  2,
+                  3,
+                  4
+                ],
+                "output": [
+                  1,
+                  2,
+                  3,
+                  4
+                ]
+              },
+              "3": {
+                "input": [
+                  1,
+                  2,
+                  3,
+                  4
+                ],
+                "output": [
+                  1,
+                  2,
+                  3,
+                  4
+                ]
+              },
+              "4": {
+                "input": [
+                  1,
+                  2,
+                  3,
+                  4
+                ],
+                "output": [
+                  1,
+                  2,
+                  3,
                   4
                 ]
               },
               "5": {
                 "input": [
                   1,
-                  2
+                  5
                 ],
                 "output": [
                   1,
-                  2
+                  5
                 ]
               },
               "6": {
                 "input": [
+                  1,
+                  2,
                   3,
                   4
                 ],
                 "output": [
+                  1,
+                  2,
                   3,
                   4
+                ]
+              },
+              "7": {
+                "input": [
+                  1,
+                  2,
+                  3,
+                  4
+                ],
+                "output": [
+                  1,
+                  2,
+                  3,
+                  4
+                ]
+              },
+              "8": {
+                "input": [
+                  1,
+                  2,
+                  3,
+                  4
+                ],
+                "output": [
+                  1,
+                  2,
+                  3,
+                  4
+                ]
+              },
+              "9": {
+                "input": [
+                  1,
+                  3
+                ],
+                "output": [
+                  1,
+                  3
                 ]
               }
             },
             "positions": {
               "0": {
-                "x": 1,
+                "x": 3.3,
                 "y": 2.5
               },
               "1": {
-                "x": 3,
-                "y": 2
+                "x": 5.3,
+                "y": 2.0
+              },
+              "10": {
+                "x": 7.3,
+                "y": 4.0
+              },
+              "11": {
+                "x": 9.3,
+                "y": 2.0
+              },
+              "12": {
+                "x": 9.3,
+                "y": 4.0
               },
               "2": {
-                "x": 5,
-                "y": 3
+                "x": 6.8,
+                "y": 3.0
               },
               "3": {
-                "x": 7,
-                "y": 2
+                "x": 8.8,
+                "y": 3.0
               },
               "4": {
-                "x": 7,
-                "y": 4
+                "x": 10.8,
+                "y": 3.0
               },
               "5": {
-                "x": 9,
-                "y": 2
+                "x": 12.8,
+                "y": 2.0
               },
               "6": {
-                "x": 9,
-                "y": 4
+                "x": 14.8,
+                "y": 3.0
+              },
+              "7": {
+                "x": 16.8,
+                "y": 3.0
+              },
+              "8": {
+                "x": 18.8,
+                "y": 3.0
+              },
+              "9": {
+                "x": 7.3,
+                "y": 2.0
               }
             },
             "revision": 43
