@@ -127,3 +127,24 @@ broad recheck excludes only that unchanged calculation, already passed above;
 it recorded 1,131 passed, the same one pre-existing failure, eight dependency
 skips, and one deselection in 190.59 seconds. The final targeted browser run
 again passed all eight cases. No new test failure remains.
+
+## Local spacing and corridor correction
+
+The follow-up presentation correction reserves box/crossing space for newly
+introduced operators and routes around actual saved box positions, rather than
+treating a logical column's first operator as its physical location. Focused
+synthetic tests cover lone and constrained expansions, reuse of disjoint survivor
+columns, and real input/output drags through staggered and fractional-position
+layouts. The user's whiteboard is not used as a regression fixture or rewritten.
+
+Restart the app/kernel to load the updated frontend. Existing manual coordinates
+remain authoritative: regenerate the affected expansion row (or explicitly tidy)
+to obtain the new automatic spacing. Routing corrections apply to saved rows
+without altering their algebra, signs, or placement.
+
+Follow-up verification: 196 focused model/layout/conformance cases passed, as
+did the two synthetic browser obstacle checks (including fractional placement).
+The full run recorded 1,138 passed, the same pre-existing Young-layer fixture
+failure, and eight optional-dependency skips in 372.62 seconds. The saved term
+and a fresh expansion were additionally checked with real output-port drags;
+their exact values remained equal and the whiteboard file checksum was unchanged.

@@ -81,7 +81,6 @@ def transition(before: EditorState, projector: Projector, node_ids: Sequence[str
     by the splice, never inferred by matching equal/canonicalized operators.
     """
     port_map = port_map or {}
-    old_indices = {identity: i for i, identity in enumerate(before.node_ids)}
     new_indices = {identity: i for i, identity in enumerate(node_ids)}
     def mapped(port, side):
         if (side, port) in port_map:
@@ -100,32 +99,9 @@ def transition(before: EditorState, projector: Projector, node_ids: Sequence[str
     strand_ids = strand_ids or tuple(inherited.get(edge_key(edge, node_ids), uuid4().hex)
                                     for edge in edges(projector))
     presentation = before.presentation
-    old_positions = presentation.get("positions", {})
-    positions = {str(i): old_positions[str(old_indices[identity])]
-                 for i, identity in enumerate(node_ids)
-                 if identity in old_indices and str(old_indices[identity]) in old_positions}
-    removed = [i for i, identity in enumerate(before.node_ids) if identity not in new_indices]
-    anchor = old_positions.get(str(removed[0]), {"x": 0, "y": 0}) if removed else {"x": 0, "y": 0}
-    step = float((geometry or {}).get("layer_step", 1))
-    spacing = float((geometry or {}).get("level_spacing", 1))
-    introduced = [i for i, identity in enumerate(node_ids) if identity not in old_indices]
-    # Only the replaced neighbourhood grows. Existing nodes are not shifted.
-    from .display_graph import compile_display_graph
-    columns = compile_display_graph(projector).operator_columns
-    local_columns = [column for column, members in enumerate(columns) if set(members) & set(introduced)]
-    gaps = [abs(position["x"]-anchor["x"]) for position in positions.values() if position["x"] != anchor["x"]]
-    stride = min(step, min(gaps, default=step) / (len(local_columns)+1))
-    for i in introduced:
-        column = next((c for c,members in enumerate(columns) if i in members), None)
-        offset = local_columns.index(column) - (len(local_columns)-1)/2 if column in local_columns else 0
-        y = anchor["y"]
-        if removed:
-            old_order = before.projector.port_orders[removed[0]]["input"]
-            ranks = [old_order.index(label) for label in projector.nodes[i].support if label in old_order]
-            if ranks:
-                y += (min(ranks)+(len(projector.nodes[i].support)-len(old_order))/2)*spacing
-        positions[str(i)] = {"x":anchor["x"]+offset*stride,"y":y}
-    presentation["positions"] = positions
+    from .editor_presentation import replacement_positions
+
+    presentation["positions"] = replacement_positions(before,projector,node_ids,geometry)
     candidate = replace(before, projector=projector, node_ids=tuple(node_ids), strand_ids=strand_ids,
                    term_id=uuid4().hex if branch else before.term_id,
                    presentation_json=_presentation(projector, presentation),

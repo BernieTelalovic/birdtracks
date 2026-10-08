@@ -25,11 +25,20 @@ def connected_canvas(tmp_path, request):
             "trailing": [Antisymmetriser((1, 2, 3)), permutation],
             "interior": [Antisymmetriser((1, 2, 3)), permutation, Symmetriser((3, 4))],
             "pure": [permutation],
-        }[request.param]
+            "misaligned": [Symmetriser((1,2)),Antisymmetriser((3,4)),
+                           PermutationNode(Permutation.from_cycle(2,3),support=(2,3,4)),
+                           Antisymmetriser((3,4)),Symmetriser((1,2))],
+        }["misaligned" if request.param.startswith("misaligned") else request.param]
         p = Projector(nodes, coefficient=Fraction(-2, 3))
     canvas = projector_sum_widget(ProjectorSum((p,)), shared_editor=True,
                                   session=tmp_path / "gestures", detangler=False, debug=True)
     child = canvas._term_editors[0]
+    if surface_kind.startswith("misaligned"):
+        dy = 0.35 if surface_kind == "misaligned-fractional" else 0
+        child._editor_session.move({identity:position for identity,position in zip(child.editor_state["node_ids"],
+            ({"x":1.5,"y":2},{"x":3.5,"y":4+dy},{"x":4.1,"y":3.5},
+             {"x":4.7,"y":4+dy},{"x":5.5,"y":2}),strict=True)},base_revision=child.editor_state["revision"])
+        child._publish_editor()
     document = None
     if surface_kind.startswith("surface:"):
         from tests.conformance.test_editor_surfaces import surface
@@ -125,9 +134,9 @@ def connected_canvas(tmp_path, request):
         assert not errors
 
 
-def drag(page, side, source_label, destination_label):
-    source = page.locator(f'[aria-label^="{side}:0:{source_label};"]')
-    target = page.locator(f'[aria-label^="{side}:0:{destination_label};"]')
+def drag(page, side, source_label, destination_label, *, node=0):
+    source = page.locator(f'[aria-label^="{side}:{node}:{source_label};"]')
+    target = page.locator(f'[aria-label^="{side}:{node}:{destination_label};"]')
     a, b = source.bounding_box(), target.bounding_box()
     page.mouse.move(a["x"] + a["width"] / 2, a["y"] + a["height"] / 2)
     page.mouse.down()
@@ -145,6 +154,40 @@ def move_hit(page, selector, dy, *, cancel=False):
     if cancel:
         page.evaluate("document.dispatchEvent(new PointerEvent('pointercancel',{bubbles:true}))")
     page.mouse.up()
+
+
+@pytest.mark.parametrize("connected_canvas", ["misaligned", "misaligned-fractional"], indirect=True)
+def test_misaligned_columns_route_outside_boxes_before_and_after_port_drags(connected_canvas):
+    page, canvas, child, requests, original = connected_canvas
+    positions = deepcopy(child.editor_state["positions"])
+    def collisions():
+        return page.evaluate("""() => {
+          const boxes=[...document.querySelectorAll('.birdtracks-node rect')].map(rect=>({
+            node:Number(rect.parentElement.dataset.node),x:Number(rect.getAttribute('x')),
+            y:Number(rect.getAttribute('y')),w:Number(rect.getAttribute('width')),h:Number(rect.getAttribute('height'))}));
+          const hits=[];
+          for(const path of document.querySelectorAll('.birdtracks-display-strand')){
+            const key=path.dataset.lineKey;
+            const endpoints=key.split('->').map(e=>e.match(/^(?:input|output):(\\d+):/)).filter(Boolean).map(m=>Number(m[1]));
+            const length=path.getTotalLength();
+            for(let distance=0;distance<=length;distance+=0.02){
+              const p=path.getPointAtLength(distance);
+              for(const box of boxes)if(!endpoints.includes(box.node)
+                &&p.x>box.x+0.04&&p.x<box.x+box.w-0.04&&p.y>box.y+0.04&&p.y<box.y+box.h-0.04){
+                hits.push({key,node:box.node});distance=length+1;break;
+              }
+            }
+          }
+          return hits;
+        }""")
+    assert not collisions()
+    for node,side in ((3,"input"),(3,"output"),(1,"input"),(1,"output")):
+        revision = child.editor_state["revision"]
+        drag(page,side,3,4,node=node)
+        page.wait_for_function("r=>model.get('editor_state').revision>r",arg=revision)
+        assert not collisions()
+        assert child.editor_state["positions"] == positions
+        assert canvas.current_projector_sum.collapse() == original.collapse()
 
 
 @pytest.mark.parametrize("connected_canvas", ["surface:widget", "surface:canvas", "surface:generated", "surface:inline", "surface:parsed", "surface:symbolic"], indirect=True)

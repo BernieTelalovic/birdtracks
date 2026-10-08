@@ -58,11 +58,22 @@ endpoints, never by zipping those arrays.
 `editor_rewrites.py` performs local algebraic splices with explicit provenance.
 `editor_presentation.py` transfers paint/routes and projects rendering corridors.
 Surviving positions are copied exactly. Introduced nodes are placed near the
-removed operator, within the available local gap. Only strand controls outside
+removed operator, reusing a compatible survivor column where possible. Local
+packing reserves actual box widths and a crossing gap; it does not squeeze
+visible operators into overlapping coordinates when the old gap is too narrow.
+Only strand controls outside
 their new spans or obstructed by introduced operators are repaired. Rendering
 derives missing corridors against committed positions; it cannot install a
 fresh default layout into editor state. Full placement reset is an explicit,
 undoable `tidy` command.
+
+Display columns express dependencies, not a promise that all their members have
+the same saved x-coordinate. The frontend's geometric routing traverses actual
+occupied box slabs, including staggered operators in endpoint columns, and keeps
+crossings out of unrelated box interiors during port previews. It also respects
+fractional/manual y-positions. This projection changes neither accepted placement
+nor algebra; older tightly spaced saved rows require explicit tidy or regeneration
+to adopt the improved automatic spacing.
 
 Top/bottom recursive expansion uses the existing raw two-branch identity for
 every supported size, including size two. No collapse, detangler, factorial

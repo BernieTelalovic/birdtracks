@@ -115,6 +115,44 @@ def test_recursive_large_node_does_not_enumerate_permutations():
     assert max(len(b.node_ids) for b in result) <= 5
 
 
+def test_recursive_local_placement_leaves_room_for_visible_boxes_and_crossings():
+    p = Projector([Antisymmetriser((1,2,3))])
+    s = session(p)
+    geometry = widget_graph(p)["geometry"]
+    branches = s.expand(s.state.node_ids[0],base_revision=0,edge="top",geometry=geometry)
+    visible = [position for i,position in branches[1].presentation["positions"].items()
+               if isinstance(branches[1].projector.nodes[int(i)],Antisymmetriser)]
+    assert len(visible) == 2
+    assert abs(visible[0]["x"]-visible[1]["x"]) >= geometry["node_width"] + geometry["step"]
+
+
+def test_recursive_local_placement_reuses_compatible_survivor_columns():
+    from birdtracks.projectors.display_graph import compile_display_graph
+    p = Projector([Symmetriser((1,2)),Antisymmetriser((2,3,4)),Symmetriser((1,2))])
+    s = session(p)
+    before = s.state
+    branch = s.expand(before.node_ids[1],base_revision=0,edge="top",geometry=widget_graph(p)["geometry"])[1]
+    positions = branch.presentation["positions"]
+    for column in compile_display_graph(branch.projector).operator_columns:
+        assert len({positions[str(i)]["x"] for i in column}) == 1
+    for identity in (before.node_ids[0],before.node_ids[-1]):
+        assert positions[str(branch.node_ids.index(identity))] == before.presentation["positions"][str(before.node_ids.index(identity))]
+    assert ProjectorSum(b.projector for b in s.expand(before.node_ids[1],base_revision=0,edge="top")).collapse() == p.collapse()
+
+
+def test_local_placement_fits_box_widths_between_fixed_dependent_neighbours():
+    p = Projector([Symmetriser((1,2)),Antisymmetriser((1,2,3)),Symmetriser((1,2))])
+    s = session(p)
+    geometry = widget_graph(p)["geometry"]
+    branch = s.expand(s.state.node_ids[1],base_revision=0,edge="top",geometry=geometry)[1]
+    boxes = [position for i,position in branch.presentation["positions"].items()
+             if isinstance(branch.projector.nodes[int(i)],(Antisymmetriser,Symmetriser))]
+    xs = sorted(p["x"] for p in boxes)
+    assert all(b-a > geometry["node_width"] for a,b in zip(xs,xs[1:]))
+    for i in (0,len(p.nodes)-1):
+        assert branch.presentation["positions"][str(branch.node_ids.index(s.state.node_ids[i]))] == s.state.presentation["positions"][str(i)]
+
+
 def test_selected_subgraph_identity_and_cut_validation_are_atomic():
     p = Projector([Symmetriser((2,3)),Antisymmetriser((1,2)),Antisymmetriser((1,2)),Symmetriser((4,5))],coefficient=Fraction(-2,3))
     s = session(p)

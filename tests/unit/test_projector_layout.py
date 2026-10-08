@@ -1372,13 +1372,13 @@ def test_compiled_free_strands_are_flat_across_each_bypassed_sa_column() -> None
     )[0]
 
     assert "String(strand.strand_label)" in drawing
-    assert "displayGraph.operator_columns[column][0]" in drawing
-    assert "{ x: x + nodeWidth / 2, y }" in drawing
-    assert "{ x: x - nodeWidth / 2, y }" in drawing
+    assert "xForNode(n)>low && xForNode(n)<high" in drawing
+    assert "start.x>end.x ? right : left" in drawing
+    assert "start.x>end.x ? left : right" in drawing
     assert "d: routedPath(points)" in drawing
-    assert "const requestedLevel = Math.round(" in drawing
-    assert "const level = freeLevelAtColumn(column, requestedLevel)" in drawing
-    assert "occupied.add(operator.level + offset)" in drawing
+    assert "let requestedLevel = Math.round(" in drawing
+    assert "const level = freeLevelAtBoxes(barrier.members, requestedLevel)" in drawing
+    assert "occupied.add(level)" in drawing
 
 
 def test_compiled_free_strands_keep_their_evaluate_drag_handles() -> None:

@@ -1,9 +1,83 @@
 """Presentation transfer for explicit editor provenance; no algebra rewrites."""
 
+from collections.abc import Mapping, Sequence
+
 from .display_graph import compile_display_graph
 from .editor import EditorState
 from .editor_rewrites import edges
 from .layout import _node_layers, _strand_side_labels, _column_free_levels
+from .projector import Projector
+
+
+def replacement_positions(before: EditorState, projector: Projector, node_ids: Sequence[str],
+                          geometry: Mapping[str, float] | None = None) -> dict[str, dict[str, float]]:
+    """Place introduced objects only; reserve visible box and corridor widths.
+
+    A new operator may share a dependency column with a surviving disjoint
+    operator. Reuse that column's actual x instead of squeezing it around the
+    removed node. Hidden wiring nodes do not consume visible horizontal space.
+    """
+    geometry = geometry or {}
+    old_indices = {identity:i for i,identity in enumerate(before.node_ids)}
+    old = before.presentation.get("positions", {})
+    positions = {str(i):old[str(old_indices[identity])] for i,identity in enumerate(node_ids)
+                 if identity in old_indices and str(old_indices[identity]) in old}
+    removed = [i for i,identity in enumerate(before.node_ids) if identity not in node_ids]
+    anchor = old.get(str(removed[0]), {"x":0,"y":0}) if removed else {"x":0,"y":0}
+    width = float(geometry.get("node_width", 1))
+    gap = float(geometry.get("step", 1))
+    stride = max(float(geometry.get("layer_step", 2)), width + gap)
+    spacing = float(geometry.get("level_spacing", 1))
+    introduced = [i for i,identity in enumerate(node_ids) if identity not in old_indices]
+    columns = compile_display_graph(projector).operator_columns
+    visible = {i for members in columns for i in members}
+    local = [c for c,members in enumerate(columns) if set(members) & set(introduced)]
+    fixed = {c:min((positions[str(i)]["x"] for i in members if str(i) in positions),
+                   key=lambda x:(abs(x-anchor["x"]),x))
+             for c,members in enumerate(columns) if any(str(i) in positions for i in members)}
+    xs = {}
+    for c in local:
+        left = max((other for other in fixed if other < c),default=None)
+        right = min((other for other in fixed if other > c),default=None)
+        if c in fixed:
+            xs[c] = fixed[c]
+        elif left is not None and right is not None and (fixed[right]-fixed[left])/(right-left) > width+gap*0.1:
+            # Fit between fixed neighbours only when the BOXES also fit.
+            xs[c] = fixed[left]+(fixed[right]-fixed[left])*(c-left)/(right-left)
+        elif fixed:
+            nearest = min(fixed,key=lambda other:(abs(c-other),other))
+            xs[c] = fixed[nearest] + (c-nearest)*stride
+        else:
+            xs[c] = anchor["x"] + (local.index(c)-(len(local)-1)/2)*stride
+    if local and not fixed:
+        shift = max(0, float(geometry.get("left_boundary",0))+width/2+gap-min(xs.values()))
+        xs = {c:x+shift for c,x in xs.items()}
+    for i in introduced:
+        column = next((c for c,members in enumerate(columns) if i in members),None)
+        y = anchor["y"]
+        if removed:
+            order = before.projector.port_orders[removed[0]]["input"]
+            ranks = [order.index(label) for label in projector.nodes[i].support if label in order]
+            if ranks:
+                y += (min(ranks)+(len(projector.nodes[i].support)-len(order))/2)*spacing
+        x = xs.get(column,anchor["x"])
+        if column is not None:
+            padding = float(geometry.get("operator_padding",0.45))
+            height = (len(projector.nodes[i].support)-1)*spacing/2+padding
+            obstacles = [(p["x"],p["y"],(len(projector.nodes[int(j)].support)-1)*spacing/2+padding)
+                         for j,p in positions.items() if int(j) in visible]
+            def clear(candidate: float) -> bool:
+                return all(abs(candidate-ox) >= width+gap*0.1 or abs(y-oy) >= height+oh
+                           for ox,oy,oh in obstacles)
+            if not clear(x):
+                candidates = [ox+direction*stride for ox,_,_ in obstacles for direction in (-1,1)]
+                candidates.append(max(float(geometry.get("left_boundary",0))+width/2+gap,
+                                      max((ox for ox,_,_ in obstacles),default=x)+stride))
+                x = min((candidate for candidate in candidates
+                         if candidate >= float(geometry.get("left_boundary",0))+width/2+gap and clear(candidate)),
+                        key=lambda candidate:(abs(candidate-x),candidate))
+        positions[str(i)] = {"x":x,"y":y}
+    return positions
 
 
 def rewrite_colors(before: EditorState, after: EditorState) -> dict[str, str]:

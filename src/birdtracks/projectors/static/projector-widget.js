@@ -2745,13 +2745,15 @@ function renderCreator({ model, el }) {
 
   function drawCompiledDisplayStrands(lines, handles) {
     const strands = displayGraph.strands || [];
-    const freeLevelAtColumn = (column, requested) => {
+    const freeLevelAtBoxes = (members, requested) => {
       const occupied = new Set();
-      for (const nodeIndex of displayGraph.operator_columns[column] || []) {
+      for (const nodeIndex of members) {
         const operator = nodes[nodeIndex];
         if (!operator || operator.kind === "permutation") continue;
-        for (let offset = 0; offset < operator.labels.length; offset += 1) {
-          occupied.add(operator.level + offset);
+        const padding = geometry.operator_padding / spacing;
+        for (let level = Math.ceil(operator.level-padding);
+             level <= Math.floor(operator.level+operator.labels.length-1+padding); level += 1) {
+          occupied.add(level);
         }
       }
       if (!occupied.has(requested)) return requested;
@@ -2783,16 +2785,27 @@ function renderCreator({ model, el }) {
       const end = overlapNodeBorder(
         targetEndpoint, coordinates(targetEndpoint),
       );
-      const sourceColumn = strand.source.kind === "right_boundary"
-        ? (displayGraph.operator_columns || []).length
-        : displayColumn(strand.source.node);
-      const targetColumn = strand.target.kind === "left_boundary"
-        ? -1
-        : displayColumn(strand.target.node);
+      // Logical columns describe dependencies, not occupied x-coordinates.
+      // Manual placement can stagger their members. Include physical obstacles
+      // even in an endpoint's own logical column, and merge overlapping slabs
+      // so bends never double back through another box.
+      const low = Math.min(start.x,end.x), high = Math.max(start.x,end.x);
+      const barriers = [];
+      for (const node of nodes.filter(n=>n.kind !== "permutation"
+          && n.index !== strand.source.node && n.index !== strand.target.node
+          && xForNode(n)>low && xForNode(n)<high).sort((a,b)=>xForNode(a)-xForNode(b))) {
+        const x = xForNode(node), previous = barriers[barriers.length-1];
+        if (previous && x-nodeWidth/2 <= previous.right) {
+          previous.right = Math.max(previous.right,x+nodeWidth/2);
+          previous.members.push(node.index);
+        } else barriers.push({left:x-nodeWidth/2,right:x+nodeWidth/2,members:[node.index]});
+      }
+      if (start.x>end.x) barriers.reverse();
       const points = [start];
-      for (let column = sourceColumn - 1; column > targetColumn; column -= 1) {
-        const nodeIndex = displayGraph.operator_columns[column][0];
-        const node = nodes[nodeIndex];
+      for (const barrier of barriers) {
+        const node = nodes[barrier.members[0]];
+        const column = displayColumn(node.index);
+        const x = (barrier.left+barrier.right)/2;
         const liveConnection = connections.find((connection) =>
           Number(connection.boundaryLabel) === Number(strand.strand_label)
           && Object.hasOwn(connection.route || {}, String(node.layer))
@@ -2803,16 +2816,22 @@ function renderCreator({ model, el }) {
              || template.free_levels?.[String(node.layer)])?.[
               String(strand.strand_label)
             ];
-        const fraction = (sourceColumn - column) / (sourceColumn - targetColumn);
-        const requestedLevel = Math.round(assigned === undefined
+        const fraction = (x-start.x)/(end.x-start.x);
+        let requestedLevel = Math.round(assigned === undefined
           ? (start.y + (end.y - start.y) * fraction - geometry.top_margin) / spacing
           : Number(assigned));
-        const level = freeLevelAtColumn(column, requestedLevel);
-        const x = xForNode(node);
+        // A staggered box can overlap an endpoint's x-range without covering
+        // its y. Keep that endpoint's safe lane until outside the obstacle.
+        if (start.x>barrier.left && start.x<barrier.right)
+          requestedLevel = Math.round((start.y-geometry.top_margin)/spacing);
+        else if (end.x>barrier.left && end.x<barrier.right)
+          requestedLevel = Math.round((end.y-geometry.top_margin)/spacing);
+        const level = freeLevelAtBoxes(barrier.members, requestedLevel);
         const y = yFor(level);
+        const left = Math.max(low,barrier.left), right = Math.min(high,barrier.right);
         points.push(
-          { x: x + nodeWidth / 2, y },
-          { x: x - nodeWidth / 2, y },
+          { x: start.x>end.x ? right : left, y },
+          { x: start.x>end.x ? left : right, y },
         );
         if (liveConnection) {
           drawRouteHandle(handles, liveConnection, node.layer, {
