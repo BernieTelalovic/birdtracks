@@ -466,7 +466,10 @@ def _pair_latex(
     *,
     pad_to_n0: bool,
 ) -> str:
-    expression = _get(pair_widget, "pair_expression", pair_widget)
+    owner = getattr(pair_widget, '_pair_session', None)
+    expression = owner.value.state() if owner is not None else _get(pair_widget, "pair_expression", pair_widget)
+    if owner is not None:
+        styles = owner.styles
     if not isinstance(expression, Mapping):
         return r"\pair"
     terms = expression.get("terms", [])
@@ -552,6 +555,8 @@ class _ProjectorLatex:
     def __init__(self, widget: object, colors: _ColorRegistry) -> None:
         self.widget = widget
         self.colors = colors
+        if getattr(widget, '_editor_session', None) is not None:
+            widget = widget.configuration.state()
         graph = _get(widget, "graph", {})
         self.graph = graph if isinstance(graph, Mapping) else {}
         geometry = self.graph.get("geometry", {})
@@ -631,27 +636,9 @@ class _ProjectorLatex:
                 return index
         return -1
 
-    def _x_for_layer(self, layer: int) -> float:
-        return self._geometry("first_layer_x", 0) + layer * self._geometry("layer_step", 1)
 
-    def _x_for_node(self, node: Mapping[str, object]) -> float:
-        if not self.compiled:
-            return self._x_for_layer(int(node.get("layer", 0)))
-        column = self._display_column(int(node["index"]))
-        widths = self.graph.get("display", {}).get("corridor_widths", [])
-        widths = widths if isinstance(widths, list) else []
-        x = self._geometry("left_boundary", 0) + _number(widths[0] if widths else None, self._geometry("step", 1))
-        x += self._geometry("node_width", self._geometry("operator_width", 1)) / 2
-        for index in range(1, column + 1):
-            x += self._geometry("node_width", self._geometry("operator_width", 1))
-            x += _number(widths[index] if index < len(widths) else None, self._geometry("step", 1))
-        return x
 
-    def _node_width(self) -> float:
-        return self._geometry("node_width", self._geometry("operator_width", 1))
 
-    def _y(self, level: float) -> float:
-        return self._geometry("top_margin", 0) + level * self._geometry("level_spacing", 1)
 
     def _boundary_level(self, side: str, label: int) -> int:
         order = self.boundary_orders.get(side, self.graph.get("boundary_labels", []))
@@ -673,20 +660,6 @@ class _ProjectorLatex:
             node=int(raw.get("node", 0)), label=int(raw.get("label", 0)),
         )
 
-    def _coordinate(self, endpoint: _Endpoint) -> tuple[float, float]:
-        width = self._node_width()
-        if endpoint.kind == "right-anchor":
-            return self._right_boundary(), self._y(endpoint.level or 0)
-        if endpoint.kind == "left-anchor":
-            return self._geometry("left_boundary", 0), self._y(endpoint.level or 0)
-        node = self.nodes[endpoint.node or 0]
-        order = node["input_order"] if endpoint.side == "input" else node["output_order"]
-        row = list(order).index(endpoint.label)
-        centre = self._x_for_node(node)
-        return (
-            centre + (width / 2 if endpoint.side == "input" else -width / 2),
-            self._y(int(node["level"]) + row),
-        )
 
     def _endpoint_layer(self, endpoint: _Endpoint) -> int:
         if endpoint.kind == "right-anchor":
@@ -695,14 +668,6 @@ class _ProjectorLatex:
             return -1
         return int(self.nodes[endpoint.node or 0].get("layer", 0))
 
-    def _right_boundary(self) -> float:
-        if self.compiled and "right_boundary" in self.geometry:
-            return self._geometry("right_boundary", 0)
-        return (
-            self._geometry("first_layer_x", 0)
-            + (self.layers - 1) * self._geometry("layer_step", 1)
-            + self._geometry("step", 1)
-        )
 
     def _connections(self) -> list[tuple[_Endpoint, _Endpoint, object]]:
         result = []
@@ -738,28 +703,7 @@ class _ProjectorLatex:
                 result.append((source, target, label))
         return result
 
-    def _route_level(self, source: _Endpoint, target: _Endpoint, label: object, layer: int) -> int:
-        assignments = self.free_levels.get(str(layer), {})
-        if isinstance(assignments, Mapping) and label is not None:
-            assigned = assignments.get(str(label))
-            if assigned is not None:
-                return int(assigned)
-        start = self._coordinate(source)
-        end = self._coordinate(target)
-        start_layer = self._endpoint_layer(source)
-        end_layer = self._endpoint_layer(target)
-        fraction = (start_layer - layer) / (start_layer - end_layer) if start_layer != end_layer else 0
-        level = round((start[1] + (end[1] - start[1]) * fraction - self._geometry("top_margin", 0)) / self._geometry("level_spacing", 1))
-        return max(0, min(self._level_count() - 1, level))
 
-    def _route_points(self, source: _Endpoint, target: _Endpoint, label: object) -> list[tuple[float, float]]:
-        points = [self._coordinate(source)]
-        for layer in range(self._endpoint_layer(source) - 1, self._endpoint_layer(target), -1):
-            x = self._x_for_layer(layer)
-            y = self._y(self._route_level(source, target, label, layer))
-            points.extend(((x + self._node_width() / 2, y), (x - self._node_width() / 2, y)))
-        points.append(self._coordinate(target))
-        return points
 
     def _level_count(self) -> int:
         levels = [len(self.graph.get("boundary_labels", []))]
@@ -776,67 +720,7 @@ class _ProjectorLatex:
             return f"left-anchor:{endpoint.level}"
         return f"{endpoint.side}:{endpoint.node}:{endpoint.label}"
 
-    def _line_options(self, key: str, legacy: str | None = None) -> list[str]:
-        raw = self.line_colors.get(key)
-        if raw is None and legacy:
-            raw = self.line_colors.get(legacy)
-        style = raw if isinstance(raw, Mapping) else {"color": raw} if raw else {}
-        if not isinstance(style, Mapping):
-            style = {}
-        default = self.geometry.get("line_color", "black")
-        options = _style_options(
-            style, self.colors, default_fill="none", default_draw=default,
-            default_width=self.geometry.get("line_width", 1), include_fill=False,
-        )
-        options.append("line cap=round")
-        return options
 
-    def _compiled_points(self, strand: Mapping[str, object]) -> list[tuple[float, float]]:
-        source_raw = strand.get("source", {})
-        target_raw = strand.get("target", {})
-        if not isinstance(source_raw, Mapping) or not isinstance(target_raw, Mapping):
-            return []
-        source = self._display_endpoint(source_raw)
-        target = self._display_endpoint(target_raw)
-        start = self._coordinate(source)
-        end = self._coordinate(target)
-        if source.kind == "port":
-            start = (start[0] + (self._node_width() * .025 if source.side == "output" else -self._node_width() * .025), start[1])
-        if target.kind == "port":
-            end = (end[0] + (self._node_width() * .025 if target.side == "input" else -self._node_width() * .025), end[1])
-        source_column = len(self.columns) if source.kind == "right-anchor" else self._display_column(source.node or 0)
-        target_column = -1 if target.kind == "left-anchor" else self._display_column(target.node or 0)
-        points = [start]
-        label = strand.get("strand_label")
-        for column in range(source_column - 1, target_column, -1):
-            node_indices = self.columns[column]
-            if not node_indices:
-                continue
-            node = self.nodes[node_indices[0]]
-            layer = int(node.get("layer", 0))
-            assignments = self.free_levels.get(str(layer), {})
-            assigned = assignments.get(str(label)) if isinstance(assignments, Mapping) else None
-            fraction = (source_column - column) / (source_column - target_column)
-            requested = round((start[1] + (end[1] - start[1]) * fraction - self._geometry("top_margin", 0)) / self._geometry("level_spacing", 1)) if assigned is None else int(assigned)
-            occupied = {
-                int(self.nodes[index].get("level", 0)) + offset
-                for index in node_indices
-                for offset in range(len(self.nodes[index].get("labels", [])))
-            }
-            level = requested
-            if level in occupied:
-                for distance in range(1, self._level_count()):
-                    if requested + distance < self._level_count() and requested + distance not in occupied:
-                        level = requested + distance
-                        break
-                    if requested - distance >= 0 and requested - distance not in occupied:
-                        level = requested - distance
-                        break
-            x = self._x_for_node(node)
-            y = self._y(level)
-            points.extend(((x + self._node_width() / 2, y), (x - self._node_width() / 2, y)))
-        points.append(end)
-        return points
 
     def _display_endpoint(self, raw: Mapping[str, object]) -> _Endpoint:
         kind = raw.get("kind")
@@ -850,33 +734,7 @@ class _ProjectorLatex:
             node=int(raw.get("node", 0)), label=label,
         )
 
-    def _arrow(self, start: tuple[float, float], end: tuple[float, float], options: list[str]) -> str:
-        dx, dy = end[0] - start[0], end[1] - start[1]
-        length = math.hypot(dx, dy)
-        if length == 0:
-            return ""
-        tx, ty = dx / length, dy / length
-        px, py = -ty, tx
-        x, y = (start[0] + end[0]) / 2, (start[1] + end[1]) / 2
-        size = min(self._node_width(), self._geometry("level_spacing", 1)) * .10
-        direction = -1 if self.graph.get("in_direction") == "left" else 1
-        tip = (x + direction * tx * size, y + direction * ty * size)
-        back = (x - direction * tx * size * .8, y - direction * ty * size * .8)
-        spread = size * .7
-        return (
-            rf"\draw[{', '.join(options)}] "
-            rf"({_fmt(back[0] + px * spread)},{_fmt(back[1] + py * spread)}) -- "
-            rf"({_fmt(tip[0])},{_fmt(tip[1])}) -- "
-            rf"({_fmt(back[0] - px * spread)},{_fmt(back[1] - py * spread)});"
-        )
 
-    def _arrow_options(self) -> list[str]:
-        return [
-            f"draw={self.colors.use('black')}",
-            f"line width={_length_option(self.geometry.get('line_width', 1))}",
-            "line cap=round",
-            "line join=round",
-        ]
 
     def render(self) -> str:
         """Translate the saved topology into the public layer DSL."""
@@ -1329,76 +1187,6 @@ class _ProjectorLatex:
         ]
         return "\n".join(body)
 
-    def _render_legacy_tikz(self) -> str:
-        body: list[str] = []
-        direction = self.graph.get("in_direction")
-        arrows = direction in {"left", "right"}
-        if self.compiled:
-            display = self.graph.get("display", {})
-            strands = display.get("strands", []) if isinstance(display, Mapping) else []
-            if isinstance(strands, list):
-                for strand in strands:
-                    if not isinstance(strand, Mapping):
-                        continue
-                    source_raw, target_raw = strand.get("source", {}), strand.get("target", {})
-                    if not isinstance(source_raw, Mapping) or not isinstance(target_raw, Mapping):
-                        continue
-                    source, target = self._display_endpoint(source_raw), self._display_endpoint(target_raw)
-                    key = f"{self._endpoint_key(source)}->{self._endpoint_key(target)}"
-                    legacy = f"strand:{strand.get('strand_label')}"
-                    options = self._line_options(key, legacy)
-                    points = self._compiled_points(strand)
-                    if points:
-                        body.append(rf"\draw[{', '.join(options)}] {_tikz_path(points)};")
-                        if arrows and source.kind == "right-anchor" and len(points) > 1:
-                            body.append(self._arrow(points[0], points[1], self._arrow_options()))
-                        if arrows and target.kind == "left-anchor" and len(points) > 1:
-                            body.append(self._arrow(points[-2], points[-1], self._arrow_options()))
-        else:
-            for source, target, label in self._connections():
-                key = f"{self._endpoint_key(source)}->{self._endpoint_key(target)}"
-                legacy = f"strand:{label}" if label is not None else None
-                options = self._line_options(key, legacy)
-                points = self._route_points(source, target, label)
-                body.append(rf"\draw[{', '.join(options)}] {_tikz_path(points)};")
-                if arrows and source.kind == "right-anchor" and len(points) > 1:
-                    body.append(self._arrow(points[0], points[1], self._arrow_options()))
-                if arrows and target.kind == "left-anchor" and len(points) > 1:
-                    body.append(self._arrow(points[-2], points[-1], self._arrow_options()))
-
-        visible = set(index for column in self.columns for index in column) if self.compiled else set(self.nodes)
-        line_color = self.colors.use(self.geometry.get("line_color", "black"))
-        for index, node in self.nodes.items():
-            if index not in visible:
-                continue
-            centre = self._x_for_node(node)
-            width = self._node_width()
-            labels = list(node.get("labels", []))
-            top = self._y(int(node.get("level", 0))) - self._geometry("operator_padding", .45)
-            height = max(1, len(labels) - 1) * self._geometry("level_spacing", 1) + 2 * self._geometry("operator_padding", .45)
-            if node.get("kind") == "permutation" and node.get("mapping"):
-                input_order, output_order = node["input_order"], node["output_order"]
-                for mapping in node["mapping"]:
-                    if not isinstance(mapping, list) or len(mapping) != 2:
-                        continue
-                    start = (centre + width / 2, self._y(int(node["level"]) + list(input_order).index(mapping[0])))
-                    end = (centre - width / 2, self._y(int(node["level"]) + list(output_order).index(mapping[1])))
-                    middle = (start[0] + end[0]) / 2
-                    body.append(
-                        rf"\draw[draw={line_color},line width={_length_option(self.geometry.get('line_width', 1))},line cap=round] "
-                        rf"({_fmt(start[0])},{_fmt(start[1])}) .. controls "
-                        rf"({_fmt(middle)},{_fmt(start[1])}) and ({_fmt(middle)},{_fmt(end[1])}) .. "
-                        rf"({_fmt(end[0])},{_fmt(end[1])});"
-                    )
-                continue
-            kind = node.get("kind")
-            fill = self.geometry.get("antisymmetriser_color", "black") if kind == "antisymmetriser" else self.geometry.get("symmetriser_color", "white")
-            body.append(
-                rf"\path[fill={self.colors.use(fill)},draw={line_color},line width={_length_option(self.geometry.get('operator_line_width', 1))}] "
-                rf"({_fmt(centre - width / 2)},{_fmt(top)}) rectangle "
-                rf"({_fmt(centre + width / 2)},{_fmt(top + height)});"
-            )
-        return _picture(body, scale="1em")
 
 
 def _projector_latex(widget: object, colors: _ColorRegistry) -> str:

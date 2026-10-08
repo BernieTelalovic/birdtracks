@@ -28,7 +28,7 @@ def attach_editor(editor: Any, outer_factor: Fraction = Fraction(1)) -> None:
         drawing = {key: deepcopy(getattr(editor, key)) for key in _PRESENTATION}
         drawing["automatic_positions"] = deepcopy(getattr(editor, "_initial_automatic_positions", {}))
         session = EditorSession(EditorState.create(
-            editor.projector, drawing,
+            editor._configured_projector, drawing,
             outer_factor=outer_factor,
         ))
         # Materialize the initial drawing in Python with one relative compensation.
@@ -69,6 +69,10 @@ def attach_editor(editor: Any, outer_factor: Fraction = Fraction(1)) -> None:
         # refresh them even when reusing the topology/routing projection.
         graph["in_direction"] = state.projector.in_direction
         graph["out_direction"] = state.projector.out_direction
+        if not state.projector.nodes and editor.mode == "create":
+            graph["creator"] = True
+        else:
+            graph.pop('creator', None)
         graph["editor_value"] = dict(projector_codec.encode(state.projector))
         graph["term_sign"] = "-" if state.outer_factor < 0 else "" if editor.term_leading else "+"
         graph["term_leading"] = editor.term_leading
@@ -155,7 +159,7 @@ def attach_editor(editor: Any, outer_factor: Fraction = Fraction(1)) -> None:
             session._check_revision(revision)
             action = request.get("action")
             save_revision = request.get("save_revision", 0)
-            if action == "save" and (isinstance(save_revision, bool)
+            if action in {"save", "creation"} and (isinstance(save_revision, bool)
                     or not isinstance(save_revision, int) or save_revision < 0):
                 raise ValueError("save revision must be a nonnegative integer")
             if action == "reorder":
@@ -200,12 +204,17 @@ def attach_editor(editor: Any, outer_factor: Fraction = Fraction(1)) -> None:
                 else:
                     session.replace_node(request["node_id"], replacement, base_revision=revision,
                                          geometry=editor.graph["geometry"])
-            elif action == "expand":
+            elif action in {"expand", "calculate_full"}:
                 if editor.mode != "evaluate":
                     raise ValueError("expansion requires evaluation mode")
-                branches = session.expand(request["node_id"], base_revision=revision,
-                                          edge=request.get("edge", "bottom"), side=request.get("side", "input"),
-                                          geometry=editor.graph["geometry"])
+                if action == "calculate_full":
+                    from .editor_rewrites import calculate_full_expansion
+                    branches = calculate_full_expansion(session.state, request["node_id"],
+                                                        geometry=editor.graph["geometry"])
+                else:
+                    branches = session.expand(request["node_id"], base_revision=revision,
+                                              edge=request.get("edge", "bottom"), side=request.get("side", "input"),
+                                              geometry=editor.graph["geometry"])
                 from .editor_rewrites import cleanup_occurrences
                 branches = cleanup_occurrences(branches, geometry=editor.graph["geometry"])
                 from .projector_sum import ProjectorSum
@@ -215,6 +224,7 @@ def attach_editor(editor: Any, outer_factor: Fraction = Fraction(1)) -> None:
                 # next equation line as their existing document transaction.
                 editor.editor_rewrite = {"request_id": request_id, "base_revision": revision,
                                          "parent_term_id": session.state.term_id,
+                                         **({"calculation": "full"} if action == "calculate_full" else {}),
                                          "states": [s.payload() for s in branches]}
             elif action == "tidy":
                 from .layout import default_positions, widget_graph
@@ -224,6 +234,10 @@ def attach_editor(editor: Any, outer_factor: Fraction = Fraction(1)) -> None:
                 drawing.pop("strand_routes", None)
                 drawing["display_routes"] = {}
                 session.presentation_checkpoint(drawing, base_revision=revision, automatic_layout=True)
+            elif action in {"term_order", "delete_term"}:
+                if not hasattr(editor,'_editor_host_command'):
+                    raise ValueError('term commands require a canvas document')
+                editor._editor_host_command(request)
             elif action == "creation":
                 if editor.mode != "create":
                     raise ValueError("connectivity drafts require creation mode")
@@ -266,7 +280,7 @@ def attach_editor(editor: Any, outer_factor: Fraction = Fraction(1)) -> None:
                 raise ValueError("unsupported shared editor command")
             publish()
             editor._editor_seen_requests.add(request_id)
-            if action == "save":
+            if action in {"save", "creation"}:
                 saved_revision = max(editor.save_request + 1, editor.saved_revision + 1, save_revision)
                 # Immutable payload, not an algebra reconstruction from frontend traits.
                 editor.save_request = saved_revision
@@ -318,10 +332,3 @@ def bridge_outer_factor(editor: Any, factor: Fraction) -> None:
         session._undo.clear()
         session._redo.clear()
         editor._publish_editor()
-
-
-def shared_snapshot(editor: Any) -> dict[str, object] | None:
-    """Return the accepted saved representation, independent of pending traits."""
-    if getattr(editor, "_editor_session", None) is None:
-        return None
-    return editor.configuration.state()

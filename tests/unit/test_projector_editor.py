@@ -170,7 +170,7 @@ def test_canvas_sum_save_reload_and_stale_snapshot(tmp_path):
     b = Projector([Symmetriser((1, 2))])
     value = ProjectorSum(((a, Fraction(-2, 3)), (b, Fraction(5, 7))))
     path = tmp_path / "port-slice.canvas.json"
-    canvas = projector_sum_widget(value, shared_editor=True, session=path, detangler=False, debug=True)
+    canvas = projector_sum_widget(value, session=path, detangler=False, debug=True)
     child = next(e for e in canvas._term_editors if any(isinstance(n, Antisymmetriser) for n in e.projector.nodes))
     untouched = next(e for e in canvas._term_editors if e is not child)
     untouched_state = deepcopy(untouched.editor_state)
@@ -204,7 +204,7 @@ def test_automatic_odd_layout_is_materialized_from_authoritative_algebra():
     p = Projector([Antisymmetriser((1, 2)), Symmetriser((10,)), Symmetriser((20,))],
                   connections=[Connection(NodePort(1, 10), NodePort(0, 2)),
                                Connection(NodePort(2, 20), NodePort(0, 1))])
-    canvas = projector_sum_widget(ProjectorSum((p,)), shared_editor=True, detangler=False)
+    canvas = projector_sum_widget(ProjectorSum((p,)), detangler=False)
     assert canvas.current_projector_sum.collapse() == p.collapse()
     child = canvas._term_editors[0]
     assert child.projector == child._source_projector
@@ -224,7 +224,7 @@ def test_presentation_bridge_prevents_reorder_from_restoring_old_placement():
 
 def test_configuration_replay_preserves_outer_negative_sign():
     p = Projector([Antisymmetriser((1, 2))], coefficient=Fraction(-2, 3))
-    canvas = projector_sum_widget(ProjectorSum((p,)), shared_editor=True, detangler=False)
+    canvas = projector_sum_widget(ProjectorSum((p,)), detangler=False)
     child = canvas._term_editors[0]
     send(child, "reorder", changes={child.editor_state["node_ids"][0]: {"input": [2, 1]}})
     reopened = child.configuration.evaluate(detangler=False)
@@ -248,7 +248,7 @@ def test_zero_one_port_symmetriser_and_selection():
 
 def test_invalid_save_and_duplicate_transport_requests_are_atomic():
     p = Projector([Antisymmetriser((1, 2))])
-    canvas = projector_sum_widget(ProjectorSum((p,)), shared_editor=True, detangler=False)
+    canvas = projector_sum_widget(ProjectorSum((p,)), detangler=False)
     child = canvas._term_editors[0]
     original = deepcopy(child.editor_state)
     presentation = {key: deepcopy(original[key]) for key in ("positions", "free_levels", "boundary_orders", "line_colors")}

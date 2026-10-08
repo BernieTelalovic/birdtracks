@@ -750,8 +750,8 @@ function documentTransportFor(model) {
 }
 
 function renderWhiteboard({ model, el, host, signal }) {
-  const sharedDocument = model.get("document_state")?.version === 1;
-  const documentTransport = sharedDocument ? documentTransportFor(model) : null;
+  if (model.get("document_state")?.version !== 1) throw new Error("Whiteboards require committed Python document state");
+  const documentTransport = documentTransportFor(model);
   function applyDocumentPatch(blocks, command) {
     if (command.action === "source") {
       const existing = blocks.find(b=>b.id===command.block_id) || {id:command.block_id,source:""};
@@ -773,7 +773,6 @@ function renderWhiteboard({ model, el, host, signal }) {
     return command.order.map(id=>byId.get(id));
   }
   function documentBlocks() {
-    if (!sharedDocument) return model.get("blocks") || [];
     let blocks = structuredClone(documentTransport.state.blocks);
     for (const command of [documentTransport.pending, ...documentTransport.queue]) {
       if (command) blocks = applyDocumentPatch(blocks,command);
@@ -789,11 +788,10 @@ function renderWhiteboard({ model, el, host, signal }) {
     sendDocumentCommand();
   }
   function afterDocumentDrain(callback) {
-    if (!sharedDocument || !documentTransport.pending && !documentTransport.queue.length) { callback(); return; }
+    if (!documentTransport.pending && !documentTransport.queue.length) { callback(); return; }
     documentTransport.after.push(callback);
   }
   function writeBlocks(blocks) {
-    if (!sharedDocument) { model.set("blocks", blocks); return; }
     const previous = new Map(documentBlocks().map(b=>[b.id,b]));
     const changes = [];
     for (const block of blocks) {
@@ -824,7 +822,7 @@ function renderWhiteboard({ model, el, host, signal }) {
   const embeddedAnchors = new Map();
   const root = document.createElement("section");
   root.className = "birdtracks-whiteboard-section";
-  root.classList.toggle("shared-document", sharedDocument);
+  root.classList.add("shared-document");
   root.classList.add("paintbrush-active");
   const paintbrushState = {
     active: true,
@@ -1073,125 +1071,37 @@ function renderWhiteboard({ model, el, host, signal }) {
   setPaintbrushColor(paintbrushState.color);
   updateRecentColors();
 
-  function backendPresentationSnapshot(child) {
-    const accepted = child.get("editor_state");
-    if (accepted?.version === 1) {
-      return {
-        graph: structuredClone(accepted.graph),
-        positions: structuredClone(accepted.positions),
-        free_levels: structuredClone(accepted.free_levels),
-        port_orders: structuredClone(accepted.port_orders),
-        boundary_orders: structuredClone(accepted.boundary_orders),
-        line_colors: structuredClone(accepted.line_colors),
-        effective_coefficient: structuredClone(accepted.effective_coefficient),
-        editor_state: structuredClone(accepted.editor_payload),
-      };
-    }
-    return {
-      graph: structuredClone(child.get("graph")),
-      positions: structuredClone(child.get("positions") || {}),
-      free_levels: structuredClone(child.get("free_levels") || {}),
-      port_orders: structuredClone(child.get("port_orders") || {}),
-      boundary_orders: structuredClone(child.get("boundary_orders") || {}),
-      effective_coefficient: structuredClone(
-        child.get("effective_coefficient") || {},
-      ),
-      ...(child.get("editor_state")?.version === 1
-        ? {editor_state: structuredClone(child.get("editor_state").editor_payload)} : {}),
-    };
+  function commitEmbeddedEditors(items, after = () => {}) {
+    const ids = new Set(items.map(item => item.id));
+    const editors = [...list.querySelectorAll('.birdtracks-projector-widget')]
+      .filter(editor => ids.has(editor.closest('.birdtracks-whiteboard-block')?.dataset.blockId)
+        && editor._birdtracksSaveEditor);
+    if (!editors.length) { after(); return; }
+    let remaining = editors.length;
+    let error = null;
+    for (const editor of editors) editor._birdtracksSaveEditor(failure => {
+      error ||= failure;
+      if (!--remaining) after(error);
+    });
   }
 
-  function captureState() {
-    const snapshots = {
-      projectors: {}, pairs: {}, pairStyles: {}, backend: {}, backendColors: {},
-    };
-    for (const [id, child] of embeddedModels) {
-      if (id.includes(":projector:")) {
-        // Python persists committed shared occurrences atomically with source.
-        // Never merge a legacy frontend snapshot over that newer document state.
-        if (child.get("editor_state")?.version === 1) continue;
-        child.set("save_command", Number(child.get("save_command") || 0) + 1);
-        child.save_changes();
-        const snapshot = child.get("save_snapshot");
-        if (snapshot) snapshots.projectors[id] = structuredClone(snapshot);
-      } else if (id.includes(":pair:")) {
-        if (sharedDocument) continue;
-        const expression = child.get("pair_expression");
-        if (expression) snapshots.pairs[id] = structuredClone(expression);
-        snapshots.pairStyles[id] = structuredClone(child.get("pair_cell_styles") || {});
-      } else if (id.includes(":backend:")) {
-        if (child.get("editor_state")?.version === 1) continue;
-        snapshots.backend[id] = backendPresentationSnapshot(child);
-        snapshots.backendColors[id] = structuredClone(child.get("line_colors") || {});
-      }
-    }
-    const blocks = documentBlocks().map((block) => {
-      const updated = {...block};
-      for (const [field, pattern] of [
-        ["projector_snapshots", /\\birdtracks\b/g],
-        ["pair_snapshots", /\\pair\b(?!\s*\{)/g],
-        ["pair_cell_styles", /\\pair\b(?!\s*\{)/g],
-      ]) {
-        const stored = updated[field];
-        if (!stored || typeof stored !== "object") continue;
-        const count = [...String(block.source || "").matchAll(pattern)].length;
-        const retained = Object.fromEntries(Object.entries(stored)
-          .filter(([occurrence]) => Number(occurrence) < count));
-        if (Object.keys(retained).length) updated[field] = retained;
-        else delete updated[field];
-      }
-      const projectorPrefix = `${block.id}:projector:`;
-      const pairPrefix = `${block.id}:pair:`;
-      const backendPrefix = `${block.id}:backend:`;
-      for (const [id, snapshot] of Object.entries(snapshots.projectors)) {
-        if (!id.startsWith(projectorPrefix)) continue;
-        updated.projector_snapshots = structuredClone(updated.projector_snapshots || {});
-        updated.projector_snapshots[id.slice(projectorPrefix.length)] = snapshot;
-        if (snapshot.line_colors && typeof snapshot.line_colors === "object") {
-          updated.line_colors = structuredClone(snapshot.line_colors);
-        }
-      }
-      for (const [id, expression] of Object.entries(snapshots.pairs)) {
-        if (!id.startsWith(pairPrefix)) continue;
-        updated.pair_snapshots = structuredClone(updated.pair_snapshots || {});
-        updated.pair_snapshots[id.slice(pairPrefix.length)] = expression;
-      }
-      for (const [id, styles] of Object.entries(snapshots.pairStyles)) {
-        if (!id.startsWith(pairPrefix)) continue;
-        updated.pair_cell_styles = structuredClone(updated.pair_cell_styles || {});
-        updated.pair_cell_styles[id.slice(pairPrefix.length)] = styles;
-      }
-      for (const [id, snapshot] of Object.entries(snapshots.backend)) {
-        if (!id.startsWith(backendPrefix)) continue;
-        updated.backend_presentations = structuredClone(
-          updated.backend_presentations || {},
-        );
-        updated.backend_presentations[id.slice(backendPrefix.length)] = snapshot;
-      }
-      for (const [id, colors] of Object.entries(snapshots.backendColors)) {
-        if (!id.startsWith(backendPrefix)) continue;
-        updated.backend_line_colors = structuredClone(updated.backend_line_colors || {});
-        updated.backend_line_colors[id] = colors;
-      }
-      return updated;
+  function captureState(after) {
+    commitEmbeddedEditors(documentBlocks(), error => {
+      if (!error) afterDocumentDrain(after);
     });
-    writeBlocks(blocks);
-    model.save_changes();
   }
 
   function requestSave() {
-    captureState();
-    afterDocumentDrain(() => {
+    captureState(() => {
       model.set("save_request", Number(model.get("save_request") || 0) + 1);
       model.save_changes();
     });
   }
 
   function requestExport() {
-    captureState();
     // Ensure an unchanged document still produces a model change and a fresh
     // download on every click.
-    afterDocumentDrain(() => {
+    captureState(() => {
       model.set("export_content", "");
       model.set("export_request", Number(model.get("export_request") || 0) + 1);
       model.save_changes();
@@ -1414,16 +1324,6 @@ function renderWhiteboard({ model, el, host, signal }) {
       return;
     }
     const displayBlocks = ensureTrailingBlank(currentBlocks);
-    const activeBlock = documentBlocks().find(item => item.id === activeEditorId);
-    if (!sharedDocument && activeEditorId !== null && activeBlock && !activeBlock.read_only) {
-      for (const editor of list.querySelectorAll(".birdtracks-whiteboard-source")) {
-        const current = documentBlocks()
-          .find((item) => item.id === editor.dataset.blockId);
-        if (current) editor.disabled = Boolean(current.read_only);
-      }
-      return;
-    }
-    if (!sharedDocument) activeEditorId = null;
     const renderScroller = scrollingViewport(list);
     const renderScrollTop = renderScroller.scrollTop;
     const focusedElement = document.activeElement;
@@ -1438,7 +1338,7 @@ function renderWhiteboard({ model, el, host, signal }) {
     }
     for (const [index, block] of displayBlocks.entries()) {
       let row = existing.get(block.id);
-      if (sharedDocument && row && !row._birdtracksDisposed) {
+      if (row && !row._birdtracksDisposed) {
         row._birdtracksApplyBlock?.(block);
       } else if (!row || row._birdtracksDisposed
           || row._birdtracksRenderKey !== blockRenderKey(block)) {
@@ -1450,6 +1350,7 @@ function renderWhiteboard({ model, el, host, signal }) {
       // Keep unchanged canvases mounted, including their local drag/undo state.
       const slot = list.children[index];
       if (slot !== row) list.insertBefore(row, slot || null);
+      row.classList.toggle('trailing-blank', Boolean(block._trailing_blank));
       const group = connectionGroup(block);
       row.classList.toggle("connected-line",
         (index > 0 && connectionGroup(displayBlocks[index - 1]) === group)
@@ -1471,7 +1372,7 @@ function renderWhiteboard({ model, el, host, signal }) {
       .find((item) => item.dataset.blockId === pendingFocusBlockId);
     if (pendingTarget) {
       const editor = pendingTarget.querySelector('textarea');
-      if (editor && !editor.disabled) {
+      if (editor && !editor.disabled && document.activeElement !== editor) {
         editor.focus({preventScroll: true});
         const position = pendingFocusAtEnd ? editor.value.length : 0;
         editor.setSelectionRange(position, position);
@@ -1541,26 +1442,6 @@ function renderWhiteboard({ model, el, host, signal }) {
   function continuationPrefixLength(source) {
     const match = source.match(/^\s*&/);
     return match ? match[0].length : 0;
-  }
-
-  function discardRemovedEmbeddedSnapshots(block, previousSource, source) {
-    const updated = {...block};
-    const markerKinds = [
-      ["projector_snapshots", /\\birdtracks\b/g],
-      ["pair_snapshots", /\\pair\b(?!\s*\{)/g],
-    ];
-    for (const [field, pattern] of markerKinds) {
-      const previousCount = [...previousSource.matchAll(pattern)].length;
-      const count = [...source.matchAll(pattern)].length;
-      if (count >= previousCount) continue;
-      const snapshots = updated[field];
-      if (!snapshots || typeof snapshots !== "object") continue;
-      const retained = Object.fromEntries(Object.entries(snapshots)
-        .filter(([occurrence]) => Number(occurrence) < count));
-      if (Object.keys(retained).length) updated[field] = retained;
-      else delete updated[field];
-    }
-    return updated;
   }
 
   function nextBlockId(blocks) {
@@ -1820,7 +1701,7 @@ function renderWhiteboard({ model, el, host, signal }) {
   function blockRenderKey(block) {
     // Persistence acknowledgements do not change the row's rendered content.
     const content = {...block};
-    for (const field of ["projector_snapshots", "pair_snapshots",
+    for (const field of ["projector_snapshots", "pair_snapshots", "pair_editor_states",
       "backend_presentations", "line_colors", "backend_line_colors",
       "pair_cell_styles"]) delete content[field];
     return JSON.stringify(content);
@@ -1923,83 +1804,20 @@ function renderWhiteboard({ model, el, host, signal }) {
       caretResizeObserver?.disconnect();
     };
 
-    function saveEmbeddedState(items) {
-      const snapshots = {projectors: {}, pairs: {}, backend: {}};
-      for (const item of items) {
-        for (const [id, child] of embeddedModels) {
-          if (id.startsWith(`${item.id}:projector:`)) {
-            child.set("save_command", Number(child.get("save_command") || 0) + 1);
-            child.save_changes();
-            const snapshot = child.get("editor_state")?.version === 1 ? null : child.get("save_snapshot");
-            if (snapshot) snapshots.projectors[id] = structuredClone(snapshot);
-          } else if (id.startsWith(`${item.id}:pair:`)) {
-            if (sharedDocument) continue;
-            const expression = child.get("pair_expression");
-            if (expression) snapshots.pairs[id] = structuredClone(expression);
-          } else if (id.startsWith(`${item.id}:backend:`)) {
-            if (child.get("editor_state")?.version === 1) continue;
-            snapshots.backend[id] = backendPresentationSnapshot(child);
-          }
-        }
-      }
-      return snapshots;
-    }
-
-    function storeEmbeddedSnapshots(blocks, snapshots) {
-      return blocks.map((item) => {
-        const projectorPrefix = `${item.id}:projector:`;
-        const pairPrefix = `${item.id}:pair:`;
-        const backendPrefix = `${item.id}:backend:`;
-        const projectors = Object.entries(snapshots.projectors)
-          .filter(([id]) => id.startsWith(projectorPrefix));
-        const pairs = Object.entries(snapshots.pairs)
-          .filter(([id]) => id.startsWith(pairPrefix));
-        const backend = Object.entries(snapshots.backend)
-          .filter(([id]) => id.startsWith(backendPrefix));
-        if (!projectors.length && !pairs.length && !backend.length) return item;
-        const updated = {...item};
-        if (projectors.length) {
-          const stored = structuredClone(item.projector_snapshots || {});
-          for (const [id, snapshot] of projectors) {
-            stored[id.slice(projectorPrefix.length)] = snapshot;
-          }
-          updated.projector_snapshots = stored;
-        }
-        if (pairs.length) {
-          const stored = structuredClone(item.pair_snapshots || {});
-          for (const [id, expression] of pairs) {
-            stored[id.slice(pairPrefix.length)] = expression;
-          }
-          updated.pair_snapshots = stored;
-        }
-        if (backend.length) {
-          const stored = structuredClone(item.backend_presentations || {});
-          for (const [id, snapshot] of backend) {
-            stored[id.slice(backendPrefix.length)] = snapshot;
-          }
-          updated.backend_presentations = stored;
-        }
-        return updated;
-      });
-    }
-
     wrapper._birdtracksCommitEmbeddedState = () => {
-      const currentBlocks = documentBlocks();
-      const snapshots = saveEmbeddedState(currentBlocks.filter((item) => item.id === block.id));
-      const blocks = storeEmbeddedSnapshots(currentBlocks, snapshots);
-      if (blocks.every((item, index) => item === currentBlocks[index])) return;
-      locallyUpdatingBlockId = block.id;
-      try {
-        writeBlocks(blocks);
-        model.save_changes();
-      } finally {
-        locallyUpdatingBlockId = null;
-      }
+      commitEmbeddedEditors(documentBlocks().filter(item => item.id === block.id));
     };
 
-    function requestCalculation(action) {
-      if (sharedDocument && (documentTransport.pending || documentTransport.queue.length)) {
-        afterDocumentDrain(()=>requestCalculation(action));
+    function requestCalculation(action, editorsAccepted = false) {
+      if (documentTransport.pending || documentTransport.queue.length) {
+        afterDocumentDrain(()=>requestCalculation(action, editorsAccepted));
+        return;
+      }
+      if (action === "evaluate" && !editorsAccepted) {
+        commitEmbeddedEditors(documentBlocks().filter(item => !item.read_only
+          && blockLineId(item) === blockLineId(block)), error => {
+          if (!error) requestCalculation(action, true);
+        });
         return;
       }
       if (action === "evaluate" && !calculationPending.hidden) return;
@@ -2023,24 +1841,7 @@ function renderWhiteboard({ model, el, host, signal }) {
           scrollTop: scroller.scrollTop,
         };
       }
-      const snapshots = {};
-      if (action === "evaluate") {
-        const blocks = documentBlocks();
-        const selected = blocks.find((item) => item.id === block.id) || block;
-        for (const item of blocks) {
-          for (const [occurrence, snapshot] of Object.entries(
-            item.projector_snapshots || {},
-          )) {
-            if (snapshot) snapshots[`${item.id}:projector:${occurrence}`] = snapshot;
-          }
-        }
-        const saved = saveEmbeddedState(blocks.filter((item) => (
-          !item.read_only && blockLineId(item) === blockLineId(selected)
-        )));
-        // Fresh state on the evaluated line takes precedence. Definitions on
-        // earlier lines were committed when Enter created the following row.
-        Object.assign(snapshots, saved.projectors);
-      } else {
+      if (action !== "evaluate") {
         const blocks = documentBlocks();
         const group = connectionGroup(block);
         const restored = blocks.find((item) => (
@@ -2060,13 +1861,16 @@ function renderWhiteboard({ model, el, host, signal }) {
         line_id: block.id,
         action,
         revision: ++calculationRequestRevision,
-        snapshots,
+        base_revision: documentTransport.state.revision,
       });
       model.save_changes();
     }
     wrapper._requestCalculation = requestCalculation;
     wrapper.addEventListener("pointerdown", (event) => {
       if (!block.read_only || event.button !== 0) return;
+      // Embedded activation already focused its own editor. Focusing the row
+      // here would deactivate it and hide its contextual port handles.
+      if (event.target.closest('.birdtracks-whiteboard-embedded-projector')) return;
       // Nested MathML and embedded presentations can otherwise retain focus,
       // leaving the calculated row without its active-line indicator and
       // without a reliable target for Shift+Backspace.
@@ -2311,7 +2115,7 @@ function renderWhiteboard({ model, el, host, signal }) {
     }
 
     function preserveNestedFocus() {
-      const focused = sharedDocument && rendered.contains(document.activeElement) ? document.activeElement : null;
+      const focused = rendered.contains(document.activeElement) ? document.activeElement : null;
       const selection = focused && typeof focused.selectionStart === 'number'
         ? [focused.selectionStart,focused.selectionEnd,focused.selectionDirection] : null;
       if (focused) queueMicrotask(() => {
@@ -2383,7 +2187,7 @@ function renderWhiteboard({ model, el, host, signal }) {
       const activeIds = new Set(
         markers.map((marker, index) => marker.id || embeddedKey(index)),
       );
-      if (sharedDocument) {
+      {
         // A partially typed marker can hide its editor without deleting the
         // Python-owned occurrence or its mounted frontend/caret state.
         for (const id of [...(model.get('embedded_projector_ids') || []),
@@ -2848,11 +2652,13 @@ function renderWhiteboard({ model, el, host, signal }) {
           if (disposed) return;
           if (anchor._birdtracksProjectorReference !== reference) continue;
           embeddedModels.set(anchor.dataset.projectorId, childModel);
-          if (sharedDocument && anchor.classList.contains('birdtracks-whiteboard-embedded-pair')) {
-            anchor._birdtracksDocumentPair = (value, styles = null) => {
+          if (anchor.classList.contains('birdtracks-whiteboard-embedded-pair')) {
+            anchor._birdtracksDocumentPair = (value, styles = null, operation = 'edit') => {
               if (value) anchor._birdtracksPendingPair = structuredClone(value);
               if (styles) anchor._birdtracksPendingPairStyles = structuredClone(styles);
               requestDocument('pair', {occurrence_id: anchor.dataset.projectorId,
+                session_id: childModel.get('pair_editor_state').session_id,
+                operation,
                 ...(value ? {value} : {}), ...(styles ? {styles} : {})});
             };
           }
@@ -3007,89 +2813,30 @@ function renderWhiteboard({ model, el, host, signal }) {
     };
 
     function updateSource(source, editingIndex = null) {
-      if (sharedDocument) {
-        wrapper.classList.toggle('continuation',isContinuationSource(source));
-        let error = "";
-        try {
-          renderSource(source, editingIndex);
-          lastRenderedSource = source;
-          clearParseError();
-        } catch (failure) {
-          error = failure.message;
-          renderInvalidSource(source, failure);
-        }
-        const current = documentBlocks().find(b=>b.id===block.id);
-        if (current?.source !== source || !current?.source_edit) {
-          documentTransport.drafts.set(block.id, {source,error});
-          requestDocument("source",{block_id:block.id,source});
-        }
-        wrapper._birdtracksRenderKey = blockRenderKey({...block,source});
-        rendered.hidden = false;
-        scheduleContinuationAlignment();
-        return;
-      }
-      const currentBlocks = documentBlocks();
-      const blockIndex = currentBlocks.findIndex((item) => item.id === block.id);
-      const previous = blockIndex > 0 ? currentBlocks[blockIndex - 1] : null;
-      const lineId = isContinuationSource(source) && previous
-        ? blockLineId(previous)
-        : block.id;
-      if (blockIndex < 0) {
-        if (source === "") return;
-      } else if (currentBlocks[blockIndex].source === source
-          && blockLineId(currentBlocks[blockIndex]) === lineId) {
-        wrapper.classList.toggle("continuation", isContinuationSource(source));
-        rendered.hidden = false;
-        if (!rendered.querySelector(".birdtracks-whiteboard-embedded-projector")) {
-          renderSource(source, editingIndex);
-          scheduleContinuationAlignment();
-        }
-        return;
-      }
-      const blocks = blockIndex < 0
-        ? [...currentBlocks, (() => {
-          const persistedBlock = { ...block };
-          delete persistedBlock._trailing_blank;
-          return { ...persistedBlock, source, line_id: lineId };
-        })()]
-        : currentBlocks.map((item) => (
-          item.id === block.id
-            ? {
-              ...discardRemovedEmbeddedSnapshots(
-                item, String(item.source || ""), source,
-              ),
-              source,
-              line_id: lineId,
-            }
-            : item
-        ));
-      wrapper.classList.toggle("continuation", isContinuationSource(source));
-      wrapper._birdtracksRenderKey = blockRenderKey(
-        blocks.find((item) => item.id === block.id),
-      );
-      locallyUpdatingBlockId = block.id;
-      try {
-        writeBlocks(blocks);
-        model.save_changes();
-      } finally {
-        locallyUpdatingBlockId = null;
-      }
       if (disposed) return;
-      rendered.hidden = false;
+      wrapper.classList.toggle('continuation',isContinuationSource(source));
+      let error = "";
       try {
         renderSource(source, editingIndex);
-        scheduleContinuationAlignment();
         lastRenderedSource = source;
-        rendered.classList.remove("error");
-      } catch (error) {
-        renderInvalidSource(source, error);
-        rendered.classList.add("error");
+        clearParseError();
+      } catch (failure) {
+        error = failure.message;
+        renderInvalidSource(source, failure);
       }
+      const current = documentBlocks().find(b=>b.id===block.id);
+      if (current?.source !== source || !current?.source_edit) {
+        documentTransport.drafts.set(block.id, {source,error});
+        requestDocument("source",{block_id:block.id,source});
+      }
+      wrapper._birdtracksRenderKey = blockRenderKey({...block,source});
+      rendered.hidden = false;
+      scheduleContinuationAlignment();
     }
 
     function renderInvalidSource(source, error) {
       preserveNestedFocus();
-      if (sharedDocument) {
+      {
         wrapper.classList.add("draft-error");
         parseStatus.hidden = false;
         parseStatus.textContent = `Draft: ${error.message}`;
@@ -3177,8 +2924,7 @@ function renderWhiteboard({ model, el, host, signal }) {
       // mounted embedded canvas here, not just the line being split: a user
       // may have drawn a previous definition and then continued elsewhere
       // before pressing Enter.
-      const snapshots = saveEmbeddedState(currentBlocks);
-      blocks = storeEmbeddedSnapshots(blocks, snapshots);
+      commitEmbeddedEditors(currentBlocks);
       writeBlocks(blocks);
       model.save_changes();
       focusBlock(newId, 0, false, true);
@@ -3250,8 +2996,17 @@ function renderWhiteboard({ model, el, host, signal }) {
     }
 
     function showRendered() {
+      if (disposed) return;
       const source = editor.value;
-      updateSource(source);
+      // A focus transfer into a child must not detach the pointer target.
+      // Only transient fraction editing requires a typesetting refresh here.
+      if (source !== lastRenderedSource || activeFraction
+          || rendered.querySelector('.birdtracks-whiteboard-fraction-source')) {
+        updateSource(source);
+      } else {
+        const current = documentBlocks().find(item => item.id === block.id);
+        if (current && !current.source_edit) requestDocument('source', {block_id:block.id, source});
+      }
       rendered.hidden = false;
       wrapper.classList.remove("editing");
       activeEditorId = null;
@@ -3272,7 +3027,6 @@ function renderWhiteboard({ model, el, host, signal }) {
       activeEditorId = block.id;
       editor.hidden = false;
       rendered.hidden = false;
-      if (!sharedDocument) rendered.classList.remove("error");
       wrapper.classList.add("editing");
       try {
         // Keep the typeset fraction available until pointerup maps the click
@@ -3382,7 +3136,7 @@ function renderWhiteboard({ model, el, host, signal }) {
       });
     });
     function renderEditingSelection() {
-      if (sharedDocument && wrapper.classList.contains("draft-error")) {
+      if (wrapper.classList.contains("draft-error")) {
         renderInvalidSource(editor.value, new Error(parseStatus.title));
         return;
       }
@@ -3555,7 +3309,6 @@ function renderWhiteboard({ model, el, host, signal }) {
     renderBlocks();
   }
   function activateInline(event) {
-    if (!sharedDocument) return;
     const anchor = event.target.closest?.('.birdtracks-whiteboard-embedded-projector');
     for (const item of root.querySelectorAll('.birdtracks-whiteboard-embedded-projector')) {
       item.classList.toggle('inline-active', item === anchor);
@@ -3563,9 +3316,7 @@ function renderWhiteboard({ model, el, host, signal }) {
   }
   document.addEventListener('pointerdown',activateInline,true);
   document.addEventListener('focusin',activateInline,true);
-  documentTransport?.views.add(documentChanged);
-  const blocksChanged = () => { if (!sharedDocument) renderBlocks(); };
-  model.on("change:blocks", blocksChanged);
+  documentTransport.views.add(documentChanged);
   const refreshEmbeddedProjectors = () => {
     for (const renderedBlock of list.querySelectorAll(
       ".birdtracks-whiteboard-rendered",
@@ -3581,11 +3332,9 @@ function renderWhiteboard({ model, el, host, signal }) {
   model.on("change:embedded_pairs", refreshEmbeddedProjectors);
 
   renderBlocks();
-  if (sharedDocument) {
-    documentTransport.accept();
-    documentTransport.feedback();
-    sendDocumentCommand();
-  }
+  documentTransport.accept();
+  documentTransport.feedback();
+  sendDocumentCommand();
   return () => {
     for (const renderedBlock of list.querySelectorAll(
       ".birdtracks-whiteboard-rendered",
@@ -3600,8 +3349,7 @@ function renderWhiteboard({ model, el, host, signal }) {
     document.removeEventListener("scroll", queueToolbarPositionUpdate, true);
     view.removeEventListener("resize", queueToolbarPositionUpdate);
     if (toolbarFrame !== null) view.cancelAnimationFrame(toolbarFrame);
-    model.off("change:blocks", blocksChanged);
-    documentTransport?.views.delete(documentChanged);
+    documentTransport.views.delete(documentChanged);
     document.removeEventListener('pointerdown',activateInline,true);
     document.removeEventListener('focusin',activateInline,true);
     model.off("change:embedded_projector_ids", refreshEmbeddedProjectors);

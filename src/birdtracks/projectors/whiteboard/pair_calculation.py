@@ -51,9 +51,8 @@ def pair_expression_from_blocks(
             key = f"{block.get('id', '')}:pair:{occurrence}"
             occurrence += 1
             editor = explicit_pairs.get(key)
-            value = getattr(editor, "pair_expression", None)
-            if value is None:
-                value = getattr(editor, "_pair_expression", None)
+            owner = getattr(editor, '_pair_session', None)
+            value = owner.value.state() if owner is not None else getattr(editor, "pair_expression", None)
             try:
                 expression = (
                     value

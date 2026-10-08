@@ -6,6 +6,8 @@ import subprocess
 
 import pytest
 
+from tests.editor_protocol_helpers import present_editor
+
 from birdtracks import (
     Antisymmetriser,
     Permutation,
@@ -473,7 +475,7 @@ def test_compiled_connector_exports_visible_strand_colour_through_hidden_permuta
     value = Projector([Symmetriser((1, 2)),
                        PermutationNode(Permutation.from_cycle(1, 2)), Symmetriser((1, 2))])
     widget = projector_widget(value, mode="evaluate")
-    widget.line_colors = {"output:2:1->input:0:2": "#9141ac"}
+    present_editor(widget, line_colors={"output:2:1->input:0:2": "#9141ac"})
     result = _export_projector_widget(widget)
     assert "{HTML}{9141AC}" in result
     assert r"\layer{\symmetriser[,][,draw=btcolor0]{2}}" in result
@@ -486,8 +488,8 @@ def test_compiled_coloured_boundary_permutations_match_start_and_end_nodes() -> 
 
     swap = PermutationNode(Permutation.from_cycle(1, 2))
     widget = projector_widget(Projector([swap, Symmetriser((1, 2)), swap]), mode="evaluate")
-    widget.line_colors = {"output:1:2->left-anchor:0": "#9141ac",
-                          "right-anchor:0->input:1:2": "#9141ac"}
+    present_editor(widget, line_colors={"output:1:2->left-anchor:0": "#9141ac",
+                          "right-anchor:0->input:1:2": "#9141ac"})
     result = _export_projector_widget(widget)
     assert r"\startnodes[draw=btcolor0,]" in result
     assert r"\endnodes[draw=btcolor0,]" in result
@@ -511,7 +513,7 @@ def test_compiled_identity_connector_preserves_coloured_pass_through_and_boundar
                               mode="evaluate")
     # Strand 1 passes through the second column, sharing its visible colour
     # with the right boundary and the operator's input face.
-    widget.line_colors = {"right-anchor:0->input:0:1": "#9141ac"}
+    present_editor(widget, line_colors={"right-anchor:0->input:0:1": "#9141ac"})
     result = _export_projector_widget(widget)
     assert r"\layer{\symmetriser[,][draw=btcolor0,]{2}\freelines{1}}" in result
     assert r"\layer{\permute[draw=btcolor0,,]{1,2,3}{1,2,3}}" in result
@@ -844,9 +846,9 @@ def test_new_syntax_export_compiles(tmp_path: Path) -> None:
     swap = PermutationNode(Permutation.from_cycle(1, 2))
     compiled = projector_widget(Projector([swap, Symmetriser((1, 2)),
                                           swap, Symmetriser((1, 2))]), mode="evaluate")
-    compiled.line_colors = {"output:1:2->left-anchor:0": "#9141ac",
+    present_editor(compiled, line_colors={"output:1:2->left-anchor:0": "#9141ac",
                             "output:3:2->input:1:1": "#9141ac",
-                            "right-anchor:0->input:3:1": "#9141ac"}
+                            "right-anchor:0->input:3:1": "#9141ac"})
     source = source.replace(r"\end{document}",
                             "\n$" + _export_projector_widget(compiled) + "$\n" + r"\end{document}")
     source = source.replace(

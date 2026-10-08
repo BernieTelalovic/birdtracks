@@ -62,7 +62,7 @@ class ProjectorConfiguration:
             mode="evaluate",
         )
         return projector_sum_widget(
-            ProjectorSum((self.projector,)),
+            ProjectorSum((editor._editor_session.state.outer_factor * editor.projector,)),
             style=style,
             initial_editor=editor,
             session=session,

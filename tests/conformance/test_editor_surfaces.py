@@ -40,7 +40,7 @@ def surface(kind, coefficient, path):
                 lambda: ProjectorCanvasSession.load(path).open(detangler=False, debug=True)._term_editors[0], p)
     if kind == "parsed":
         board = whiteboard(path, debug=True)
-        seed = projector_widget(p, shared_editor=False)
+        seed = projector_widget(p)
         board.blocks = [{"id": "definition", "source": r"P\def \birdtracks",
                          "projector_snapshots": {"0": seed.configuration.state()}},
                         {"id": "line", "source": "+P"}]
@@ -68,7 +68,7 @@ def surface(kind, coefficient, path):
             return ProjectorSum(tuple(projector_codec.decode(t["value"]) for t in board.blocks[0]["calculation_terms"]))
         return board.backend_projectors[0], value, lambda: whiteboard(path, debug=True).backend_projectors[0], p
     body = p / coefficient
-    seed = projector_widget(body, shared_editor=False)
+    seed = projector_widget(body)
     magnitude = abs(coefficient)
     factor = str(magnitude.numerator) if magnitude.denominator == 1 else rf"\frac{{{magnitude.numerator}}}{{{magnitude.denominator}}}"
     source = r"P\def " + ("- " if coefficient < 0 else "") + factor + r"\birdtracks"
@@ -435,7 +435,7 @@ def test_expansion_cleans_whole_line_with_exact_factors_and_persisted_history(ki
     send(child,"move",changes={child.editor_state["node_ids"][0]:{"x":11,"y":19}})
     before = deepcopy(child.editor_state)
     if full:
-        child.expand_node_request = {"revision":1,"node":2,"term_id":before["term_id"],"base_revision":before["revision"]}
+        send(child, "calculate_full", node_id=before["node_ids"][2])
     else:
         with patch.object(Projector,"collapse",side_effect=AssertionError("interactive collapse")):
             send(child,"expand",node_id=before["node_ids"][2],edge="top")
@@ -495,7 +495,7 @@ def test_standalone_expansion_also_publishes_cleaned_python_branches(full):
                    Antisymmetriser((3,4)),Symmetriser((1,2))],coefficient=Fraction(-2,3))
     child = projector_widget(p,debug=True)
     if full:
-        child.expand_node_request = {"revision":1,"node":2}
+        send(child, "calculate_full", node_id=child.editor_state["node_ids"][2])
     else:
         with patch.object(Projector,"collapse",side_effect=AssertionError("interactive collapse")):
             send(child,"expand",node_id=child.editor_state["node_ids"][2])
@@ -552,15 +552,21 @@ def test_first_valid_creation_keeps_shared_rewrite_host_after_mode_switch(factor
     host = projector_creator(detangler=False,debug=True)
     child = host._term_editors[0]
     if factor < 0:
-        child.term_sign_flip_request = 1
+        host._toolbar.add_term_request = {'sign': -1, 'revision': 1}
+        send(child, 'save', save_revision=child.save_command)
+        send(child, 'delete_term')
+        child = host._term_editors[0]
     p = Projector([Antisymmetriser((1,2,3))])
-    seed = projector_widget(p,shared_editor=False)
+    seed = projector_widget(p)
     snapshot = seed.configuration.state()
-    snapshot["revision"] = 1
-    child.save_snapshot = snapshot
+    from tests.editor_protocol_helpers import create_editor
+    create_editor(child, snapshot)
     accepted = deepcopy(child._editor_session.payload())
     assert child._editor_session.state.outer_factor == factor
     host._toolbar.mode = "evaluate"
+    for other in host._term_editors:
+        if other is not child:
+            send(other, 'save', save_revision=other.save_command)
     send(child,"save",save_revision=child.save_command)
     assert host._term_editors[0] is child
     assert child.mode == "evaluate"

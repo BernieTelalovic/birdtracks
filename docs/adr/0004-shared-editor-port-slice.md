@@ -2,6 +2,10 @@
 
 ## Decision
 
+The transitional opt-in and creation protocol below are historical.
+[ADR 0008](0008-mandatory-editor-protocol.md) makes shared ownership mandatory
+for every editor and removes the `shared_editor` keyword.
+
 The opt-in scope below records the first slice. [ADR 0005](0005-shared-port-interfaces.md)
 extends it to every evaluate-mode projector surface by default.
 

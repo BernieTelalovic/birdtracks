@@ -25,6 +25,8 @@ def live_document(tmp_path, request):
         source = r'P\def \birdtracks'
         p = Projector([Antisymmetriser((1,2)), Symmetriser((3,))],coefficient=Fraction(-2,3))
         block = {'id':'line','source':source,'projector_snapshots':{'0':projector_widget(p).configuration.state()}}
+    elif kind == 'blank_diagram':
+        block = {'id':'line','source':r'P\def \birdtracks'}
     elif kind == 'pair':
         source = r'B\def \pair'
         block = {'id':'line','source':source}
@@ -56,8 +58,7 @@ def live_document(tmp_path, request):
             else:
                 owner = next(e for e in (*board.embedded_projectors,*board.backend_projectors,*board.embedded_pairs)
                              if f'anywidget:{e.model_id}' == target)
-            for key,value in changes.items():
-                setattr(owner,key,value)
+            owner.set_state(changes)
             return state()
 
         page.expose_binding('pythonDocument',command)
@@ -121,6 +122,36 @@ def live_document(tmp_path, request):
 
 def settled(page):
     page.wait_for_function("model.get('document_feedback')?.request_id===model.get('document_request')?.request_id")
+
+
+@pytest.mark.parametrize('live_document', ['blank_diagram'], indirect=True)
+def test_blank_diagram_creates_saves_and_evaluates_through_one_owner(live_document):
+    page, board, calls, path = live_document
+    anchor = page.locator('.birdtracks-whiteboard-embedded-projector').first
+    anchor.click(position={'x':2,'y':2})
+    initial = board.embedded_projectors[0]
+    identity = initial.editor_state['term_id']
+    point = anchor.locator('.birdtracks-line-hit').first.evaluate('''path=>{
+      const p=path.getPointAtLength(path.getTotalLength()/2).matrixTransform(path.getScreenCTM());
+      const control=path.closest('svg').querySelector('.birdtracks-add-line-control-hit');
+      const plus=new DOMPoint(Number(control.getAttribute('cx')),Number(control.getAttribute('cy'))).matrixTransform(control.getScreenCTM());
+      return {x:p.x,y:p.y+0.8*(plus.y-p.y)};
+    }''')
+    page.mouse.dblclick(point['x'], point['y'])
+    assert anchor.locator('.birdtracks-symmetriser').count() == 1
+    page.get_by_role('button', name='Save', exact=True).first.click()
+    page.wait_for_function("model.get('save_request')>0")
+    assert initial.editor_state['term_id'] == identity
+    assert initial.projector.nodes
+    assert any(changes.get('editor_request', {}).get('action') == 'creation' for _, changes in calls)
+    page.locator('[data-block-id="line"] textarea').press('Shift+Enter')
+    page.wait_for_selector('[data-block-id="calculation-line-1"] .birdtracks-node rect')
+    assert board.embedded_projectors[0] is initial
+    assert all('snapshots' not in changes.get('simplify_request', {}) for _, changes in calls)
+    result = page.locator('[data-block-id="calculation-line-1"] .birdtracks-whiteboard-embedded-projector').first
+    result.click(position={'x':2,'y':2})
+    assert 'inline-active' in result.get_attribute('class')
+    assert result.locator('[aria-label^="input:"]').first.is_visible()
 
 
 @pytest.mark.parametrize('live_document',['tensor'],indirect=True)
@@ -275,6 +306,21 @@ def test_typing_uses_one_surface_and_preserves_last_valid_value_while_saving_dra
     assert not page.locator('.birdtracks-whiteboard-block[data-block-id="line"]').evaluate('r=>r.classList.contains("editing")')
     assert page.locator('[data-block-id="line"] mfrac').count()==1
     assert not any('simplify_request' in data for _,data in calls)
+
+
+def test_typing_after_enter_keeps_caret_and_reclassifies_placeholder(live_document):
+    page, board, calls, path = live_document
+    editor = page.locator('[data-block-id="line"] textarea')
+    editor.focus()
+    editor.press('End')
+    editor.press('Enter')
+    active = page.locator('textarea:focus')
+    active.press_sequentially('above', delay=10)
+    settled(page)
+    playwright.expect(active).to_have_value('above')
+    assert active.evaluate('e=>e.selectionStart') == len('above')
+    playwright.expect(page.locator('.trailing-blank')).to_have_count(1)
+    assert board.blocks[-1]['source'] == 'above'
 
 
 def test_rapid_typing_and_old_document_reply_cannot_replace_new_draft(live_document):

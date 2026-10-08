@@ -1,4 +1,4 @@
-"""Launch with Voilà; this is the opt-in shared port editor in the existing canvas."""
+"""Launch the shared projector canvas with Voilà."""
 
 from fractions import Fraction
 import os
@@ -17,7 +17,7 @@ except FileNotFoundError:
         (Projector([Antisymmetriser((1, 2, 3)), Symmetriser((3, 4))]), Fraction(-2, 3)),
         (Projector([Symmetriser((1, 2))]), Fraction(5, 7)),
     ))
-    canvas = projector_sum_widget(value, shared_editor=True, session=name,
+    canvas = projector_sum_widget(value, session=name,
                                   detangler=False, debug=True)
 
 display(canvas)

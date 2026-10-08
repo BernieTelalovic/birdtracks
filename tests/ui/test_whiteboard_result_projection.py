@@ -27,12 +27,15 @@ def result_page():
         page.evaluate('''async source => {
           window.module = await import('data:text/javascript;base64,' + source);
           function model(values) {
+            if(values.widget_role==='whiteboard')values.document_state={version:1,revision:0,blocks:structuredClone(values.blocks)};
             const listeners = new Map();
             return {
               get: key => values[key],
               set(key, value) {
                 if (JSON.stringify(values[key]) === JSON.stringify(value)) return;
                 values[key] = value;
+                if(key==='blocks' && values.widget_role==='whiteboard')this.set('document_state',{
+                  version:1,revision:values.document_state.revision+1,blocks:structuredClone(value)});
                 for (const fn of [...(listeners.get('change:' + key) || [])]) fn(this,value,{});
               },
               on(names, fn) { for (const name of names.split(' ')) {
@@ -117,9 +120,6 @@ def test_real_recursive_control_generates_an_exact_python_line(result_page, edge
         if editor_request and editor_request['request_id'] not in received:
             received.add(editor_request['request_id'])
             child.editor_request = editor_request
-        expansion = request.get('expand_node_request')
-        if expansion:
-            child.expand_node_request = expansion
         return {key: value for key, value in child.get_state().items()
                 if not key.startswith('_') and key not in {'editor_request', 'expand_node_request', 'save_command'}}
 
@@ -131,7 +131,7 @@ def test_real_recursive_control_generates_an_exact_python_line(result_page, edge
       cleanup(); const el=document.querySelector('#widget'); el.replaceChildren();
       window.child=makeModel(state);
       child.save_changes=()=>window.pythonCommand({editor_request: child.get('editor_request'),
-        expand_node_request: child.get('expand_node_request')}).then(reply=>{
+        }).then(reply=>{
         for(const [key,value] of Object.entries(reply)) if(!['editor_state','editor_feedback'].includes(key)) child.set(key,value);
         child.set('editor_state',reply.editor_state); child.set('editor_feedback',reply.editor_feedback);
         window.commandsDone=Number(window.commandsDone || 0)+1;
@@ -231,6 +231,7 @@ def test_whiteboard_owned_sign_previews_without_source_writes_or_remounts(result
     assert ('−' in before_text) == initially_negative
     before_blocks = result_page.evaluate("board.get('blocks')")
     mounts = result_page.evaluate('mountCount')
+    result_page.locator('.birdtracks-whiteboard-embedded-projector').first.click(position={'x':2,'y':2})
     points = [result_page.locator(f'[aria-label^="input:0:{i};"]').bounding_box() for i in (1, 2, 3)]
     result_page.mouse.move(points[0]['x'] + points[0]['width']/2, points[0]['y'] + points[0]['height']/2)
     result_page.mouse.down()

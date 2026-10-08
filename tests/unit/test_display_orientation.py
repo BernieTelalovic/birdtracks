@@ -8,7 +8,8 @@ import pytest
 from birdtracks import Antisymmetriser, Connection, NodePort, Projector, ProjectorSum, Symmetriser
 from birdtracks.projectors.display_graph import compile_display_graph
 from birdtracks.projectors.layout import default_positions, widget_graph
-from birdtracks.projectors.widget import _expand_from_canvas_request, _projector_from_state
+from birdtracks.projectors.widget import _projector_from_state
+from birdtracks.projectors.simplification import recursive_expand_node
 from birdtracks.projectors.whiteboard.projector_codec import projector_codec
 from birdtracks.projectors.whiteboard.widget import _result_source, whiteboard
 
@@ -75,7 +76,7 @@ def test_contextual_recursion_preserves_expression_through_detangle(edge):
         connections=[Connection(NodePort(1, 7), NodePort(0, 2))],
         input_boundary={1: NodePort(0, 1), 2: NodePort(1, 7), 3: NodePort(1, 8), 4: NodePort(1, 9)},
         output_boundary={1: NodePort(0, 1), 2: NodePort(0, 2), 3: NodePort(1, 8), 4: NodePort(1, 9)})
-    expanded = _expand_from_canvas_request(p, {'node': 1, 'recursive_edge': edge})
+    expanded = recursive_expand_node(p, 1, side='input', edge=edge)
     assert expanded.collapse() == p.collapse()
     for term, _ in expanded:
         assert reconstruct(widget_graph(term)).collapse() == term.collapse()

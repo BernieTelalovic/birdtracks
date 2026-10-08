@@ -5,6 +5,8 @@ from math import factorial
 
 import pytest
 
+from tests.editor_protocol_helpers import expand_editor, create_editor, send_editor
+
 from birdtracks import (
     Antisymmetriser,
     Connection,
@@ -431,10 +433,10 @@ def test_canvas_collects_permutation_terms_after_the_final_expansion() -> None:
         )
         if isinstance(editor._source_projector.nodes[0], Symmetriser)
     )
-    canvas._term_editors[selected].expand_node_request = {  # type: ignore[attr-defined]
+    expand_editor(canvas._term_editors[selected], {  # type: ignore[attr-defined]
         "node": 0,
         "revision": 1,
-    }
+    })
 
     value = canvas.current_projector_sum  # type: ignore[attr-defined]
     assert len(value) == 3

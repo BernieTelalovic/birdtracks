@@ -177,11 +177,15 @@ class DocumentSession:
             parse_source(source, block['id'])
             committed, error = source, ''
             block = deepcopy(block)
-            for field, marker in (('projector_snapshots', 'birdtracks'), ('pair_snapshots', 'pair'), ('pair_cell_styles', 'pair')):
+            for field, marker in (('projector_snapshots', 'birdtracks'), ('pair_snapshots', 'pair'),
+                                  ('pair_cell_styles', 'pair'), ('pair_editor_states', 'pair')):
                 count = len(re.findall(r'\\'+marker+r'\b(?!\s*\{)', source))
                 stored = block.get(field)
                 if isinstance(stored, dict) and all(str(key).isdigit() for key in stored):
-                    block[field] = {key:value for key,value in stored.items() if int(key) < count}
+                    if count:
+                        block[field] = {key:value for key,value in stored.items() if int(key) < count}
+                    else:
+                        block.pop(field, None)
         except ValueError as exc:
             error = str(exc)
         return {**block, 'source': source, 'source_edit': {
@@ -239,8 +243,12 @@ class DocumentSession:
             identity = change['id']
             if not isinstance(identity, str) or identity not in order or not isinstance(change['fields'], Mapping):
                 raise ValueError('document patch references an unknown block')
-            if 'source_edit' in change['fields'] or 'source_edit' in change.get('remove', []):
-                raise ValueError('source parse metadata is Python-owned')
+            owned = {'source_edit','projector_snapshots','pair_snapshots','pair_cell_styles','pair_editor_states',
+                     'backend_presentations','backend_terms','backend_line_colors','line_colors',
+                     'calculation_terms','calculation_value','calculation_svg','pair_calculation',
+                     'pair_expression_tree','editor_rewrite_undo','editor_rewrite_redo'}
+            if owned & (change['fields'].keys() | set(change.get('remove', []))):
+                raise ValueError('value and parse metadata are Python-owned')
             block = {**blocks.get(identity, {'id': identity, 'source': ''}), **change['fields']}
             for field in change.get('remove', []):
                 block.pop(field, None)
@@ -260,8 +268,6 @@ class DocumentSession:
         session = getattr(editor, '_editor_session', None)
         if session is not None:
             return session.state.projector
-        if hasattr(editor, 'pair_expression'):
-            from ...young_diagrams import PairExpression
-
-            return PairExpression.from_state(editor.pair_expression)
+        if hasattr(editor, '_pair_session'):
+            return editor._pair_session.value
         return editor.projector

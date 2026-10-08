@@ -5,6 +5,10 @@ have since migrated too: see [the structural editor guide](editor-structural-sli
 In particular, movement/routes are now undoable transactions, and complete
 Create diagrams retain their shared session across mode changes.
 
+[ADR 0008](adr/0008-mandatory-editor-protocol.md) records the current mandatory
+protocol, including blank diagrams and pairs. Its scope/ownership statements
+supersede the transitional compatibility section below.
+
 Evaluate-mode canvases, projector widgets, and whiteboard diagrams now use the
 same Python-owned port editor by default. See
 [the cross-interface checklist](editor-port-migration.md) for this migration.
@@ -32,8 +36,8 @@ In a notebook, display the same existing canvas directly:
         (Projector([Antisymmetriser((1, 2, 3)), Symmetriser((3, 4))]), Fraction(-2, 3)),
         (Projector([Symmetriser((1, 2))]), Fraction(5, 7)),
     ))
-    canvas = projector_sum_widget(value, shared_editor=True,
-                                  session="port-reorder-demo", detangler=False)
+    canvas = projector_sum_widget(value, session="port-reorder-demo",
+                                  detangler=False)
     display(canvas)
 
 For programmatic reopen, use ProjectorCanvasSession.load(name).open(); the

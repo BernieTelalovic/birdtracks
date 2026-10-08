@@ -71,6 +71,10 @@ See the [Birdtracks Whiteboard user manual](src/birdtracks/projectors/whiteboard
 for every source command, keyboard shortcut, toolbar action, projector
 interaction, and Young diagram interaction.
 
+All diagram, pair, and source editors now use Python-owned, revisioned shared
+state. For maintenance and cross-interface verification, see
+[the editor protocol ADR](docs/adr/0008-mandatory-editor-protocol.md).
+
 ## Whiteboard expressions
 
 Use `A \def expression` to give an expression a name.

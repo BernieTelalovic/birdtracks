@@ -5,6 +5,8 @@ from random import Random
 
 import pytest
 
+from tests.editor_protocol_helpers import expand_editor
+
 from birdtracks.projectors.detangle_training import (
     DETANGLER_SCHEMA_VERSION,
     FEATURE_COUNT,
@@ -218,7 +220,7 @@ def test_value_checkpoint_scores_layout_states_and_preserves_topology(
     assert result.steps == 0
 
 
-def test_evaluation_canvas_uses_policy_for_every_expanded_term(
+def test_evaluation_canvas_expansion_does_not_run_a_global_layout_policy(
     tmp_path, monkeypatch
 ) -> None:
     pytest.importorskip("anywidget")
@@ -252,12 +254,14 @@ def test_evaluation_canvas_uses_policy_for_every_expanded_term(
     projector = Projector([Symmetriser((1, 2))])
     canvas = projector.evaluate(detangler=checkpoint)
 
-    canvas._term_editors[0].expand_node_request = {  # type: ignore[attr-defined]
+    expand_editor(canvas._term_editors[0], {  # type: ignore[attr-defined]
         "node": 0,
         "revision": 1,
-    }
+    })
 
-    assert len(calls) == 2
+    # Shared rewrites own local placement; an implicit global detangler must
+    # not replace that presentation while publishing the new equation row.
+    assert not calls
     assert canvas._history[-1].collapse() == projector.collapse()  # type: ignore[attr-defined]
 
 

@@ -73,7 +73,9 @@ def evaluate_projector_expression(
         for _match in re.finditer(r"\\birdtracks\b", source):
             key = f"{block_id}:projector:{occurrence}"
             editor = explicit_projectors.get(key)
-            value = getattr(editor, "_whiteboard_source_value", getattr(editor, "_configured_projector", None))
+            owner = getattr(editor, '_editor_session', None)
+            value = getattr(editor, "_whiteboard_source_value", owner.state.projector if owner is not None
+                            else getattr(editor, "_configured_projector", None))
             if not isinstance(value, Projector):
                 raise ValueError(f"projector marker {key!r} has no saved value")
             projector_values.append(value)

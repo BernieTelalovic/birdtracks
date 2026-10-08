@@ -46,7 +46,7 @@ def connected_canvas(tmp_path, request):
         p = p * (Fraction(-2,3) / p.coefficient)
         plain = Projector([Symmetriser((1,2)),Antisymmetriser((2,3,4)),Symmetriser((1,2))],coefficient=Fraction(1,3))
         initial = ProjectorSum((plain,p))
-    canvas = projector_sum_widget(initial, shared_editor=True,
+    canvas = projector_sum_widget(initial,
                                   session=tmp_path / "gestures", detangler=False, debug=True)
     child = canvas._term_editors[0]
     if surface_kind == "tensor":
@@ -80,15 +80,13 @@ def connected_canvas(tmp_path, request):
 
         def command(_source, request):
             requests.append(deepcopy(request))
-            if "calculation_request" in request:
-                child.expand_node_request = request["calculation_request"]
-            else:
-                child.editor_request = request
+            child.editor_request = request
             reply = {key: value for key, value in child.get_state().items()
                      if not key.startswith("_") and key not in {"editor_request", "save_command", "local_undo_command"}}
             if document is not None:
                 reply["document_blocks"] = ([block for block in document.blocks if block['id'] == 'line']
                                             if kind == 'parsed' else document.blocks)
+                reply['document_state'] = {**document.document_state, 'blocks': reply['document_blocks']}
             return reply
 
         page.expose_binding("pythonEditorCommand", command)
@@ -105,7 +103,9 @@ def connected_canvas(tmp_path, request):
                            "embedded_projector_ids": document.embedded_projector_ids,
                            "backend_projector_ids": document.backend_projector_ids,
                            "embedded_projectors": ["child"] * len(document.embedded_projector_ids),
-                           "backend_projectors": ["child"] * len(document.backend_projector_ids)}
+                           "backend_projectors": ["child"] * len(document.backend_projector_ids),
+                           "document_state": {**document.document_state, "blocks": ([block for block in document.blocks if block['id'] == 'line']
+                                                                                    if kind == 'parsed' else document.blocks)}}
         page.evaluate("""async ({state, source, boardSource, boardState}) => {
           const values = structuredClone(state), listeners = new Map();
           window.model = {
@@ -122,20 +122,17 @@ def connected_canvas(tmp_path, request):
             off(names, fn) { for (const name of names.split(' ')) listeners.get(name)?.delete(fn); },
             save_changes() {
               let request = values.editor_request;
-              const calculation = values.expand_node_request;
-              if (calculation?.revision && this.lastCalculation !== calculation.revision) {
-                this.lastCalculation = calculation.revision;
-                request = {calculation_request: structuredClone(calculation)};
-              } else {
-                if (!request?.request_id || this.lastSent === request.request_id) return;
-                this.lastSent = request.request_id;
-              }
+              if (!request?.request_id || this.lastSent === request.request_id) return;
+              this.lastSent = request.request_id;
               window.pythonEditorCommand(structuredClone(request)).then(reply => {
                 for (const [key,value] of Object.entries(reply))
-                  if (!['editor_state','editor_feedback','document_blocks'].includes(key)) model.set(key,value);
+                  if (!['editor_state','editor_feedback','document_blocks','document_state'].includes(key)) model.set(key,value);
                 model.set('editor_state',reply.editor_state);
                 model.set('editor_feedback',reply.editor_feedback);
-                if(reply.document_blocks) board.set('blocks',reply.document_blocks);
+                if(reply.document_blocks) {
+                  board.set('blocks',reply.document_blocks);
+                  board.set('document_state',reply.document_state);
+                }
               });
             },
           };

@@ -1,5 +1,10 @@
 # Shared editor layer: requirements and stage-one audit
 
+Historical requirements and baseline audit. For the implemented mandatory
+communication boundary and latest verification, see
+[ADR 0008](adr/0008-mandatory-editor-protocol.md). The requirements below remain
+intact; references to legacy behavior describe the inspected baseline.
+
 Status: inspection and proposal only, 2026-10-07 (Europe/Copenhagen).
 Branch: feature/shared-editor-layer, created from feature/permutation-core at
 8396c4f04663ea01e8f692a1a60b723f56a7cc65.

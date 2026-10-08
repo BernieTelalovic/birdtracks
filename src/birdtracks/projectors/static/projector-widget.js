@@ -2,6 +2,7 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const activeEditorByGroup = new Map();
 // Requests belong to the model, not a disposable view of a result line.
 const editorRequestsByModel = new WeakMap();
+const pairRequestsByModel = new WeakMap();
 let activeGroupId = null;
 
 function announceOperatorExpansion(element) {
@@ -190,11 +191,7 @@ function enableTermReordering({ model, el, svg }) {
     dimOtherTerms(false);
     if (!completed.started) return;
     event.preventDefault();
-    model.set("term_order_request", {
-      target: completed.target,
-      revision: Date.now(),
-    });
-    model.save_changes();
+    el._birdtracksEditorCommand('term_order',{target:completed.target});
   };
   svg.addEventListener("pointerup", finish);
   svg.addEventListener("pointercancel", () => {
@@ -296,9 +293,30 @@ function renderYoungCreator({ model, el, visible = false }) {
   host.appendChild(termsRow);
   el.appendChild(host);
   const usesDocumentPair = () => Boolean(el.closest?.('.birdtracks-whiteboard-embedded-pair')?._birdtracksDocumentPair);
-  let pairCommitted = usesDocumentPair() && model.get('pair_editor_state')?.version
-    ? structuredClone(model.get('pair_editor_state')) : null;
-  let expression = structuredClone(pairCommitted?.value || model.get("pair_expression"));
+  let pairCommitted = structuredClone(model.get('pair_editor_state'));
+  if (pairCommitted?.version !== 1) throw new Error('Pair editors require committed Python pair state');
+  let expression = structuredClone(pairCommitted.value);
+  let transport = pairRequestsByModel.get(model);
+  if (!transport) {
+    transport = {pending:null,queue:[],sequence:0,views:new Set()};
+    transport.send = () => {
+      if (transport.pending || !transport.queue.length) return;
+      transport.pending = transport.queue.shift();
+      const state = model.get('pair_editor_state');
+      model.set('pair_editor_request',{...transport.pending,session_id:state.session_id,base_revision:state.revision});
+      model.save_changes();
+    };
+    transport.feedback = () => {
+      const feedback = model.get('pair_editor_feedback');
+      if (!transport.pending || feedback?.request_id !== transport.pending.request_id) return;
+      if (feedback.error) transport.queue.length = 0;
+      transport.pending = null;
+      for (const update of transport.views) update();
+      transport.send();
+    };
+    model.on('change:pair_editor_feedback',transport.feedback);
+    pairRequestsByModel.set(model,transport);
+  }
   let activeTerm = 0;
   let insertionPoint = null;
   const insertionMarker = document.createElement("div");
@@ -329,7 +347,6 @@ function renderYoungCreator({ model, el, visible = false }) {
   let lastCellClick = null;
   let doubleClickedCell = false;
   let pendingCellClick = null;
-  const history = [];
   const box = 30;
   function whiteboardPaintbrush() {
     return el.closest?.(".birdtracks-whiteboard-section")?._birdtracksPaintbrush || null;
@@ -344,14 +361,16 @@ function renderYoungCreator({ model, el, visible = false }) {
   }
   function pairStyles() {
     const anchor = el.closest?.('.birdtracks-whiteboard-embedded-pair');
-    return anchor?._birdtracksPendingPairStyles || pairCommitted?.styles || model.get('pair_cell_styles') || {};
+    const pending = [...transport.queue].reverse().find(command => command.styles)?.styles
+      || transport.pending?.styles;
+    return anchor?._birdtracksPendingPairStyles || pending || pairCommitted.styles;
   }
-  function publishPair(value = null, styles = null) {
+  function publishPair(value = null, styles = null, operation = 'edit') {
     const command = el.closest?.('.birdtracks-whiteboard-embedded-pair')?._birdtracksDocumentPair;
-    if (command) { command(value,styles); return; }
-    if (value) model.set('pair_expression',structuredClone(value));
-    if (styles) model.set('pair_cell_styles',structuredClone(styles));
-    model.save_changes();
+    if (command) { command(value,styles,operation); return; }
+    transport.queue.push({request_id:`pair:${model.model_id}:${Date.now()}:${++transport.sequence}`,operation,
+      ...(value ? {value:structuredClone(value)} : {}), ...(styles ? {styles:structuredClone(styles)} : {})});
+    transport.send();
   }
   function paintBox(termIndex, cell) {
     const color = paintbrushColor();
@@ -478,7 +497,6 @@ function renderYoungCreator({ model, el, visible = false }) {
     labelEditor.hidden = true;
     if (model.get("read_only")) return;
     if (JSON.stringify(next) === JSON.stringify(expression)) return;
-    history.push(structuredClone(expression));
     expression = next;
     selected = null;
     publishPair(expression);
@@ -983,13 +1001,16 @@ function renderYoungCreator({ model, el, visible = false }) {
   const update = () => {
     const accepted = model.get('pair_editor_state');
     const previousStyles = JSON.stringify(pairCommitted?.styles);
-    if (usesDocumentPair() && accepted?.version) {
-      if (pairCommitted && accepted.revision < pairCommitted.revision) return;
-      pairCommitted = structuredClone(accepted);
-    } else pairCommitted = null;
-    const next = pairCommitted?.value || model.get("pair_expression");
+    if (accepted?.version !== 1 || accepted.session_id !== pairCommitted.session_id
+        || accepted.revision < pairCommitted.revision) {
+      model.set('pair_editor_state', structuredClone(pairCommitted));
+      return;
+    }
+    pairCommitted = structuredClone(accepted);
+    const next = pairCommitted.value;
     const pending = el.closest?.('.birdtracks-whiteboard-embedded-pair')?._birdtracksPendingPair;
     if (pending && JSON.stringify(next) !== JSON.stringify(pending)) return;
+    if (!usesDocumentPair() && (transport.pending || transport.queue.length)) return;
     if (JSON.stringify(next) === JSON.stringify(expression)) {
       if (JSON.stringify(pairCommitted?.styles) !== previousStyles) redrawGeometry();
       return;
@@ -998,14 +1019,13 @@ function renderYoungCreator({ model, el, visible = false }) {
     expression = structuredClone(next);
     activeTerm = Math.max(0, Math.min(activeTerm, expression.terms.length - 1));
     selected = null;
-    history.length = 0;
     editor.hidden = true;
     labelEditor.hidden = true;
     redraw();
   };
   const anchor = el.closest?.('.birdtracks-whiteboard-embedded-pair');
   if (anchor) anchor._birdtracksAcceptPair = () => { update(); redrawGeometry(); };
-  model.on("change:pair_expression", update);
+  transport.views.add(update);
   model.on('change:pair_editor_state',update);
   // Geometry replies must not replace SVG nodes in the middle of a gesture.
   const redrawGeometry = () => { if (!pointerDown && !drag && editor.hidden && labelEditor.hidden) redraw(); };
@@ -1048,14 +1068,7 @@ function renderYoungCreator({ model, el, visible = false }) {
         editor.hidden = true;
         commit(next);
       } else if (action === "undo") {
-        const previous = history.pop();
-        if (!previous) return;
-        expression = previous;
-        activeTerm = Math.max(0, Math.min(activeTerm, expression.terms.length - 1));
-        selected = null;
-        editor.hidden = true;
-        publishPair(expression);
-        redraw();
+        publishPair(null,null,'undo');
       } else if (action === "zoom-in" || action === "zoom-out") {
         zoom = Math.max(0.5, Math.min(3, zoom * (action === "zoom-in" ? 1.2 : 1 / 1.2)));
         redraw();
@@ -1063,7 +1076,7 @@ function renderYoungCreator({ model, el, visible = false }) {
     },
     dispose() {
       cancelPendingCellClick();
-      model.off("change:pair_expression", update);
+      transport.views.delete(update);
       model.off('change:pair_editor_state',update);
       if (anchor) delete anchor._birdtracksAcceptPair;
       model.off("change:pair_drawing_state", redrawGeometry);
@@ -1446,7 +1459,8 @@ function renderToolbar({ model, el }) {
 }
 
 function renderCreator({ model, el }) {
-  let sharedState = model.get("editor_state")?.version === 1 ? model.get("editor_state") : null;
+  let sharedState = model.get("editor_state");
+  if (sharedState?.version !== 1) throw new Error("Projector editors require committed Python editor state");
   const embedded = model.get("widget_role") === "embedded";
   const widgetMode = model.get("mode") || "evaluate";
   let groupId = model.get("group_id");
@@ -1468,7 +1482,7 @@ function renderCreator({ model, el }) {
     ...(embedded ? ["birdtracks-projector-embedded"] : []),
     `birdtracks-projector-${widgetMode}`,
   );
-  let template = sharedState?.graph || model.get("graph");
+  let template = sharedState.graph;
   // Python supplies this read-only plan for evaluate mode. Creator cleanup
   // operates on the live graph only and never rewrites compiled display data.
   let displayGraph = template.display || {};
@@ -1497,13 +1511,10 @@ function renderCreator({ model, el }) {
   const layerStep = geometry.layer_step;
   const INITIAL_LAYERS = 1;
   const INITIAL_LEVELS = 1;
-  const savedPositions = structuredClone(sharedState?.positions || model.get("positions") || {});
-  const savedPortOrders = structuredClone(sharedState?.port_orders || model.get("port_orders") || {});
-  const savedBoundaryOrders = structuredClone(sharedState?.boundary_orders || model.get("boundary_orders") || {
-    input: template.boundary_labels || [],
-    output: template.boundary_labels || [],
-  });
-  const savedFreeLevels = structuredClone(sharedState?.free_levels || model.get("free_levels") || {});
+  const savedPositions = structuredClone(sharedState.positions);
+  const savedPortOrders = structuredClone(sharedState.port_orders);
+  const savedBoundaryOrders = structuredClone(sharedState.boundary_orders);
+  const savedFreeLevels = structuredClone(sharedState.free_levels);
   let coefficientNumerator = BigInt(template.coefficient.numerator);
   let coefficientDenominator = BigInt(template.coefficient.denominator);
   let nodes = (template.nodes || []).map((node) => {
@@ -1637,13 +1648,16 @@ function renderCreator({ model, el }) {
     }
   }
 
-  if (!nodes.length && !connections.length) connections = [{
-    source: { type: "right-anchor", level: 0 },
-    target: { type: "left-anchor", level: 0 },
-    route: {},
-  }];
+  function prepareBlankConstructor() {
+    if (!nodes.length && !connections.length) connections = [{
+      source: { type: "right-anchor", level: 0 },
+      target: { type: "left-anchor", level: 0 },
+      route: {},
+    }];
+  }
+  prepareBlankConstructor();
   const lineColors = new Map(
-    Object.entries(sharedState?.line_colors || model.get("line_colors") || {})
+    Object.entries(sharedState.line_colors)
       .filter(([, color]) => typeof color === "string"),
   );
   let savedToLiveColorKeys = new Map();
@@ -1687,13 +1701,9 @@ function renderCreator({ model, el }) {
         pendingPaint = null;
         if (legacyKey) lineColors.delete(legacyKey);
         lineColors.set(key, color);
-        if (sharedState) requestEditor("presentation", {
+        requestEditor("presentation", {
           presentation: presentationSnapshot({line_colors: Object.fromEntries(lineColors)}),
         });
-        else {
-          model.set("line_colors", Object.fromEntries(lineColors));
-          model.save_changes();
-        }
         state.record?.(color);
         redraw();
       }, 300);
@@ -1724,11 +1734,11 @@ function renderCreator({ model, el }) {
 
   function presentationSnapshot(overrides = {}) {
     return Object.fromEntries(["positions", "free_levels", "boundary_orders", "line_colors", "strand_routes", "display_routes"]
-      .map(key => [key, structuredClone(overrides[key] || sharedState?.[key] || model.get(key) || {})]));
+      .map(key => [key, structuredClone(overrides[key] || sharedState[key] || {})]));
   }
 
   function sendNextEditorRequest() {
-    if (!sharedState || editorTransport.pending || !editorQueue.length) return;
+    if (editorTransport.pending || !editorQueue.length) return;
     editorTransport.pending = editorQueue.shift();
     const { after, ...command } = editorTransport.pending;
     model.set("editor_request", {
@@ -1738,17 +1748,17 @@ function renderCreator({ model, el }) {
   }
 
   function requestEditor(action, data = {}, after = null) {
-    if (!sharedState) return false;
     editorQueue.push({action, ...data, after,
       request_id: `${requestPrefix}:port-editor:${++requestSequence}`});
     sendNextEditorRequest();
     return true;
   }
+  el._birdtracksEditorCommand = requestEditor;
 
   function applyEditorState() {
     const next = model.get("editor_state");
-    if (!next?.version) { sharedState = null; redoPortButton.hidden = true; return; }
-    if (sharedState && (next.term_id !== sharedState.term_id || next.revision < sharedState.revision)) {
+    if (next?.version !== 1) throw new Error("Invalid Python editor state");
+    if (next.term_id !== sharedState.term_id || next.revision < sharedState.revision) {
       model.set("editor_state", structuredClone(sharedState));
       return;
     }
@@ -1807,6 +1817,7 @@ function renderCreator({ model, el }) {
     redoPortButton.disabled = !next.can_redo;
     redoPortButton.hidden = !next.can_redo;
     if (interactionMode === "create") {
+      prepareBlankConstructor();
       creatorPresentationPrepared = false;
       prepareCreatorPresentation();
     }
@@ -1822,9 +1833,12 @@ function renderCreator({ model, el }) {
       applyEditorState();
       message.textContent = feedback.error;
       editorQueue.length = 0;
+      queueMicrotask(() => completed.after?.(feedback.error));
     } else {
       message.textContent = completed.action === "save" ? "Projector saved." : "Port editor updated.";
-      completed.after?.();
+      // The owner may publish a document revision in the same comm batch.
+      // Run save/evaluate barriers after that batch, not inside a trait callback.
+      queueMicrotask(() => completed.after?.());
     }
     sendNextEditorRequest();
   }
@@ -1838,25 +1852,19 @@ function renderCreator({ model, el }) {
       coefficientNumerator,
       coefficientDenominator,
       directionMode,
-      termNegative: model.get("term_sign") === "-",
     };
   }
 
   function rememberEditorState(snapshot = snapshotEditorState()) {
-    if (sharedState) {
-      if (interactionMode === "create") {
-        creationDirty = true;
-        undoStack.push(snapshot);
-        localUndo.disabled = false;
-      }
-      return;
+    if (interactionMode === "create") {
+      creationDirty = true;
+      undoStack.push(snapshot);
+      localUndo.disabled = false;
     }
-    undoStack.push(snapshot);
-    localUndo.disabled = false;
   }
 
   function undoEditorOperation() {
-    if (sharedState && creationDirty && undoStack.length && !editorTransport.pending && !editorQueue.length) {
+    if (creationDirty && undoStack.length && !editorTransport.pending && !editorQueue.length) {
       const previous = undoStack.pop();
       nodes = previous.nodes; connections = previous.connections; nextLabel = previous.nextLabel;
       coefficientNumerator = previous.coefficientNumerator;
@@ -1867,33 +1875,7 @@ function renderCreator({ model, el }) {
       redraw();
       return true;
     }
-    if (sharedState) return requestEditor("undo");
-    const previous = undoStack.pop();
-    if (!previous) return false;
-    const modeBeforeUndo = interactionMode;
-    nodes = previous.nodes;
-    connections = previous.connections;
-    nextLabel = previous.nextLabel;
-    coefficientNumerator = previous.coefficientNumerator;
-    coefficientDenominator = previous.coefficientDenominator;
-    directionMode = previous.directionMode;
-    if ((model.get("term_sign") === "-") !== previous.termNegative) {
-      setTermNegative(previous.termNegative);
-    }
-    if (interactionMode === "create") {
-      compactEmptyLayers();
-      normalizeCreatorLayers();
-    }
-    syncPortOrders();
-    redraw();
-    if (interactionMode === "create") saveProjector();
-    else persistPresentation();
-    // Synchronising the exact value is not a mode transition. Reassert the
-    // live mode so toolbar operator actions remain enabled after create undo.
-    interactionMode = modeBeforeUndo;
-    model.set("mode", modeBeforeUndo);
-    model.save_changes();
-    return true;
+    return requestEditor("undo");
   }
 
   for (const [name, value] of Object.entries({
@@ -2108,11 +2090,7 @@ function renderCreator({ model, el }) {
     if (eventPoint(event).x > geometry.left_boundary) return;
     event.preventDefault();
     event.stopPropagation();
-    model.set(
-      "term_delete_request",
-      model.get("term_delete_request") + 1,
-    );
-    model.save_changes();
+    requestEditor('delete_term');
   });
   svg.addEventListener("dblclick", (event) => {
     const prefactor = event.target.closest?.(".birdtracks-coefficient, .birdtracks-fraction-number, .birdtracks-prefactor-delete-target");
@@ -2483,74 +2461,9 @@ function renderCreator({ model, el }) {
     }
   }
 
-  function collapseFreeLineLayers() {
-    const operatorLayers = new Set(
-      nodes
-        .filter((node) => node.kind !== "permutation")
-        .map((node) => node.layer),
-    );
-    if (!operatorLayers.size) return;
-    const collapsible = nodes
-      .filter((node) => node.kind === "permutation")
-      .sort((left, right) => right.index - left.index);
-    for (const node of collapsible) {
-      const strands = node.labels.map((input) => {
-        const output = node.mapping
-          ? node.mapping.find(([candidate]) => candidate === input)?.[1]
-          : input;
-        const incoming = connections.find((connection) =>
-          connection.target.type === "port"
-          && connection.target.node === node.index
-          && connection.target.label === input
-        );
-        const outgoing = connections.find((connection) =>
-          connection.source.type === "port"
-          && connection.source.node === node.index
-          && connection.source.label === output
-        );
-        return { incoming, outgoing };
-      });
-      // A boundary-to-boundary strand still needs this node as its anchor in
-      // the Python graph representation.  All other permutation strands can
-      // become ordinary, independently movable free lines in this layer.
-      if (strands.some(({ incoming, outgoing }) =>
-        !incoming || !outgoing
-        || (incoming.source.type === "right-anchor"
-          && outgoing.target.type === "left-anchor")
-      )) continue;
-      const replacements = [];
-      for (const { incoming, outgoing } of strands) {
-        replacements.push({
-          source: incoming.source,
-          target: outgoing.target,
-          boundaryLabel: incoming.boundaryLabel ?? outgoing.boundaryLabel,
-          route: { ...(incoming.route || {}), ...(outgoing.route || {}) },
-        });
-        connections = connections.filter((connection) =>
-          connection !== incoming && connection !== outgoing
-        );
-      }
-      connections.push(...replacements);
-      nodes.splice(node.index, 1);
-      for (const connection of connections) {
-        for (const endpoint of [connection.source, connection.target]) {
-          if (endpoint.type === "port" && endpoint.node > node.index) {
-            endpoint.node -= 1;
-          }
-        }
-      }
-      nodes.forEach((item, index) => { item.index = index; });
-    }
-  }
-
   function prepareCreatorPresentation() {
     if (creatorPresentationPrepared) return;
     unwrapIdentityBoundaryNodes();
-    if (!sharedState) {
-      collapseFreeLineLayers();
-      compactEmptyLayers();
-      normalizeCreatorLayers();
-    }
     creatorPresentationPrepared = true;
     compiledDisplayValid = false;
   }
@@ -2870,11 +2783,7 @@ function renderCreator({ model, el }) {
         const node = nodes[barrier.members[0]];
         const column = displayColumn(node.index);
         const x = (barrier.left+barrier.right)/2;
-        const legacyConnection = !sharedState && connections.find(connection =>
-          Number(connection.boundaryLabel) === Number(strand.strand_label)
-          && Object.hasOwn(connection.route || {}, String(node.layer)));
-        const assigned = legacyConnection ? routeLevel(legacyConnection, node.layer)
-          : displayRouteLevel(column, strand.strand_label);
+        const assigned = displayRouteLevel(column, strand.strand_label);
         const fraction = (x-start.x)/(end.x-start.x);
         let requestedLevel = Math.round(assigned === undefined
           ? (start.y + (end.y - start.y) * fraction - geometry.top_margin) / spacing
@@ -2892,7 +2801,7 @@ function renderCreator({ model, el }) {
           { x: start.x>end.x ? right : left, y },
           { x: start.x>end.x ? left : right, y },
         );
-        if (sharedState && displayStrandPosition(strand, column)) {
+        if (displayStrandPosition(strand, column)) {
           drawRouteHandle(handles, null, node.layer, {
             displayX: x,
             displayColumn: column,
@@ -2900,9 +2809,6 @@ function renderCreator({ model, el }) {
             strandId: strand.editor_id,
             level,
           });
-        } else if (legacyConnection) {
-          // shared_editor=False opts out of the Python command boundary.
-          drawRouteHandle(handles, legacyConnection, node.layer, {displayX: x});
         }
       }
       points.push(end);
@@ -3054,21 +2960,18 @@ function renderCreator({ model, el }) {
     if (!model.get("prefactor_owned")) {
       drawExactCoefficient(
         annotations,
-        sharedState ? {numerator:String(coefficientNumerator < 0n ? -coefficientNumerator : coefficientNumerator),
-                       denominator:String(coefficientDenominator)} : currentGraphCoefficient(),
+        {numerator:String(coefficientNumerator < 0n ? -coefficientNumerator : coefficientNumerator),
+         denominator:String(coefficientDenominator)},
         displayedTermSign(),
         geometry,
         geometry.left_boundary / 2,
         yFor(Math.max(0, levelCount() - 1) / 2),
       );
     }
-    if (sharedState) {
-      // The embedding view may own the visible sign. Notify its drawing only;
-      // no model traits, coefficients, or document source are published here.
-      el.dispatchEvent(new CustomEvent("birdtracks-port-preview", {
-        bubbles: true, detail: {odd: interactionMode === "evaluate" && portParityIsOdd()},
-      }));
-    }
+    // Drawing-only parity preview; never a coefficient/source publication.
+    el.dispatchEvent(new CustomEvent("birdtracks-port-preview", {
+      bubbles: true, detail: {odd: interactionMode === "evaluate" && portParityIsOdd()},
+    }));
     // Measure the actual rendered prefactor. If it outgrows its coefficient
     // slot, keep its right edge against the diagram and enlarge the viewBox
     // by precisely the measured left overflow.
@@ -3204,28 +3107,18 @@ function renderCreator({ model, el }) {
     // Drawing-only preview: initial orders are the last Python-accepted orders.
     // Do not publish this parity or change the accepted scalar during a drag.
     // Acceptance rebases those orders; cancellation/rejection restores them.
-    if (sharedState && interactionMode === "create") {
+    if (interactionMode === "create") {
       const outerNegative = sharedState.editor_payload.state.outer_factor.numerator.startsWith("-");
       return (coefficientNumerator < 0n) !== outerNegative ? "-" : model.get("term_leading") ? "" : "+";
     }
-    const initiallyNegative = sharedState
-      ? sharedState.display.sign === "-"
-      : model.get("term_sign") === "-";
-    const negative = initiallyNegative !== Boolean(sharedState && interactionMode === "evaluate" && portParityIsOdd());
+    const initiallyNegative = sharedState.display.sign === "-";
+    const negative = initiallyNegative !== Boolean(interactionMode === "evaluate" && portParityIsOdd());
     if (negative) return "-";
     return model.get("term_leading") ? "" : "+";
   }
 
-  function setTermNegative(negative) {
-    model.set("term_sign", negative ? "-" : model.get("term_leading") ? "" : "+");
-    model.set(
-      "term_sign_flip_request",
-      model.get("term_sign_flip_request") + 1,
-    );
-  }
-
   function currentGraphCoefficient() {
-    if (sharedState && interactionMode !== "create") return sharedState.display.coefficient;
+    if (interactionMode !== "create") return sharedState.display.coefficient;
     const coefficient = {
       numerator: String(coefficientNumerator),
       denominator: String(coefficientDenominator),
@@ -3234,7 +3127,7 @@ function renderCreator({ model, el }) {
   }
 
   function multiplyCoefficient(numeratorValue, denominatorValue) {
-    if (sharedState && interactionMode !== "create") {
+    if (interactionMode !== "create") {
       message.textContent = "Switch to Create mode to edit the prefactor.";
       return;
     }
@@ -3246,11 +3139,7 @@ function renderCreator({ model, el }) {
     if (multiplierBottom < 0n) multiplierBottom = -multiplierBottom;
     let top = multiplierTop;
     let bottom = multiplierBottom;
-    if (sharedState) {
-      if ((coefficientNumerator < 0n) !== flipsSign) top = -top;
-    } else if (flipsSign && top !== 0n) {
-      setTermNegative(model.get("term_sign") !== "-");
-    }
+    if ((coefficientNumerator < 0n) !== flipsSign) top = -top;
     const gcd = (left, right) => {
       left = left < 0n ? -left : left;
       while (right !== 0n) [left, right] = [right, left % right];
@@ -3259,24 +3148,12 @@ function renderCreator({ model, el }) {
     const divisor = gcd(top, bottom);
     coefficientNumerator = divisor === 0n ? 0n : top / divisor;
     coefficientDenominator = divisor === 0n ? 1n : bottom / divisor;
-    syncPortOrders();
     redraw();
-  }
-
-  function syncPortOrders({ save = true } = {}) {
-    if (sharedState) return;
-    const state = Object.fromEntries(nodes.map((node) => [String(node.index), {
-      input: [...node.inputOrder],
-      output: [...node.outputOrder],
-    }]));
-    model.set("port_orders", state);
-    model.set("effective_coefficient", currentGraphCoefficient());
-    if (save) model.save_changes();
   }
 
   function startPortReorder(event, endpoint) {
     if (event.button !== 0) return;
-    if (!sharedState || editorTransport.pending || editorQueue.length) return;
+    if (editorTransport.pending || editorQueue.length) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -3412,7 +3289,7 @@ function renderCreator({ model, el }) {
     hitTarget.addEventListener("pointerenter", () => visible.classList.add("active"));
     hitTarget.addEventListener("pointerleave", () => visible.classList.remove("active"));
     hitTarget.addEventListener("pointerdown", (event) => {
-      if (sharedState && (editorTransport.pending || editorQueue.length)) return;
+      if ((editorTransport.pending || editorQueue.length)) return;
       event.preventDefault();
       event.stopPropagation();
       hitTarget.setPointerCapture?.(event.pointerId);
@@ -3737,7 +3614,7 @@ function renderCreator({ model, el }) {
           event.stopPropagation();
           if (recursiveControl) {
             if (node.labels.length >= 2) {
-              saveProjector(node.index, sharedState ? edge : node.labels.length === 2 ? null : edge);
+              saveProjector(node.index, edge);
             }
           } else {
             resizeNode(node, edge, event.ctrlKey ? -1 : 1);
@@ -3940,7 +3817,7 @@ function renderCreator({ model, el }) {
 
   function dragNode(event, node) {
     if (event.button !== 0) return;
-    if (sharedState && (editorTransport.pending || editorQueue.length)) return;
+    if ((editorTransport.pending || editorQueue.length)) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture?.(event.pointerId);
     const startX = event.clientX;
@@ -3962,7 +3839,7 @@ function renderCreator({ model, el }) {
           0,
           Math.round(origin.layer + (moveEvent.clientX - startX) / sx / layerStep),
         );
-        if (sharedState) node.previewX = origin.x + (node.layer - origin.layer) * layerStep;
+         node.previewX = origin.x + (node.layer - origin.layer) * layerStep;
       }
       node.level = Math.max(0, Math.round(origin.level + (moveEvent.clientY - startY) / sy / spacing));
       redraw();
@@ -4011,11 +3888,8 @@ function renderCreator({ model, el }) {
       if (node.layer !== origin.layer || node.level !== origin.level) {
         rememberEditorState(before);
       }
-      if (interactionMode === "create" && !sharedState) compactEmptyLayers();
       redraw();
       if (interactionMode === "create" && node.layer !== origin.layer) saveProjector();
-      else if (sharedState) persistPresentation("move");
-      else if (interactionMode === "create") saveProjector();
       else persistPresentation("move");
     }
     function cancel() {
@@ -4127,7 +4001,7 @@ function renderCreator({ model, el }) {
 
   function startAttachedConnection(event, endpoint, attached) {
     if (interactionMode !== "create") return;
-    if (sharedState && (editorTransport.pending || editorQueue.length)) return;
+    if ((editorTransport.pending || editorQueue.length)) return;
     const before = snapshotEditorState();
     const endpointWasSource = endpointKey(attached.source) === endpointKey(endpoint);
     const fixed = endpointWasSource ? attached.target : attached.source;
@@ -4242,7 +4116,7 @@ function renderCreator({ model, el }) {
       draft = null;
       if (!connected) { nodes = before.nodes; connections = before.connections; }
       redraw();
-      if (connected && sharedState) {
+      if (connected) {
         const beforeById = new Map(before.connections.map(c=>[c.editorId,c]));
         function exactEndpoint(endpoint) {
           if (endpoint.type === "port") return {node_id:nodes[endpoint.node].editorId,label:endpoint.label};
@@ -4303,34 +4177,24 @@ function renderCreator({ model, el }) {
     return null;
   }
 
-  function saveProjector(expandNode = null, recursiveEdge = null) {
-    if (sharedState && interactionMode === "create" && !creationDirty) {
-      requestEditor("save", {save_revision:Number(model.get("save_command") || 0)});
+  function saveProjector(expandNode = null, recursiveEdge = null, afterSave = null) {
+    if (interactionMode === "create" && !creationDirty) {
+      requestEditor("save", {save_revision:Number(model.get("save_command") || 0)}, afterSave);
       return;
     }
-    if (sharedState && interactionMode === "evaluate") {
+    if (interactionMode === "evaluate") {
       if (expandNode !== null && recursiveEdge !== null) {
         requestEditor("expand", {node_id:sharedState.node_ids[expandNode], edge:recursiveEdge});
         return;
       }
       const expansionId = expandNode === null ? null : sharedState.node_ids[expandNode];
-      requestEditor("save", {save_revision: Number(model.get("save_command") || 0)}, expandNode === null ? null : () => {
+      requestEditor("save", {save_revision: Number(model.get("save_command") || 0)}, expandNode === null ? afterSave : (error) => {
+          if (error) { afterSave?.(error); return; }
           const currentIndex = sharedState.node_ids.indexOf(expansionId);
           if (currentIndex < 0) { message.textContent = "The selected operator no longer exists."; return; }
-          model.set("expand_node_request", {node: currentIndex,node_id:expansionId,
-            term_id:sharedState.term_id,base_revision:sharedState.revision,
-            revision: Date.now()});
-          model.save_changes();
+          requestEditor("calculate_full", {node_id:expansionId});
         });
       return;
-    }
-    // Creator topology is normalized only at the explicit serialization
-    // boundary. Evaluate mode already owns an exact graph and must not run
-    // creator cleanup merely because an expansion/save was requested.
-    if (interactionMode === "create" && !sharedState) {
-      collapseFreeLineLayers();
-      compactEmptyLayers();
-      normalizeCreatorLayers();
     }
     const livePresentation = snapshotEditorState();
     // Pure boundary-to-boundary strands need invisible identity nodes because
@@ -4373,15 +4237,13 @@ function renderCreator({ model, el }) {
         lineColors.set(edgeLineKey(leaving.source, leaving.target), inheritedColor);
       }
     }
-    if (interactionMode === "create" && !sharedState) {
-      collapseFreeLineLayers();
-      compactEmptyLayers();
-      normalizeCreatorLayers();
-    }
     const error = validationError();
     if (error) {
       message.textContent = error;
       window.alert(error);
+      nodes = livePresentation.nodes; connections = livePresentation.connections;
+      nextLabel = livePresentation.nextLabel;
+      afterSave?.(error);
       return;
     }
     const ordered = [...nodes].sort((a, b) => a.layer - b.layer || a.level - b.level || a.index - b.index);
@@ -4548,7 +4410,7 @@ function renderCreator({ model, el }) {
     delete savedGraph.display;
     delete savedGraph.editor_value;
     const positions = Object.fromEntries(ordered.map((node, index) => [String(index), {
-      x: sharedState ? xForNode(node) : geometry.first_layer_x + node.layer * layerStep,
+      x: xForNode(node),
       y: yFor(node.level + (node.labels.length - 1) / 2),
     }]));
     const portOrders = Object.fromEntries(graphNodes.map((node) => [String(node.index), {
@@ -4562,50 +4424,20 @@ function renderCreator({ model, el }) {
       free_levels:savedFreeLevels, boundary_orders:boundaryOrders,
       line_colors:savedLineColors, effective_coefficient:effectiveCoefficient,
     };
-    if (sharedState) {
-      const savedConnections = [...internal,
-        ...connections.filter(c=>c.source.type === "right-anchor"),
-        ...connections.filter(c=>c.target.type === "left-anchor")];
-      requestEditor("creation", {snapshot,
-        node_ids:ordered.map(node=>node.editorId || null),
-        strand_ids:savedConnections.map(c=>c.editorId || null)});
-      creationDirty = false;
-      nodes = livePresentation.nodes; connections = livePresentation.connections;
-      nextLabel = livePresentation.nextLabel;
-      return;
-    }
-    model.set("graph", savedGraph);
-    model.set("positions", positions);
-    model.set("port_orders", portOrders);
-    model.set("free_levels", savedFreeLevels);
-    model.set("boundary_orders", boundaryOrders);
-    model.set("effective_coefficient", effectiveCoefficient);
-    model.set("save_request", revision);
-    model.set("save_snapshot", {
-      revision, graph: savedGraph, positions, port_orders: portOrders,
-      free_levels: savedFreeLevels, boundary_orders: boundaryOrders,
-      line_colors: savedLineColors,
-      effective_coefficient: effectiveCoefficient,
-    });
-    if (expandNode !== null) {
-      model.set("expand_node_request", {
-        node: indexMap.get(expandNode),
-        ...(recursiveEdge === null ? {} : { recursive_edge: recursiveEdge }),
-        revision: Date.now(),
-      });
-    }
-    model.save_changes();
-    nodes = livePresentation.nodes;
-    connections = livePresentation.connections;
+    const savedConnections = [...internal,
+      ...connections.filter(c=>c.source.type === "right-anchor"),
+      ...connections.filter(c=>c.target.type === "left-anchor")];
+    requestEditor("creation", {snapshot, save_revision:Number(model.get("save_command") || 0),
+      node_ids:ordered.map(node=>node.editorId || null),
+      strand_ids:savedConnections.map(c=>c.editorId || null)}, afterSave);
+    creationDirty = false;
+    nodes = livePresentation.nodes; connections = livePresentation.connections;
     nextLabel = livePresentation.nextLabel;
-    message.textContent = expandNode === null ? "Projector saved." : "Operator expanded.";
   }
 
-  // Presentation-only changes must not serialize, normalize, or rebuild the
-  // exact projector. They update the two synced traits used to seed the next
-  // render and leave algebra topology untouched.
+  // Submit drawing intent only; Python validates and commits the presentation.
   function persistPresentation(action = "move") {
-    const positions = structuredClone(sharedState?.positions || model.get("positions") || {});
+    const positions = structuredClone(sharedState.positions);
     for (const node of nodes) {
       const previous = positions[String(node.index)] || {};
       positions[String(node.index)] = {
@@ -4613,7 +4445,7 @@ function renderCreator({ model, el }) {
         y: yFor(node.level + (node.labels.length - 1) / 2),
       };
     }
-    const freeLevels = structuredClone(sharedState?.free_levels || model.get("free_levels") || {});
+    const freeLevels = structuredClone(sharedState.free_levels);
     for (const connection of connections) {
       if (connection.boundaryLabel === undefined) continue;
       for (const [layer, level] of Object.entries(connection.route || {})) {
@@ -4621,21 +4453,15 @@ function renderCreator({ model, el }) {
         freeLevels[layer][String(connection.boundaryLabel)] = level;
       }
     }
-    if (sharedState) {
-      if (usesCompiledDisplay()) {
-        requestEditor(action, {presentation: presentationSnapshot({positions, display_routes: displayRoutes}),
-          ...(action === "reroute" ? {display_changes: structuredClone(displayRoutes)} : {})});
-        return;
-      }
-      const strandRoutes = Object.fromEntries(connections.filter(c=>c.editorId).map(c=>[c.editorId,c.route || {}]));
-      requestEditor(action, {presentation: presentationSnapshot({positions, free_levels: freeLevels, strand_routes:strandRoutes}),
-        ...(action === "reroute" ? {changes:Object.fromEntries(connections
-          .filter(c=>c.editorId).map(c=>[c.editorId,c.route || {}]))} : {})});
+    if (usesCompiledDisplay()) {
+      requestEditor(action, {presentation: presentationSnapshot({positions, display_routes: displayRoutes}),
+        ...(action === "reroute" ? {display_changes: structuredClone(displayRoutes)} : {})});
       return;
     }
-    model.set("positions", positions);
-    model.set("free_levels", freeLevels);
-    model.save_changes();
+    const strandRoutes = Object.fromEntries(connections.filter(c=>c.editorId).map(c=>[c.editorId,c.route || {}]));
+    requestEditor(action, {presentation: presentationSnapshot({positions, free_levels: freeLevels, strand_routes:strandRoutes}),
+      ...(action === "reroute" ? {changes:Object.fromEntries(connections
+        .filter(c=>c.editorId).map(c=>[c.editorId,c.route || {}]))} : {})});
   }
 
   function updateModifier(event) {
@@ -4686,6 +4512,7 @@ function renderCreator({ model, el }) {
   window.addEventListener("blur", clearModifier);
   document.addEventListener("birdtracks-projector-tool", applySharedTool);
   const saveFromPython = () => saveProjector();
+  el._birdtracksSaveEditor = after => saveProjector(null, null, after);
   const localUndoFromPython = () => undoEditorOperation();
   const redrawTermSign = () => redraw();
   const redrawPrefactorOwnership = () => {
@@ -4699,7 +4526,7 @@ function renderCreator({ model, el }) {
   };
   const redrawMode = () => setMode(model.get("mode"));
   const sharedEditorKeyboard = (event) => {
-    if (!sharedState || activeEditorByGroup.get(groupId) !== editorId
+    if (activeEditorByGroup.get(groupId) !== editorId
         || !(event.ctrlKey || event.metaKey) || event.target.closest?.("input, textarea")) return;
     const key = event.key.toLowerCase();
     if (key !== "z" && key !== "y") return;
@@ -4717,15 +4544,6 @@ function renderCreator({ model, el }) {
   model.on("change:prefactor_owned", redrawPrefactorOwnership);
   model.on("change:active_line", redrawActiveLine);
   model.on("change:mode", redrawMode);
-  const syncLineColors = () => {
-    if (sharedState) return;
-    lineColors.clear();
-    for (const [key, color] of Object.entries(model.get("line_colors") || {})) {
-      if (typeof color === "string") lineColors.set(savedToLiveColorKeys.get(key) || key, color);
-    }
-    redraw();
-  };
-  model.on("change:line_colors", syncLineColors);
   const localUndoResizeObserver = typeof ResizeObserver === "undefined"
     ? null
     : new ResizeObserver(positionLocalUndo);
@@ -4733,12 +4551,12 @@ function renderCreator({ model, el }) {
   if (widgetMode === "create") prepareCreatorPresentation();
   setMode(widgetMode);
   setZoom(1);
-  if (sharedState) {
-    applyEditorState();
-    editorFeedback();
-  }
+  applyEditorState();
+  editorFeedback();
   return () => {
     model.off("change:editor_state", applyEditorState);
+    delete el._birdtracksSaveEditor;
+    delete el._birdtracksEditorCommand;
     model.off("change:editor_feedback", editorFeedback);
     document.removeEventListener("keydown", sharedEditorKeyboard, true);
     document.removeEventListener("keydown", updateModifier, true);
@@ -4754,7 +4572,6 @@ function renderCreator({ model, el }) {
     model.off("change:prefactor_owned", redrawPrefactorOwnership);
     model.off("change:active_line", redrawActiveLine);
     model.off("change:mode", redrawMode);
-    model.off("change:line_colors", syncLineColors);
     model.off("change:group_id", updateGroupId);
     localUndoResizeObserver?.disconnect();
     if (activeEditorByGroup.get(groupId) === editorId) {

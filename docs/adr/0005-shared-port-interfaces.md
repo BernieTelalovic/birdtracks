@@ -2,6 +2,10 @@
 
 ## Decision
 
+The transitional remaining-scope statements below are historical. See
+[ADR 0008](0008-mandatory-editor-protocol.md) for mandatory shared ownership of
+Create diagrams, pairs, and whiteboard source, and retired snapshot channels.
+
 Evaluate-mode projector widgets and canvases use `EditorSession` by default.
 Whiteboard inline objects, expanded named references, rational result rows, and
 symbolic result occurrences use the same revisioned command adapter. Creation,

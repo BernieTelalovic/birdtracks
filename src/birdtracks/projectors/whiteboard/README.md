@@ -65,6 +65,12 @@ opening a document. Click the surrounding text or gaps to place the caret;
 arrow keys, Shift-selection, Backspace, and Delete treat each embedded object
 as one symbol. Mouse gestures inside an object continue to edit that object.
 
+Source, diagram, and pair edits use revisioned Python-owned state. Incomplete
+source stays editable on one in-place line; the last valid value is retained
+internally, without a separate preview. Save and evaluation wait for pending
+edits. Reopening restores committed diagram/pair values, presentation, and
+editor history, rather than reconstructing algebra from the displayed picture.
+
 ## Whiteboard source commands
 
 - `\\birdtracks` inserts an editable birdtrack projector.

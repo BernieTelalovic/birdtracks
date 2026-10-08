@@ -11,37 +11,67 @@ STATIC = Path(__file__).parents[2] / "src/birdtracks/projectors/static"
 
 @pytest.fixture
 def page():
+    from birdtracks.projectors.widget import _projector_toolbar_widget
+
+    owner = _projector_toolbar_widget('test', 'create')
+    def pair_command(_source, payload):
+        from birdtracks.young_diagrams import PairExpression
+
+        # Test-authored Python publications can replace the seed between gestures.
+        if owner._pair_session.value.state() != payload['state']['value']:
+            owner._pair_session.value = PairExpression.from_state(payload['state']['value'])
+            owner._pair_session.revision = payload['state']['revision']
+            owner._pair_session.undo.clear()
+            owner._pair_session.redo.clear()
+        owner.mode = payload['mode']
+        owner.create_kind = payload['create_kind']
+        owner.pair_editor_request = payload['request']
+        return {key: value for key, value in owner.get_state().items()
+                if not key.startswith('_') and key != 'pair_editor_request'}
+
     with playwright.sync_playwright() as runtime:
         try:
             browser = runtime.chromium.launch()
         except playwright.Error as exc:
             pytest.skip(f"Chromium unavailable: {exc}")
         page = browser.new_page(viewport={"width": 1400, "height": 800})
+        page.expose_binding('pythonPairCommand', pair_command)
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.set_content('<div class="birdtracks-calculator-app birdtracks-projector-sum"><div id="widget"></div></div>')
         page.add_style_tag(content=(STATIC / "projector-widget.css").read_text())
         source = base64.b64encode((STATIC / "projector-widget.js").read_bytes()).decode()
-        page.evaluate("""async source => {
+        page.evaluate("""async ({source, state}) => {
           window.module = await import('data:text/javascript;base64,' + source);
-          const values = {mode: 'create', group_id: 'test', widget_role: 'toolbar',
-            create_kind: 'birdtracks', trace_enabled: false,
-            pair_expression: {version: 1, kind: 'sum', terms: [
-              {kind: 'pair', barred: [], unbarred: [], coefficient: '1', n0: '0'}]},
-            pair_drawing_state: {}};
+          const values = {...state};
           const listeners = new Map();
           window.model = {
             get: name => values[name],
             set(name, value) { values[name] = value;
+              // Test-authored setup is a trusted Python publication, not a UI command.
+              if(name==='pair_expression' && !window.receivingPairReply)
+                this.set('pair_editor_state',{...values.pair_editor_state,value});
               for (const fn of listeners.get('change:' + name) || []) fn(); },
             on(names, fn) { for (const name of names.split(' ')) {
               if (!listeners.has(name)) listeners.set(name, new Set());
               listeners.get(name).add(fn); } },
             off(names, fn) { for (const name of names.split(' ')) listeners.get(name)?.delete(fn); },
-            save_changes() {},
+            save_changes() {
+              const request=values.pair_editor_request;
+              if(!request?.request_id || this.lastSent===request.request_id)return;
+              this.lastSent=request.request_id;
+              pythonPairCommand({request,state:values.pair_editor_state,mode:values.mode,create_kind:values.create_kind}).then(reply=>{
+                window.receivingPairReply=true;
+                for(const [key,value] of Object.entries(reply))
+                  if(!['pair_editor_state','pair_editor_feedback'].includes(key))model.set(key,value);
+                model.set('pair_editor_state',reply.pair_editor_state);
+                model.set('pair_editor_feedback',reply.pair_editor_feedback);
+                window.receivingPairReply=false;
+              });
+            },
           };
           window.cleanup = window.module.default.render({model, el: document.querySelector('#widget')});
-        }""", source)
+        }""", {'source':source,'state':{key:value for key,value in owner.get_state().items() if not key.startswith('_')}})
         yield page
         page.evaluate("window.cleanup()")
         browser.close()
@@ -95,6 +125,7 @@ def test_pair_widget_role_renders_editor_without_calculator_toolbar(page):
 
 
 def term(page):
+    page.wait_for_function("!model.get('pair_editor_request')?.request_id || model.get('pair_editor_feedback')?.request_id===model.get('pair_editor_request')?.request_id")
     return page.evaluate("model.get('pair_expression').terms[0]")
 
 
@@ -132,7 +163,7 @@ def test_create_label_undo_and_switch(page):
     assert page.get_by_role("button", name="Add direct-sum term", exact=True).locator("svg circle").count() == 1
     click_cell(page, 0, 0)
     click_cell(page, 0, 1)
-    assert term(page)["unbarred"] == [2]
+    assert term(page)["unbarred"] == [2], page.evaluate("({request:model.get('pair_editor_request'),feedback:model.get('pair_editor_feedback'),boxes:document.querySelectorAll('.birdtracks-young-box').length})")
     click_cell(page, 0, 0, double=True)
     page.get_by_role("textbox", name="Tableau integer label").fill("1")
     page.get_by_role("textbox", name="Tableau integer label").press("Enter")

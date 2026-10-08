@@ -96,12 +96,13 @@ def test_draft_keeps_pair_and_validates_pair_commands_atomically(tmp_path):
     send(board,'source',block_id='line',source=r'B\def \pa')
     assert board.embedded_pairs[0] is editor
     value = {**editor.pair_expression, 'terms':[{'kind':'pair','barred':[],'unbarred':[1],'coefficient':'1','n0':'1'}]}
-    send(board,'pair',occurrence_id='line:pair:0',value=value)
+    send(board,'pair',occurrence_id='line:pair:0',session_id=editor._pair_session.identity,value=value)
     assert board.blocks[0]['source'] == r'B\def \pa'
     assert board._document_session.occurrence_value('line:pair:0').state() == editor.pair_expression
     before = deepcopy(board.document_state)
     board.document_request = {'request_id':'invalid-pair','base_revision':before['revision'],
-                              'action':'pair','occurrence_id':'line:pair:0','value':{'terms':[{'kind':'pair','unbarred':[1,2]}]}}
+                              'action':'pair','occurrence_id':'line:pair:0','session_id':editor._pair_session.identity,
+                              'value':{'terms':[{'kind':'pair','unbarred':[1,2]}]}}
     assert board.document_feedback.get('error')
     assert board.document_state == before
     loaded = whiteboard(tmp_path/'pair.whiteboard',debug=True)

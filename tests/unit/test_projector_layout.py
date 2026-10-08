@@ -7,6 +7,8 @@ import re
 
 import pytest
 
+from tests.editor_protocol_helpers import expand_editor, create_editor, send_editor
+
 from birdtracks import (
     Antisymmetriser,
     Connection,
@@ -37,33 +39,20 @@ def example_projector() -> Projector:
 
 
 def save_editor(editor: object) -> None:
-    """Simulate the frontend's atomic Save permutation payload."""
-    if getattr(editor, "_editor_session", None) is not None:
-        def send(editor, action, **arguments):
-            state = editor.editor_state
-            editor.editor_request = {"action": action, "term_id": state["term_id"],
-                                    "base_revision": state["revision"],
-                                    "request_id": f"save-helper-{action}-{len(editor._editor_seen_requests)}", **arguments}
-            assert not editor.editor_feedback.get("error")
-
-        drawing = {key: deepcopy(getattr(editor, key))
-                   for key in ("positions", "free_levels", "boundary_orders", "line_colors")}
+    """Submit a Create candidate or an Evaluate redraw through Python."""
+    drawing = {key: deepcopy(getattr(editor, key))
+               for key in ("positions", "free_levels", "boundary_orders", "line_colors")}
+    if editor.mode == "create":
+        snapshot = {"graph": deepcopy(editor.graph), "port_orders": deepcopy(editor.port_orders), **drawing}
+        create_editor(editor, snapshot)
+    else:
         changes = {editor.editor_state["node_ids"][int(index)]: sides
                    for index, sides in editor.port_orders.items()
                    if isinstance(editor.projector.nodes[int(index)], (Antisymmetriser, Symmetriser))}
-        send(editor, "reorder", changes=changes, presentation=drawing)
-        send(editor, "save", presentation=drawing)
-        return
-    revision = editor.save_request + 1  # type: ignore[attr-defined]
-    editor.save_request = revision  # type: ignore[attr-defined]
-    editor.save_snapshot = {  # type: ignore[attr-defined]
-        "revision": revision,
-        "positions": editor.positions,  # type: ignore[attr-defined]
-        "port_orders": editor.port_orders,  # type: ignore[attr-defined]
-        "free_levels": editor.free_levels,  # type: ignore[attr-defined]
-        "boundary_orders": editor.boundary_orders,  # type: ignore[attr-defined]
-        "effective_coefficient": editor.effective_coefficient,  # type: ignore[attr-defined]
-    }
+        send_editor(editor, "reorder", changes=changes, presentation=drawing)
+        assert not editor.editor_feedback.get("error")
+        send_editor(editor, "save", save_revision=int(editor.save_command), presentation=drawing)
+    assert not editor.editor_feedback.get("error")
 
 
 def test_default_positions_follow_layers_without_changing_projector() -> None:
@@ -546,7 +535,8 @@ def test_canvas_free_lines_reorder_both_directions_and_persist_levels() -> None:
     assert "assignLayerLevels(layer, layerUnits(layer));" in source
     assert "const connectionStrandLabel = new Map();" in source
     assert "free_levels: savedFreeLevels" in source
-    assert 'model.set("free_levels", savedFreeLevels);' in source
+    assert 'model.set("free_levels", savedFreeLevels);' not in source
+    assert 'requestEditor("creation", {snapshot,' in source
 
 
 def test_default_free_levels_never_overlap_an_operator_block() -> None:
@@ -603,9 +593,8 @@ def test_canvas_packs_sign_space_without_overlap_and_compacts_empty_layers() -> 
     assert "function compactEmptyLayers()" in source
     assert "occupied.map((layer, index) => [layer, index])" in source
     assert ".filter(([layer]) => compactedLayer.has(Number(layer)))" in source
-    assert "function collapseFreeLineLayers()" in source
-    assert '.filter((node) => node.kind === "permutation")' in source
-    assert 'incoming.source.type === "right-anchor"' in source
+    assert "function collapseFreeLineLayers()" not in source
+    assert "function unwrapIdentityBoundaryNodes()" in source
 
 
 def test_evaluate_mode_accepts_an_exact_node_expansion_request() -> None:
@@ -616,11 +605,11 @@ def test_evaluate_mode_accepts_an_exact_node_expansion_request() -> None:
 
     assert evaluation._toolbar.mode == "evaluate"  # type: ignore[attr-defined]
     editor.mode = "create"  # type: ignore[attr-defined]
-    editor.expand_node_request = {"node": 0, "revision": 1}  # type: ignore[attr-defined]
+    expand_editor(editor, {"node": 0, "revision": 1})
     assert len(evaluation._history) == 1  # type: ignore[attr-defined]
 
     editor.mode = "evaluate"  # type: ignore[attr-defined]
-    editor.expand_node_request = {"node": 0, "revision": 2}  # type: ignore[attr-defined]
+    expand_editor(editor, {"node": 0, "revision": 2})
 
     assert len(evaluation._history) == 2  # type: ignore[attr-defined]
     assert editor.active_line is False  # type: ignore[attr-defined]
@@ -639,7 +628,7 @@ def test_evaluate_mode_accepts_an_exact_node_expansion_request() -> None:
     assert equals.layout.width == "0.75rem"
     assert equals.layout.height == "0.75rem"
 
-    editor.expand_node_request = {"node": 0, "revision": 3}  # type: ignore[attr-defined]
+    expand_editor(editor, {"node": 0, "revision": 3})
     assert len(evaluation._history) == 2  # type: ignore[attr-defined]
 
     active = evaluation._term_editors[0]  # type: ignore[attr-defined]
@@ -664,7 +653,7 @@ def test_global_undo_uses_equation_history_even_when_historical_editor_selected(
     pytest.importorskip("anywidget")
     evaluation = Projector([Symmetriser((1, 2, 3))]).evaluate()
     historical = evaluation._term_editors[0]  # type: ignore[attr-defined]
-    historical.expand_node_request = {"node": 0, "revision": 1}
+    expand_editor(historical, {"node": 0, "revision": 1})
     assert len(evaluation._history) == 2  # type: ignore[attr-defined]
 
     historical.undo_request += 1
@@ -689,11 +678,11 @@ def test_one_toolbar_undo_removes_exactly_one_of_three_equation_lines() -> None:
             for node in editor.graph["nodes"]
             if node["kind"] == "symmetriser"
         )
-        editor.expand_node_request = {
+        expand_editor(editor, {
             "node": node_index,
             "recursive_edge": "top",
             "revision": revision,
-        }
+        })
     assert len(evaluation._line_states) == 3  # type: ignore[attr-defined]
 
     evaluation._toolbar.undo_request = {  # type: ignore[attr-defined]
@@ -783,11 +772,11 @@ def test_calculator_edge_controls_apply_selected_recursive_expansion(
     projector = Projector([Antisymmetriser((1, 2, 3))])
     evaluation = projector.evaluate()
 
-    evaluation._term_editors[0].expand_node_request = {  # type: ignore[attr-defined]
+    expand_editor(evaluation._term_editors[0], {  # type: ignore[attr-defined]
         "node": 0,
         "recursive_edge": edge,
         "revision": 1,
-    }
+    })
 
     expanded = evaluation._history[-1]  # type: ignore[attr-defined]
     assert expanded.collapse() == projector.collapse()
@@ -813,7 +802,7 @@ def test_calculator_draws_hoverable_tear_controls_without_removing_double_click(
     assert 'control.classList.add("active")' in source
     assert "nodeLayer, handles, annotations, interactions" in source
     assert "interactions.append(hitTarget, control)" in source
-    assert "saveProjector(node.index, sharedState ? edge : node.labels.length === 2 ? null : edge)" in source
+    assert "saveProjector(node.index, edge)" in source
     assert "saveProjector(node.index);" in source
     css = (
         Path(__file__).parents[2]
@@ -838,7 +827,7 @@ def test_canvas_expansion_omits_terms_annihilated_through_a_permutation() -> Non
     evaluation = projector.evaluate()
     editor = evaluation._term_editors[0]  # type: ignore[attr-defined]
 
-    editor.expand_node_request = {"node": 1, "revision": 1}  # type: ignore[attr-defined]
+    expand_editor(editor, {"node": 1, "revision": 1})
 
     assert len(evaluation._history[-1]) == 1  # type: ignore[attr-defined]
     assert len(evaluation._term_editors) == 1  # type: ignore[attr-defined]
@@ -859,10 +848,10 @@ def test_trace_wraps_equation_but_evaluates_only_latest_line() -> None:
     projector = Projector([Symmetriser((1, 2))])
     evaluation = projector.evaluate(detangler=False)
     first_editor = evaluation._term_editors[0]  # type: ignore[attr-defined]
-    first_editor.expand_node_request = {  # type: ignore[attr-defined]
+    expand_editor(first_editor, {  # type: ignore[attr-defined]
         "node": 0,
         "revision": 1,
-    }
+    })
     latest = evaluation.current_projector_sum
 
     evaluation._toolbar.trace_enabled = True  # type: ignore[attr-defined]
@@ -904,10 +893,10 @@ def test_terms_can_be_reordered_inside_trace_brackets() -> None:
     original_value = evaluation.current_projector_sum
 
     evaluation._toolbar.trace_enabled = True  # type: ignore[attr-defined]
-    original_editors[0].term_order_request = {  # type: ignore[attr-defined]
+    send_editor(original_editors[0], "term_order", target=({  # type: ignore[attr-defined]
         "target": 1,
         "revision": 1,
-    }
+    })["target"])
 
     assert evaluation._term_editors == original_editors[::-1]  # type: ignore[attr-defined]
     assert evaluation._term_signs == original_signs[::-1]  # type: ignore[attr-defined]
@@ -954,10 +943,10 @@ def test_expansion_while_traced_adds_bracketed_second_last_line() -> None:
     polynomial = evaluation._trace_polynomial  # type: ignore[attr-defined]
     polynomial_row = evaluation._trace_result_row  # type: ignore[attr-defined]
 
-    evaluation._term_editors[0].expand_node_request = {  # type: ignore[attr-defined]
+    expand_editor(evaluation._term_editors[0], {  # type: ignore[attr-defined]
         "node": 0,
         "revision": 1,
-    }
+    })
 
     assert evaluation._trace_polynomial is polynomial  # type: ignore[attr-defined]
     assert evaluation.children[-2] is polynomial_row
@@ -1004,18 +993,14 @@ def test_creator_inserts_a_signed_term_left_of_the_selected_term() -> None:
     assert creator._term_editors[0].layout.min_width == "0"  # type: ignore[attr-defined]
     assert creator._term_editors[1].layout.min_width == "0"  # type: ignore[attr-defined]
 
-    creator._term_editors[0].term_sign_flip_request += 1  # type: ignore[attr-defined]
-
-    assert creator._term_signs == (1, 1)  # type: ignore[attr-defined]
+    assert creator._term_editors[0]._editor_session.state.outer_factor == -1
 
     creator._toolbar.mode = "evaluate"  # type: ignore[attr-defined]
     assert creator.mode == "evaluate"  # type: ignore[attr-defined]
     create_editors = creator._term_editors  # type: ignore[attr-defined]
     for editor in create_editors:
         save_editor(editor)
-    assert all(  # type: ignore[attr-defined]
-        editor not in create_editors for editor in creator._term_editors
-    )
+    assert creator._term_editors == create_editors
     assert all(  # type: ignore[attr-defined]
         not editor.graph.get("creator", False) for editor in creator._term_editors
     )
@@ -1033,14 +1018,14 @@ def test_creator_deletes_term_and_keeps_a_blank_canvas() -> None:
     save_editor(original)
     inserted = creator._term_editors[0]  # type: ignore[attr-defined]
 
-    inserted.term_delete_request += 1
+    send_editor(inserted, "delete_term")
 
     assert creator._term_editors == (original,)  # type: ignore[attr-defined]
     assert creator._term_signs == (1,)  # type: ignore[attr-defined]
     assert original.term_leading  # type: ignore[attr-defined]
     assert original.term_sign == ""  # type: ignore[attr-defined]
 
-    original.term_delete_request += 1  # type: ignore[attr-defined]
+    send_editor(original, "delete_term")
 
     replacement = creator._term_editors[0]  # type: ignore[attr-defined]
     assert replacement is not original
@@ -1056,7 +1041,7 @@ def test_creator_prefactor_right_click_requests_term_deletion() -> None:
     ).read_text(encoding="utf-8")
 
     assert 'class: "birdtracks-prefactor-delete-target"' in source
-    assert 'model.get("term_delete_request") + 1' in source
+    assert "requestEditor('delete_term')" in source
     assert 'svg.addEventListener("contextmenu"' in source
     assert 'prefactorTarget.style.pointerEvents = "none"' in source
 
@@ -1089,43 +1074,8 @@ def test_missing_saved_port_order_uses_graph_order() -> None:
     assert restored == projector
 
 
-def test_canvas_callback_errors_are_quiet_by_default(monkeypatch) -> None:
-    pytest.importorskip("anywidget")
-    from birdtracks.projectors import widget
-
-    canvas = Projector([Symmetriser((1, 2))]).evaluate(detangler=False)
-    editor = canvas._term_editors[0]  # type: ignore[attr-defined]
-    error = RuntimeError("render callback failed")
-    monkeypatch.setattr(
-        widget,
-        "_projector_from_state",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
-    )
-
-    editor.term_sign_flip_request += 1
-
-    assert canvas._last_error is error  # type: ignore[attr-defined]
-    assert canvas._term_signs == (1,)  # type: ignore[attr-defined]
 
 
-def test_canvas_debug_mode_reraises_callback_errors(monkeypatch) -> None:
-    pytest.importorskip("anywidget")
-    from birdtracks.projectors import widget
-
-    canvas = Projector([Symmetriser((1, 2))]).evaluate(
-        detangler=False, debug=True
-    )
-    editor = canvas._term_editors[0]  # type: ignore[attr-defined]
-    monkeypatch.setattr(
-        widget,
-        "_projector_from_state",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            RuntimeError("render callback failed")
-        ),
-    )
-
-    with pytest.raises(RuntimeError, match="render callback failed"):
-        editor.term_sign_flip_request += 1
 
 
 def test_trace_of_two_free_identity_strands_is_n_squared() -> None:
@@ -1169,10 +1119,10 @@ def test_expansion_components_replace_the_selected_term_in_display_order() -> No
         for editor in evaluation._term_editors  # type: ignore[attr-defined]
     )
 
-    evaluation._term_editors[1].expand_node_request = {  # type: ignore[attr-defined]
+    expand_editor(evaluation._term_editors[1], {  # type: ignore[attr-defined]
         "node": 0,
         "revision": 1,
-    }
+    })
     after = tuple(
         editor._source_projector  # type: ignore[attr-defined]
         for editor in evaluation._term_editors  # type: ignore[attr-defined]
@@ -1318,7 +1268,7 @@ def test_evaluate_renderer_separates_topology_from_presentation() -> None:
     assert "remapDisplayNodeIndices" not in source
     assert "\n  unwrapIdentityBoundaryNodes();" not in initialization
 
-    startup = source.split("model.on(\"change:line_colors\", syncLineColors);", 1)[1].split(
+    startup = source.split('model.on("change:editor_state", applyEditorState);', 1)[1].split(
         "setMode(widgetMode);", 1
     )[0]
     assert 'if (widgetMode === "create") prepareCreatorPresentation();' in startup
@@ -1345,7 +1295,7 @@ def test_evaluate_renderer_separates_topology_from_presentation() -> None:
     save = source.split("function saveProjector(", 1)[1].split(
         "function updateModifier", 1
     )[0]
-    assert save.count('if (interactionMode === "create" && !sharedState) {') == 2
+    assert '!sharedState' not in save
     assert 'requestEditor("creation", {snapshot,' in save
 
 
@@ -1363,7 +1313,7 @@ def test_port_reorder_synchronizes_sign_before_whiteboard_remount() -> None:
     assert "syncPortOrders(" not in move
     assert finish.count('requestEditor("reorder"') == 1
     assert "saveProjector();" not in reorder
-    assert 'model.set("effective_coefficient", currentGraphCoefficient());' in source
+    assert 'model.set("effective_coefficient", currentGraphCoefficient());' not in source
 
 
 def test_compiled_free_strands_are_flat_across_each_bypassed_sa_column() -> None:
@@ -1394,7 +1344,7 @@ def test_compiled_free_strands_keep_their_evaluate_drag_handles() -> None:
         "function redraw()", 1
     )[0]
 
-    assert "sharedState && displayStrandPosition(strand, column)" in drawing
+    assert "displayStrandPosition(strand, column)" in drawing
     assert "drawRouteHandle(handles, null, node.layer, {" in drawing
     assert "strandId: strand.editor_id" in drawing
     assert '"data-free-strand": display.strandId' in source
@@ -1423,21 +1373,11 @@ def test_line_and_sa_drag_reordering_restore_origin_before_insertion() -> None:
 
 
 def test_backend_term_capture_keeps_presentation_separate_from_value() -> None:
-    source = (
-        Path(__file__).parents[2]
-        / "src/birdtracks/projectors/static/whiteboard-widget.js"
-    ).read_text()
-
-    snapshot = source.split("function backendPresentationSnapshot", 1)[1].split(
-        "function captureState", 1
-    )[0]
-    assert 'child.get("graph")' in snapshot
-    assert 'child.get("positions")' in snapshot
-    assert 'child.get("free_levels")' in snapshot
-    assert 'child.get("port_orders")' in snapshot
-    assert 'child.get("effective_coefficient")' in snapshot
-    assert 'id.includes(":backend:")' in source
-    assert "updated.backend_presentations" in source
+    source = (Path(__file__).parents[2] / "src/birdtracks/projectors/static/whiteboard-widget.js").read_text()
+    assert "backendPresentationSnapshot" not in source
+    assert "storeEmbeddedSnapshots" not in source
+    assert "editor._birdtracksSaveEditor" in source
+    assert "base_revision: documentTransport.state.revision" in source
 
 
 def test_generated_row_enter_commits_backend_presentation_before_remount() -> None:
@@ -1476,11 +1416,11 @@ def test_layer_reordering_groups_all_segments_of_each_logical_free_strand() -> N
 def test_generated_equation_rows_pack_free_lines_around_visible_sa_columns() -> None:
     pytest.importorskip("anywidget")
     canvas = Projector([Antisymmetriser((1, 2, 3))]).evaluate(detangler=False)
-    canvas._term_editors[0].expand_node_request = {  # type: ignore[attr-defined]
+    expand_editor(canvas._term_editors[0], {  # type: ignore[attr-defined]
         "node": 0,
         "recursive_edge": "top",
         "revision": 1,
-    }
+    })
 
     for editor in canvas._term_editors:  # type: ignore[attr-defined]
         graph = editor.graph
@@ -1576,17 +1516,10 @@ def test_guides_and_add_line_controls_share_the_live_right_boundary() -> None:
 
 
 def test_create_undo_preserves_the_live_interaction_mode() -> None:
-    source = (
-        Path(__file__).parents[2]
-        / "src/birdtracks/projectors/static/projector-widget.js"
-    ).read_text()
-    undo = source.split("function undoEditorOperation()", 1)[1].split(
-        "for (const [name, value]", 1
-    )[0]
-
-    assert "const modeBeforeUndo = interactionMode" in undo
-    assert "interactionMode = modeBeforeUndo" in undo
-    assert 'model.set("mode", modeBeforeUndo)' in undo
+    source = (Path(__file__).parents[2] / "src/birdtracks/projectors/static/projector-widget.js").read_text()
+    undo = source.split("function undoEditorOperation()", 1)[1].split("function setMode", 1)[0]
+    assert 'requestEditor("undo")' in undo
+    assert 'model.set("mode"' not in undo
 
 
 def test_deleting_an_operator_cleans_and_normalizes_its_wiring() -> None:
@@ -1622,11 +1555,11 @@ def test_recursive_expansion_uses_normal_layer_spacing_like_full_expansion() -> 
     evaluation = Projector([Antisymmetriser((1, 2, 3))]).evaluate()
     editor = evaluation._term_editors[0]  # type: ignore[attr-defined]
 
-    editor.expand_node_request = {  # type: ignore[attr-defined]
+    expand_editor(editor, {  # type: ignore[attr-defined]
         "node": 0,
         "recursive_edge": "top",
         "revision": 1,
-    }
+    })
 
     sandwiched = evaluation._term_editors[0]  # type: ignore[attr-defined]
     geometry = sandwiched.graph["geometry"]
@@ -1719,7 +1652,7 @@ def test_creator_snapshot_builds_explicit_projector_topology() -> None:
         ],
         "boundary_labels": [1, 2],
     }
-    editor.save_snapshot = {  # type: ignore[attr-defined]
+    create_editor(editor, {  # type: ignore[attr-defined]
         "revision": 1,
         "graph": graph,
         "positions": {"0": {"x": 1.0, "y": 1.0}},
@@ -1727,7 +1660,7 @@ def test_creator_snapshot_builds_explicit_projector_topology() -> None:
         "free_levels": {},
         "boundary_orders": {"input": [1, 2], "output": [1, 2]},
         "effective_coefficient": {"numerator": "1", "denominator": "1"},
-    }
+    })
 
     expected = Projector(
         [Symmetriser({10, 11})],
@@ -1749,30 +1682,24 @@ def test_atomic_save_snapshot_restores_latest_line_colors() -> None:
     assert editor.configuration.state()["line_colors"] == colors
 
 
-def test_legacy_save_snapshot_restores_latest_line_colors() -> None:
-    pytest.importorskip("anywidget")
+def test_legacy_save_snapshot_cannot_overwrite_committed_line_colors() -> None:
     from birdtracks.projectors.widget import projector_widget
-    editor = projector_widget(Projector([Symmetriser((1, 2))]), shared_editor=False)
+    editor = projector_widget(Projector([Symmetriser((1, 2))]))
     colors = {"right-anchor:0->input:0:1": "#ff0000"}
-    editor.save_snapshot = {  # type: ignore[attr-defined]
-        "revision": 1,
-        "graph": editor.graph,  # type: ignore[attr-defined]
-        "positions": editor.positions,  # type: ignore[attr-defined]
-        "port_orders": editor.port_orders,  # type: ignore[attr-defined]
-        "free_levels": editor.free_levels,  # type: ignore[attr-defined]
-        "boundary_orders": editor.boundary_orders,  # type: ignore[attr-defined]
-        "line_colors": colors,
-        "effective_coefficient": editor.effective_coefficient,  # type: ignore[attr-defined]
-    }
-
-    assert editor.line_colors == colors  # type: ignore[attr-defined]
+    drawing = editor._editor_session.state.presentation
+    drawing['line_colors'] = colors
+    send_editor(editor, 'presentation', presentation=drawing)
+    before = editor._editor_session.payload()
+    editor.set_state({'save_snapshot': {'revision': 999, 'line_colors': {}}, 'line_colors': {}})
+    assert editor._editor_session.payload() == before
+    assert editor.line_colors == colors
 
 
 def test_configurator_saves_boundary_permutations_and_relative_sign() -> None:
     pytest.importorskip("anywidget")
     from birdtracks.projectors.widget import projector_sum_widget
     source = example_projector()
-    editor = projector_sum_widget(ProjectorSum((source,)), shared_editor=False)._term_editors[0]
+    editor = projector_sum_widget(ProjectorSum((source,)))._term_editors[0]
     input_ports = dict(source.input_boundary)
     output_ports = dict(source.output_boundary)
 
@@ -1792,18 +1719,9 @@ def test_configurator_saves_boundary_permutations_and_relative_sign() -> None:
         "input": tuple(orders["0"]["input"]),
         "output": tuple(orders["0"]["output"]),
     }
-    assert saved.input_boundary == {
-        1: input_ports[2],
-        2: input_ports[1],
-        3: input_ports[3],
-        4: input_ports[4],
-    }
-    assert saved.output_boundary == {
-        1: output_ports[1],
-        2: output_ports[2],
-        3: output_ports[4],
-        4: output_ports[3],
-    }
+    assert saved.input_boundary == input_ports
+    assert saved.output_boundary == output_ports
+    assert editor.editor_state['boundary_orders'] == {"input": [2,1,3,4], "output": [1,2,4,3]}
 
 
 def test_configurator_no_op_save_preserves_displayed_port_state() -> None:
@@ -2086,7 +2004,7 @@ def test_canvas_session_preserves_expansion_history(tmp_path: Path) -> None:
     session_path = tmp_path / "history.canvas.json"
     canvas = source.evaluate(session=session_path)
     first_editor = canvas._term_editors[0]  # type: ignore[attr-defined]
-    first_editor.expand_node_request = {"node": 0, "revision": 1}
+    expand_editor(first_editor, {"node": 0, "revision": 1})
 
     resumed = Projector.create(session=session_path)
 
@@ -2101,41 +2019,3 @@ def test_canvas_session_preserves_expansion_history(tmp_path: Path) -> None:
         editor.active_line
         for editor in resumed._line_states[-1][2]  # type: ignore[attr-defined]
     )
-
-
-def test_canvas_session_collects_legacy_duplicate_term_panels(
-    tmp_path: Path,
-) -> None:
-    pytest.importorskip("anywidget")
-    from birdtracks import ProjectorCanvasSession
-    from birdtracks.projectors.canvas_session import write_canvas_session
-
-    projector = Projector([Symmetriser((1, 2))])
-    session_path = tmp_path / "duplicates.canvas.json"
-    projector.evaluate(session=session_path)
-    document = ProjectorCanvasSession.load(session_path).state()
-    original = document["lines"][0]["terms"][0]
-    duplicates = []
-    for numerator, denominator in ((1, 3), (1, 6)):
-        duplicate = deepcopy(original)
-        coefficient = {
-            "numerator": str(numerator),
-            "denominator": str(denominator),
-        }
-        duplicate["state"]["graph"]["coefficient"] = coefficient
-        duplicate["state"]["graph"]["base_coefficient"] = coefficient
-        duplicate["state"]["effective_coefficient"] = coefficient
-        duplicate["state"].pop("editor_state", None)
-        duplicate["state"]["graph"].pop("editor_value", None)
-        duplicates.append(duplicate)
-    write_canvas_session(
-        session_path,
-        {"mode": "evaluate", "lines": [{"terms": duplicates}]},
-    )
-
-    resumed = ProjectorCanvasSession.load(session_path).open()
-
-    assert len(resumed._term_editors) == 1  # type: ignore[attr-defined]
-    assert resumed.current_projector_sum.coefficient(  # type: ignore[attr-defined]
-        projector
-    ) == Fraction(1, 2)
