@@ -367,6 +367,118 @@ def test_branching_rewrite_preserves_untouched_sum_occurrence_metadata(tmp_path)
     assert canvas.current_projector_sum.collapse() == ProjectorSum((a,b)).collapse()
 
 
+@pytest.mark.parametrize("kind", ["canvas", "generated", "symbolic"])
+@pytest.mark.parametrize("full", [False, True])
+def test_expansion_cleans_whole_line_with_exact_factors_and_persisted_history(kind, full, tmp_path):
+    from birdtracks import Permutation, PermutationNode
+    from birdtracks import ProjectorCanvasSession
+    from birdtracks.symbolic import SymbolicCoefficient
+    from birdtracks.projectors.whiteboard.result_projection import projector_terms_source, symbolic_projector_terms_source
+
+    plain = Projector([Symmetriser((1,2)), Antisymmetriser((2,3,4)), Symmetriser((1,2))], coefficient=Fraction(1,3))
+    target = Projector([Symmetriser((1,2)), Antisymmetriser((2,3,4)), Symmetriser((1,2)),
+                        PermutationNode(Permutation.from_cycle(2,3),support=(2,3,4)),
+                        Antisymmetriser((3,4)), Symmetriser((1,2))], coefficient=Fraction(-2,3))
+    original = ProjectorSum((plain, target))
+    path = tmp_path / ("cleanup.canvas.json" if kind == "canvas" else "cleanup.whiteboard")
+    x, y = SymbolicCoefficient.symbol("x"), SymbolicCoefficient.symbol("y")
+    if kind == "canvas":
+        host = projector_sum_widget(original,session=path,detangler=False,debug=True)
+        parents = host._term_editors
+    else:
+        host = whiteboard(path, debug=True)
+        if kind == "symbolic":
+            source, terms = symbolic_projector_terms_source(((plain,x),(target,x),(Projector(()),y)))
+            fields = {}
+        else:
+            source, terms = projector_terms_source((plain,target))
+            fields = {"calculation_value":projector_codec.encode(original)}
+        host.blocks = [{"id":"cleanup", "source":source, "read_only":True,
+                        "calculation_group":"cleanup", "calculation_step":1,
+                        "calculation_terms":terms, **fields}]
+        parents = host.backend_projectors
+    child = next(e for e in parents if len(e.projector.nodes) == 6)
+    # The kept S is manually pinned before cleanup, including when its branch
+    # becomes the first representative of the combined term.
+    send(child,"move",changes={child.editor_state["node_ids"][0]:{"x":11,"y":19}})
+    before = deepcopy(child.editor_state)
+    if full:
+        child.expand_node_request = {"revision":1,"node":2,"term_id":before["term_id"],"base_revision":before["revision"]}
+    else:
+        with patch.object(Projector,"collapse",side_effect=AssertionError("interactive collapse")):
+            send(child,"expand",node_id=before["node_ids"][2],edge="top")
+    descendants = host._term_editors if kind == "canvas" else [e for key,e in zip(host.backend_projector_ids,host.backend_projectors)
+                                                             if key.startswith(host.blocks[-1]["id"]+":")]
+    assert len(descendants) == 1
+    merged = descendants[0]
+    assert merged.projector.collapse() == (plain if kind == "symbolic" else plain*2).collapse()
+    accepted = deepcopy(merged.editor_state)
+    send(merged,"save")
+    if kind == "canvas":
+        assert host.current_projector_sum.collapse() == original.collapse()
+        reopened = ProjectorCanvasSession.load(path).open(detangler=False,debug=True)
+        loaded = reopened._term_editors[0]
+    else:
+        term = host.blocks[-1]["calculation_terms"][0]
+        if kind == "symbolic":
+            # The drawing keeps plain's rational coefficient; all symbolic
+            # factors (including scalar-only terms) remain exact and external.
+            p = projector_codec.decode(term["value"])
+            factor = projector_codec.decode(term["outer_factor"])
+            assert factor*p.coefficient == x*Fraction(2,3)
+            assert projector_codec.decode(term["scalar_terms"][0]["outer_factor"]) == y
+        reopened = whiteboard(path,debug=True)
+        loaded = reopened.backend_projectors[-1]
+    assert loaded.editor_state["node_ids"] == accepted["node_ids"]
+    assert loaded.editor_state["positions"] == accepted["positions"]
+    send(loaded,"undo")
+    send(next(e for e in (reopened._term_editors if kind == "canvas" else reopened.backend_projectors)
+              if len(e.projector.nodes)==6),"redo")
+    restored = reopened._term_editors[0] if kind == "canvas" else reopened.backend_projectors[-1]
+    assert restored.editor_state["node_ids"] == accepted["node_ids"]
+    assert restored.editor_state["positions"] == accepted["positions"]
+
+
+def test_cleanup_absorbs_an_untouched_term_carried_into_a_recursive_line(tmp_path):
+    from birdtracks import Permutation, PermutationNode
+    p = Projector([Antisymmetriser((2,3)),PermutationNode(Permutation.identity(),support=(1,2)),
+                   Antisymmetriser((2,3)),Symmetriser((1,2))],coefficient=Fraction(1,2))
+    other = Projector([Symmetriser((5,6))])
+    canvas = projector_sum_widget(ProjectorSum((p,other)),session=tmp_path/"absorb.canvas.json",detangler=False,debug=True)
+    copied = next(e for e in canvas._term_editors if len(e.projector.nodes)==4)
+    identity = copied.editor_state["node_ids"][0]
+    child = next(e for e in canvas._term_editors if len(e.projector.nodes)==1)
+    original = canvas.current_projector_sum
+    send(child,"expand",node_id=child.editor_state["node_ids"][0])
+    kept = next(e for e in canvas._term_editors if identity in e.editor_state["node_ids"])
+    assert sum(isinstance(n,Antisymmetriser) for n in kept.projector.nodes)==1
+    assert canvas.current_projector_sum.collapse()==original.collapse()
+
+
+@pytest.mark.parametrize("full", [False, True])
+def test_standalone_expansion_also_publishes_cleaned_python_branches(full):
+    from birdtracks import Permutation, PermutationNode
+    p = Projector([Symmetriser((1,2)),Antisymmetriser((2,3,4)),Symmetriser((1,2)),
+                   PermutationNode(Permutation.from_cycle(2,3),support=(2,3,4)),
+                   Antisymmetriser((3,4)),Symmetriser((1,2))],coefficient=Fraction(-2,3))
+    child = projector_widget(p,debug=True)
+    if full:
+        child.expand_node_request = {"revision":1,"node":2}
+    else:
+        with patch.object(Projector,"collapse",side_effect=AssertionError("interactive collapse")):
+            send(child,"expand",node_id=child.editor_state["node_ids"][2])
+    assert len(child._expanded_editor_states)==1
+    assert child.expanded_projector_sum.collapse()==p.collapse()
+
+
+def test_large_standalone_recursive_cleanup_does_not_expand_for_equivalence():
+    child = projector_widget(Projector([Antisymmetriser(range(1,13))]),debug=True)
+    with patch.object(Projector,"collapse",side_effect=AssertionError("interactive collapse")), \
+         patch.object(Antisymmetriser,"collapse",side_effect=AssertionError("factorial expansion")):
+        send(child,"expand",node_id=child.editor_state["node_ids"][0])
+    assert len(child._expanded_editor_states)==2
+
+
 @pytest.mark.parametrize("kind", ["canvas", "generated", "inline", "parsed", "symbolic"])
 def test_new_parent_edit_invalidates_undone_rewrite_line(kind, tmp_path):
     child, _value, _reopen, _original = surface(kind, Fraction(-2,3), tmp_path / "invalidate.whiteboard")

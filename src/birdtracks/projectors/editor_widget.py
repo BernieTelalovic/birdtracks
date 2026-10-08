@@ -200,6 +200,8 @@ def attach_editor(editor: Any, outer_factor: Fraction = Fraction(1)) -> None:
                 branches = session.expand(request["node_id"], base_revision=revision,
                                           edge=request.get("edge", "bottom"), side=request.get("side", "input"),
                                           geometry=editor.graph["geometry"])
+                from .editor_rewrites import cleanup_occurrences
+                branches = cleanup_occurrences(branches, geometry=editor.graph["geometry"])
                 from .projector_sum import ProjectorSum
                 editor._expanded_editor_states = branches
                 editor._expanded_projector_sum = ProjectorSum(s.projector * s.outer_factor for s in branches)

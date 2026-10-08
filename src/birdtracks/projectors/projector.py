@@ -311,10 +311,12 @@ class Projector:
         return collapse_projector(self, dimension=exact_dimension)
 
     def simplify(self) -> ProjectorSum:
-        """Return a simplified equivalent operator.
+        """Apply one automatic exact identity, returning an equivalent sum.
 
         A symmetriser and antisymmetriser joined directly by two or more
-        strands annihilate the complete diagram.
+        strands annihilate the complete diagram. A nonzero rewrite is not a
+        declaration of a fixed point; callers doing cleanup must retain the
+        rewritten value and continue the applicable bounded rules.
         """
         from .identities import IDENTITIES
         from .projector_sum import ProjectorSum

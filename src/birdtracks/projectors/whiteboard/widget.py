@@ -506,11 +506,15 @@ def whiteboard(
             descendants.extend(states)
             factors.extend([projector_codec.decode(raw_terms[index]["outer_factor"]) if symbolic else Fraction(1)] * len(states))
             index += 1
+        from ..editor_rewrites import cleanup_occurrences
+        if symbolic:
+            descendants = [replace(s, outer_factor=s.outer_factor*factor)
+                           for s, factor in zip(descendants, factors, strict=True)]
+        descendants = cleanup_occurrences(tuple(descendants), geometry=editor.graph["geometry"])
+        if symbolic:
+            factors = [s.outer_factor for s in descendants]
+            descendants = tuple(replace(s, outer_factor=Fraction(1)) for s in descendants)
         occurrences = [s.projector * s.outer_factor for s in descendants]
-        if rewrite.get("calculation") == "full" and not symbolic:
-            from ..editor_rewrites import collect_calculated_occurrences
-            descendants = collect_calculated_occurrences(tuple(descendants))
-            occurrences = [s.projector * s.outer_factor for s in descendants]
         if symbolic:
             pairs = list(zip(occurrences, factors, strict=True))
             for scalar in raw_terms[0].get("scalar_terms", []):

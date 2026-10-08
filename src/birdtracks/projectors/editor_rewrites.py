@@ -293,40 +293,43 @@ def calculate_full_expansion(before: EditorState, node_id: str, *, geometry=None
                  for permutation, coefficient in node.collapse().items())
 
 
-def collect_calculated_occurrences(states: tuple[EditorState, ...]) -> tuple[EditorState, ...]:
-    """Explicit-calculation cleanup, preserving the first surviving drawing.
+def cleanup_occurrences(states: tuple[EditorState, ...], *, geometry=None) -> tuple[EditorState, ...]:
+    """Bounded line cleanup, preserving the first surviving occurrence's drawing.
 
-    Only completely expanded permutation terms are compared by their boundary
-    permutation. Never collapse a mixed/unexpanded term for equivalence. Known
-    zero terms may be removed, but a solver's rewritten graph is not installed.
+    Apply nested absorption, discard known zeros, and collect using a lossless
+    wiring comparison projection. Never install that projection over editor
+    geometry or expand mixed terms for equality. Rational and symbolic outer
+    factors participate exactly once in collection.
     """
-    from .permutation_node import PermutationNode
+    from .wiring import permutation_wiring_normal_form
+    from birdtracks.symbolic import SymbolicCoefficient
 
     result = []
     groups = {}
     for state in states:
+        state = absorb_nested(state, geometry=geometry)
         p = state.projector
-        if not p.simplify():
+        if not p.simplify() or not state.outer_factor:
             continue
-        if not p.nodes or not all(isinstance(n, PermutationNode) for n in p.nodes):
-            result.append(state)
+        comparison = permutation_wiring_normal_form(p)
+        scalar = comparison.canonical_value_coefficient
+        if not scalar or not comparison.simplify():
             continue
-        boundary = boundary_permutation(p)
-        if boundary is None:
-            result.append(state)
-            continue
-        permutation, scalar = boundary
-        key = (permutation, p.support, p.in_direction, p.out_direction)
+        key = comparison / scalar
         total = scalar * state.outer_factor
         if key not in groups:
             groups[key] = (len(result), scalar, total, state)
             result.append(state)
         else:
             index, representative_scalar, previous, representative = groups[key]
-            groups[key] = index, representative_scalar, previous + total, representative
-            result[index] = replace(representative, projector=representative.projector *
-                                    ((previous + total) / representative_scalar), outer_factor=Fraction(1))
-    return tuple(s for s in result if s.projector.coefficient)
+            total += previous
+            groups[key] = index, representative_scalar, total, representative
+            if isinstance(total, SymbolicCoefficient):
+                result[index] = replace(representative, outer_factor=total / representative_scalar)
+            else:
+                result[index] = replace(representative, projector=representative.projector *
+                                        (total / representative_scalar), outer_factor=Fraction(1))
+    return tuple(s for s in result if s.projector.coefficient and s.outer_factor)
 
 
 def reconnect(before: EditorState, changes: Mapping[str, Mapping[str, Mapping[str, object]]]) -> EditorState:

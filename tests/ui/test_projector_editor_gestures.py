@@ -25,6 +25,9 @@ def connected_canvas(tmp_path, request):
             "trailing": [Antisymmetriser((1, 2, 3)), permutation],
             "interior": [Antisymmetriser((1, 2, 3)), permutation, Symmetriser((3, 4))],
             "pure": [permutation],
+            "cleanup": [Symmetriser((1,2)),Antisymmetriser((2,3,4)),Symmetriser((1,2)),
+                        PermutationNode(Permutation.from_cycle(2,3),support=(2,3,4)),
+                        Antisymmetriser((3,4)),Symmetriser((1,2))],
             "layers": [Symmetriser((1,2)),Antisymmetriser((2,3,4)),Symmetriser((1,2)),
                        PermutationNode(Permutation.identity(),support=(2,)),
                        PermutationNode(Permutation.from_cycle(2,3),support=(2,3,4)),
@@ -35,9 +38,16 @@ def connected_canvas(tmp_path, request):
                            Antisymmetriser((3,4)),Symmetriser((1,2))],
         }["misaligned" if request.param.startswith("misaligned") else request.param]
         p = Projector(nodes, coefficient=Fraction(-2, 3))
-    canvas = projector_sum_widget(ProjectorSum((p,)), shared_editor=True,
+    initial = ProjectorSum((p,))
+    if surface_kind == "cleanup":
+        p = p * (Fraction(-2,3) / p.coefficient)
+        plain = Projector([Symmetriser((1,2)),Antisymmetriser((2,3,4)),Symmetriser((1,2))],coefficient=Fraction(1,3))
+        initial = ProjectorSum((plain,p))
+    canvas = projector_sum_widget(initial, shared_editor=True,
                                   session=tmp_path / "gestures", detangler=False, debug=True)
     child = canvas._term_editors[0]
+    if surface_kind == "cleanup":
+        child = next(e for e in canvas._term_editors if len(e.projector.nodes)==6)
     if surface_kind.startswith("misaligned"):
         dy = 0.35 if surface_kind == "misaligned-fractional" else 0
         child._editor_session.move({identity:position for identity,position in zip(child.editor_state["node_ids"],
@@ -62,7 +72,10 @@ def connected_canvas(tmp_path, request):
 
         def command(_source, request):
             requests.append(deepcopy(request))
-            child.editor_request = request
+            if "calculation_request" in request:
+                child.expand_node_request = request["calculation_request"]
+            else:
+                child.editor_request = request
             reply = {key: value for key, value in child.get_state().items()
                      if not key.startswith("_") and key not in {"editor_request", "save_command", "local_undo_command"}}
             if document is not None:
@@ -100,9 +113,15 @@ def connected_canvas(tmp_path, request):
             }},
             off(names, fn) { for (const name of names.split(' ')) listeners.get(name)?.delete(fn); },
             save_changes() {
-              const request = values.editor_request;
-              if (!request?.request_id || this.lastSent === request.request_id) return;
-              this.lastSent = request.request_id;
+              let request = values.editor_request;
+              const calculation = values.expand_node_request;
+              if (calculation?.revision && this.lastCalculation !== calculation.revision) {
+                this.lastCalculation = calculation.revision;
+                request = {calculation_request: structuredClone(calculation)};
+              } else {
+                if (!request?.request_id || this.lastSent === request.request_id) return;
+                this.lastSent = request.request_id;
+              }
               window.pythonEditorCommand(structuredClone(request)).then(reply => {
                 for (const [key,value] of Object.entries(reply))
                   if (!['editor_state','editor_feedback','document_blocks'].includes(key)) model.set(key,value);
@@ -159,6 +178,22 @@ def move_hit(page, selector, dy, *, cancel=False):
     if cancel:
         page.evaluate("document.dispatchEvent(new PointerEvent('pointercancel',{bubbles:true}))")
     page.mouse.up()
+
+
+@pytest.mark.parametrize("connected_canvas", ["cleanup"], indirect=True)
+@pytest.mark.parametrize("full", [False, True])
+def test_real_expansion_gesture_collects_mixed_terms_and_discards_zero(connected_canvas, full):
+    page, canvas, child, requests, original = connected_canvas
+    initial = canvas.current_projector_sum
+    if full:
+        page.locator('.birdtracks-node[data-node="2"] rect').dblclick()
+    else:
+        page.get_by_role('button',name='Recursively expand from the top line').nth(2).dispatch_event('pointerdown')
+    page.wait_for_function("!!model.get('editor_rewrite')?.request_id")
+    assert len(canvas._line_states)==2
+    assert len(canvas._term_editors)==1
+    assert canvas.current_projector_sum.collapse()==initial.collapse()
+    assert not child.editor_feedback.get('error')
 
 
 @pytest.mark.parametrize("connected_canvas", ["layers"], indirect=True)

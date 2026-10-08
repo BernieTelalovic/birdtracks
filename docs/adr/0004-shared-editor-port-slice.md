@@ -95,6 +95,23 @@ expansion, detangling, or sum collection. Absorbed S/A nodes are removed from
 the algebra, not merely hidden by rendering. The existing rule-enable setting
 is respected. Small exact-collapse comparisons remain test oracles only.
 
+After either recursive or full expansion, `cleanup_occurrences` applies bounded
+absorption to a fixed point and removes known zero terms. Standalone widgets
+clean their published branches; canvas and whiteboard hosts also clean the whole
+new equation line, including untouched carried terms. The single-step
+`Projector.simplify()` API must not be mistaken for a fixed-point result or used
+as a boolean substitute for applying nonzero rewrites.
+
+`permutation_wiring_normal_form` is a separate algebra-only comparison projection:
+it traces permutation corridors into S/A ports and fixed boundaries, and leaves
+closed permutation-only traces conservatively intact. Canonical graph orientation
+then determines the exact signed collection scalar. No S/A expansion or mixed
+collapse is used. Equivalent terms combine rational/symbolic outer factors once,
+retaining the first representative's actual graph, IDs, manual placement, and
+paint. The comparison graph is never installed as editor state. The explicit
+Python calculation collector shares this wiring projection; port redraws still
+do not collect or simplify occurrences.
+
 Result-line formatting lives in `whiteboard/result_projection.py`, separate
 from document synchronization and algebraic simplification. A result-line port
 transaction preserves ordered occurrences and never collects them.

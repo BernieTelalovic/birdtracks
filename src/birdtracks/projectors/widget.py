@@ -563,9 +563,8 @@ def projector_sum_widget(
                         # Copy occurrences before collection, including manual
                         # layout, exact scalar, selection, and concrete IDs.
                         descendants.append(replace(current._editor_session.state, term_id=uuid4().hex, revision=0))
-                if rewrite.get("calculation") == "full":
-                    from .editor_rewrites import collect_calculated_occurrences
-                    descendants = collect_calculated_occurrences(tuple(descendants))
+                from .editor_rewrites import cleanup_occurrences
+                descendants = cleanup_occurrences(tuple(descendants), geometry=editor.graph["geometry"])
                 value = ProjectorSum(s.projector * s.outer_factor for s in descendants)
                 children = tuple(projector_widget(s.projector, style=style,
                     configuration=configuration_for_state(s, editor.graph["geometry"]),
@@ -1401,7 +1400,7 @@ def projector_widget(
             assert isinstance(request, dict)
             session = getattr(self, "_editor_session", None)
             if session is not None:
-                from .editor_rewrites import calculate_full_expansion
+                from .editor_rewrites import calculate_full_expansion, cleanup_occurrences
                 from .projector_sum import ProjectorSum
                 base_revision = request.get("base_revision", session.state.revision)
                 session._check_revision(base_revision)
@@ -1415,6 +1414,7 @@ def projector_widget(
                                               edge=request["recursive_edge"], geometry=self.graph["geometry"])
                 else:
                     branches = calculate_full_expansion(session.state, node_id, geometry=self.graph["geometry"])
+                branches = cleanup_occurrences(branches, geometry=self.graph["geometry"])
                 self._expanded_editor_states = branches
                 self._expanded_projector_sum = ProjectorSum(s.projector*s.outer_factor for s in branches)
                 self.editor_rewrite = {"request_id": f"calculation-{request['revision']}",

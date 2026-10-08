@@ -156,7 +156,8 @@ and straight free lines occupy operator layers; all crossings occupy connectors
 between layers. An attached permutation adds neither a column nor width.
 Only a standalone permutation uses a wider connector. Recursive expansion
 removes redundant nested S/A operators in Python using the existing normalized
-absorption rule, without full collapse or term collection.
+absorption rule, without full collapse. Shared Python line cleanup then removes
+zero terms and combines equivalent mixed wiring without expanding the S/A nodes.
 
 Use this small synthetic diagram in a notebook to check the two independently:
 
@@ -202,3 +203,44 @@ surface run passed 226 tests; nine focused Chromium interaction checks passed,
 including straight layer bands, connector-only crossings, and manual movement.
 The full/broad runs also exercised every shipped frontend test. `git diff
 --check` passed; no separate lint/type-check suite is configured.
+
+## Cleanup after recursive and full expansion
+
+Every expansion now uses the same bounded Python cleanup, including standalone
+published branches and untouched occurrences carried into a new equation line.
+It reaches a fixed point for nested S/S and A/A absorption, removes exact S–A
+zeros, and collects terms using permutation-corridor normalization plus canonical
+graph orientation. The comparison graph is never substituted for the surviving
+editor drawing. The first representative retains its IDs, placement, routes,
+and colors; exact rational and symbolic factors are combined once. Pure closed
+permutation traces keep their dimension factors. Port drags still do not collect.
+
+In the synthetic AA diagram above, first expand the rightmost three-line A,
+then the middle two-line S in the second branch. The next line should contain
+one term with factor `2/3`: the equivalent first two contributions combine,
+and the double-connected S–A contribution disappears. Check Save/reload and
+whole-line undo/redo, then repeat with an odd input or output redraw.
+
+For a separate absorption check, use
+`c = Projector([Antisymmetriser((2,3)), Symmetriser((1,2))])` and display
+`ProjectorSum((c * c,))`. Expand the middle S, then the remaining right-hand A
+in the second branch. Absorption must also run on the carried first term;
+the cleaned result is one `3/4 c` term. Here S/A nodes are individually
+normalized; `c` is not rescaled to an idempotent Young projector.
+
+Focused tests use these small algebraic constructions, not the user's saved
+whiteboard as a fixture. They cover signed/rational/symbolic collection, zero
+removal, repeated absorption, fixed-point cleanup, free boundary strands,
+direction distinctions, loop factors, manual presentation preservation,
+persistence, whole-line undo/redo, and both real browser expansion gestures.
+
+Cleanup verification (2026-10-08): 194 focused algebra/editor/surface cases
+passed, as did three focused Chromium gesture/layer checks. The full configured
+suite passed 1,187 tests with eight optional-dependency skips in 391.27 seconds.
+Three skips require the unbuilt optional Cython backend; five require Torch.
+There were no failures. `git diff --check` passed, and no separate lint/type-check
+suite is configured. The current saved AA and CC rows were also inspected
+read-only: cleanup preserved their exact collapsed values while reducing the
+reported final lines to `2/3 A` and `3/4 C`. The user's whiteboard was neither
+rewritten nor adopted as a regression fixture. Restart the app/kernel and
+regenerate the expansion rows to exercise the updated pipeline.

@@ -553,13 +553,13 @@ def remove_multiply_connected_s_a_terms(value: ProjectorSum) -> ProjectorSum:
 
 
 def collect_fully_expanded_permutations(value: ProjectorSum) -> ProjectorSum:
-    """Collect alike terms after removing presentation-only identity wiring.
+    """Apply bounded absorption/zero rules and collect permutation wiring.
 
     Expansion retains each replacement node so that a partially expanded
     diagram remains editable.  An identity permutation may also anchor a free
     boundary strand while its other strands merely connect to a surviving
-    S/A.  Split that node into its free strands and bypass the rest, so equal
-    projectors do not retain different identity-wiring presentations.
+    S/A. Trace those strands into fixed boundaries and surviving operator
+    ports, so equal projectors do not retain different wiring subdivisions.
 
     Once a term contains only permutation nodes, its one boundary permutation
     is its complete operator.  Replacing it with a single canonical
@@ -574,8 +574,10 @@ def collect_fully_expanded_permutations(value: ProjectorSum) -> ProjectorSum:
         raise TypeError("value must be a ProjectorSum")
 
     terms: list[tuple[Projector, Fraction]] = []
-    for projector, coefficient in value:
-        projector = _normalize_identity_permutation_anchors(projector)
+    from .wiring import permutation_wiring_normal_form
+
+    for projector, coefficient in remove_automatically_vanishing_terms(_absorb_same_type_terms(value)):
+        projector = permutation_wiring_normal_form(projector)
         if not projector.nodes:
             terms.append((projector, coefficient))
             continue
@@ -629,105 +631,6 @@ def _collect_equivalent_mixed_projectors(value: ProjectorSum) -> ProjectorSum:
         (projector, coefficient)
         for projector, coefficient in equivalent.values()
         if coefficient
-    )
-
-
-def _normalize_identity_permutation_anchors(projector: Projector) -> Projector:
-    """Bypass non-free strands of identity permutation nodes until stable."""
-    result = projector
-    while True:
-        for index, node in enumerate(result.nodes):
-            if not isinstance(node, PermutationNode) or node.permutation:
-                continue
-            split = _split_identity_permutation_anchor(result, index)
-            if split is not None:
-                result = split
-                break
-        else:
-            return result
-
-
-def _split_identity_permutation_anchor(
-    projector: Projector, node_index: int
-) -> Projector | None:
-    """Retain only free identity strands on one partially connected node."""
-    node = projector.nodes[node_index]
-    if not isinstance(node, PermutationNode) or node.permutation:
-        return None
-
-    incoming = {
-        connection.target.label: connection
-        for connection in projector.connections
-        if connection.target.node == node_index
-    }
-    outgoing = {
-        connection.source.label: connection
-        for connection in projector.connections
-        if connection.source.node == node_index
-    }
-    input_at = {
-        port.label: boundary_label
-        for boundary_label, port in projector.input_boundary.items()
-        if port.node == node_index
-    }
-    output_at = {
-        port.label: boundary_label
-        for boundary_label, port in projector.output_boundary.items()
-        if port.node == node_index
-    }
-    free = frozenset(label for label in node.support if label in input_at and label in output_at)
-    if not free or free == node.support:
-        return None
-
-    connections = [
-        connection
-        for connection in projector.connections
-        if connection.source.node != node_index
-        and connection.target.node != node_index
-    ]
-    input_boundary = dict(projector.input_boundary)
-    output_boundary = dict(projector.output_boundary)
-    for label in node.support - free:
-        before = incoming.get(label)
-        after = outgoing.get(label)
-        if before is not None and after is not None:
-            connections.append(Connection(before.source, after.target))
-        elif label in input_at and after is not None:
-            input_boundary[input_at[label]] = after.target
-        elif before is not None and label in output_at:
-            output_boundary[output_at[label]] = before.source
-        else:
-            return None
-
-    orders = {
-        index: {
-            "input": values["input"],
-            "output": values["output"],
-        }
-        for index, values in projector.port_orders.items()
-    }
-    orders[node_index] = {
-        side: tuple(label for label in orders[node_index][side] if label in free)
-        for side in ("input", "output")
-    }
-    nodes = list(projector.nodes)
-    nodes[node_index] = PermutationNode(
-        Permutation.identity(),
-        support=free,
-        in_direction=node.in_direction,
-        out_direction=node.out_direction,
-    )
-    unit = Projector(
-        nodes,
-        connections,
-        input_boundary=input_boundary,
-        output_boundary=output_boundary,
-        port_orders=orders,
-        in_direction=projector.in_direction,
-        out_direction=projector.out_direction,
-    )
-    return unit * (
-        projector.canonical_coefficient / unit.canonical_coefficient
     )
 
 
