@@ -244,3 +244,53 @@ read-only: cleanup preserved their exact collapsed values while reducing the
 reported final lines to `2/3 A` and `3/4 C`. The user's whiteboard was neither
 rewritten nor adopted as a regression fixture. Restart the app/kernel and
 regenerate the expansion rows to exercise the updated pipeline.
+
+## Independent free lines in tensor columns
+
+The routing fix is presentation-only. Packed display columns now have stable
+column controls separate from algebra-layer routes. Strands retain their input
+identity through permutations instead of borrowing the output boundary label.
+Python reserves explicit rows before allocating automatic free lines; all free
+lines receive drag handles. A completed drag, including its existing column
+packing, is one undoable transaction. Cancel leaves committed state unchanged.
+Surviving controls transfer through replacements without resetting placement.
+
+For a small synthetic diagram, set
+`a = Projector([Symmetriser((1,2)), Antisymmetriser((2,3,4)), Symmetriser((1,2))])`
+and display `ProjectorSum((a @ a,))`; `@` is tensor product, not composition.
+In a whiteboard with that definition, evaluate `A\otimes A` and recursively
+expand a lower-factor A to introduce a permutation connector.
+
+Check the canvas, standalone widget, and whiteboard:
+
+1. Free lines in each operator column occupy separate rows, including lower
+   strands passing through a permutation. Hover each line to find its handle.
+2. Drag two neighbouring free lines independently in the same column. Existing
+   column packing may move its operators; other columns stay unchanged. Crossings
+   remain in connectors, not operator bands.
+3. Cancel a drag, then complete one. Undo/redo restores the complete drag once.
+   Reorder an A input/output port and verify the separate routing remains.
+4. Save, reload, and repeat the drag. Manual positions, stable identities, routes,
+   coefficients, and undo history survive. A delayed old render must not restore
+   previous lanes. Only explicit Tidy resets placement and controls.
+
+The shared API accepts `EditorSession.reroute({}, display_changes={column_id:
+{input_strand_id: row}}, base_revision=revision, geometry=geometry)`. Obtain IDs
+from the authoritative display projection's `column_ids` and strand `editor_id`,
+not from local/output labels or algebra layer numbers. The command validates
+that the strand is free in that column; it never computes a permutation or
+calls collapse. Focused exact-collapse checks are test oracles only.
+
+The reported saved tensor term was also verified read-only through shipped
+JavaScript and Python: strands 6/7 separated on load and drag; other columns
+and manual placement were retained; reload preserved controls. The user's
+whiteboard was neither modified nor used as a regression fixture. Restart the
+app/kernel and reload the document to use the new frontend and Python projection.
+
+Routing verification (2026-10-08): the final full configured suite passed 1,205
+tests with eight optional-dependency skips in 389.99 seconds, with no failures.
+Three skips require the unbuilt optional Cython backend; five require Torch.
+The focused model/shared-surface run passed 146 tests, and all 100 layout checks
+passed. The shipped-frontend gesture run passed 51 tests; final tensor/stale-render
+and whiteboard persistence checks also passed. The full run includes all browser
+tests. `git diff --check` passed; no separate lint/type-check suite is configured.

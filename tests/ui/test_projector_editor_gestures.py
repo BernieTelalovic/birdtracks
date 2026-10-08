@@ -25,6 +25,9 @@ def connected_canvas(tmp_path, request):
             "trailing": [Antisymmetriser((1, 2, 3)), permutation],
             "interior": [Antisymmetriser((1, 2, 3)), permutation, Symmetriser((3, 4))],
             "pure": [permutation],
+            "tensor": [Symmetriser((1,2)),Antisymmetriser((2,3,4)),Symmetriser((1,2)),
+                       Symmetriser((5,6)),PermutationNode(Permutation.from_cycle(6,8),support=(6,7,8)),
+                       Symmetriser((5,6))],
             "cleanup": [Symmetriser((1,2)),Antisymmetriser((2,3,4)),Symmetriser((1,2)),
                         PermutationNode(Permutation.from_cycle(2,3),support=(2,3,4)),
                         Antisymmetriser((3,4)),Symmetriser((1,2))],
@@ -46,6 +49,11 @@ def connected_canvas(tmp_path, request):
     canvas = projector_sum_widget(initial, shared_editor=True,
                                   session=tmp_path / "gestures", detangler=False, debug=True)
     child = canvas._term_editors[0]
+    if surface_kind == "tensor":
+        drawing = child._editor_session.state.presentation
+        drawing['free_levels']['0']['7'] = 6
+        child._editor_session.presentation_checkpoint(drawing, base_revision=child.editor_state['revision'])
+        child._publish_editor()
     if surface_kind == "cleanup":
         child = next(e for e in canvas._term_editors if len(e.projector.nodes)==6)
     if surface_kind.startswith("misaligned"):
@@ -180,6 +188,70 @@ def move_hit(page, selector, dy, *, cancel=False):
     page.mouse.up()
 
 
+@pytest.mark.parametrize("connected_canvas", ["tensor"], indirect=True)
+def test_tensor_free_strands_have_independent_handles_and_transactions(connected_canvas):
+    page, canvas, child, requests, original = connected_canvas
+
+    def rows():
+        return page.evaluate("""() => [...document.querySelectorAll('.birdtracks-route-handle')].map(h=>({
+          column:h.dataset.freeColumn, strand:h.dataset.freeStrand,
+          label:h.dataset.strandLabel, y:Number(h.getAttribute('cy'))}))""")
+
+    def assert_distinct_rows():
+        handles = rows()
+        for column, assignments in child.editor_state['graph']['display_free_levels'].items():
+            group = [h for h in handles if h['column'] == column]
+            assert {h['label'] for h in group} == set(assignments)
+            assert len(group) == len({h['y'] for h in group})
+            assert all(h['strand'] for h in group)
+        # Output label 8 is the permuted end of input strand 6, not strand 8.
+        six = next(h['strand'] for h in handles if h['column'] == '0' and h['label'] == '6')
+        assert six == next(item['editor_id'] for item in child.graph['external_inputs'] if item['boundary_label'] == 6)
+
+    assert_distinct_rows()
+    before = deepcopy(child.editor_state)
+    untouched = {c: deepcopy(before['graph']['display_free_levels'][c]) for c in ('1','2')}
+    history_count = len(child._editor_session._undo)
+    move_hit(page, '.birdtracks-route-handle[data-free-column="0"][data-strand-label="6"]', -45)
+    page.wait_for_function("r=>model.get('editor_state').revision>r", arg=before['revision'])
+    assert requests[-1]['action'] == 'reroute'
+    assert 'display_changes' in requests[-1]
+    assert 'changes' not in requests[-1]
+    assert len(child._editor_session._undo) == history_count+1
+    assert_distinct_rows()
+    assert all(child.graph['display_free_levels'][c] == levels for c,levels in untouched.items())
+    accepted = deepcopy(child.editor_state)
+    count = len(requests)
+    # A delayed earlier render envelope must not restore old lanes.
+    page.evaluate("before => model.set('editor_state', before)", before)
+    assert page.evaluate("model.get('editor_state').revision") == accepted['revision']
+    assert_distinct_rows()
+    move_hit(page, '.birdtracks-route-handle[data-free-column="0"][data-strand-label="7"]', -45, cancel=True)
+    assert len(requests) == count
+    assert child.editor_state == accepted
+    assert_distinct_rows()
+    page.keyboard.press('Control+z')
+    page.wait_for_function("r=>model.get('editor_state').revision>r", arg=accepted['revision'])
+    assert child.editor_state['positions'] == before['positions']
+    assert child.graph['display_free_levels'] == before['graph']['display_free_levels']
+    page.keyboard.press('Control+Shift+z')
+    page.wait_for_function("r=>model.get('editor_state').revision>r", arg=accepted['revision']+1)
+    assert child.editor_state['display_routes'] == accepted['display_routes']
+    assert_distinct_rows()
+    # Another drag, an odd port redraw, and remount retain independent lanes.
+    state = deepcopy(child.editor_state)
+    move_hit(page, '.birdtracks-route-handle[data-free-column="0"][data-strand-label="7"]', -45)
+    page.wait_for_function("r=>model.get('editor_state').revision>r", arg=state['revision'])
+    drawing = deepcopy(child.editor_state['display_routes'])
+    state = deepcopy(child.editor_state)
+    drag(page, 'input', 2, 3, node=1)
+    page.wait_for_function("r=>model.get('editor_state').revision>r", arg=state['revision'])
+    assert child.editor_state['display_routes'] == drawing
+    page.evaluate('remount()')
+    assert_distinct_rows()
+    assert canvas.current_projector_sum.collapse() == original.collapse()
+
+
 @pytest.mark.parametrize("connected_canvas", ["cleanup"], indirect=True)
 @pytest.mark.parametrize("full", [False, True])
 def test_real_expansion_gesture_collects_mixed_terms_and_discards_zero(connected_canvas, full):
@@ -288,6 +360,8 @@ def test_movement_and_routing_use_python_history_without_trait_writes(connected_
     move_hit(page,'.birdtracks-route-handle',45)
     page.wait_for_function("revision=>model.get('editor_state').revision>revision",arg=state['revision'])
     assert requests[-1]['action'] == 'reroute'
+    assert requests[-1].get('display_changes')
+    assert child.editor_state['display_routes']
     assert value().collapse() == original.collapse()
     accepted = deepcopy(child.editor_state)
     count = len(requests)

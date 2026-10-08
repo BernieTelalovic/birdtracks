@@ -77,6 +77,13 @@ def _presentation(projector: Projector, value: Mapping[str, object]) -> str:
         if any(isinstance(level, bool) or not isinstance(level, (int, float))
                or not math.isfinite(level) or level < 0 for level in route.values()):
             raise ValueError("route levels must be finite and nonnegative")
+    display_routes = data.get("display_routes", {})
+    if not isinstance(display_routes, Mapping) or any(not isinstance(route, Mapping) for route in display_routes.values()):
+        raise ValueError("display routes must map stable columns to stable strands")
+    for route in display_routes.values():
+        if any(isinstance(level, bool) or not isinstance(level, (int, float))
+               or not math.isfinite(level) or level < 0 or int(level) != level for level in route.values()):
+            raise ValueError("display route rows must be nonnegative integers")
     return _json(data)
 
 
@@ -210,8 +217,12 @@ class EditorState:
         revision = payload.get("revision", 0)
         if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
             raise ValueError("editor revision must be a nonnegative integer")
-        return replace(result, node_ids=node_ids, strand_ids=strand_ids,
-                       selection=selection, revision=revision)
+        result = replace(result, node_ids=node_ids, strand_ids=strand_ids,
+                         selection=selection, revision=revision)
+        from .editor_presentation import validate_display_routes
+
+        validate_display_routes(result, result.presentation)
+        return result
 
 
 class EditorSession:
@@ -230,6 +241,8 @@ class EditorSession:
 
     def _drawing(self, presentation: Mapping[str, object], *, automatic_layout: bool = False) -> dict[str, object]:
         drawing = dict(presentation)
+        if "display_routes" in self.state.presentation:
+            drawing.setdefault("display_routes", self.state.presentation["display_routes"])
         # Clients propose coordinates, not ownership of automatic placement.
         automatic = self.state.presentation.get("automatic_positions", {})
         if automatic_layout:
@@ -257,6 +270,9 @@ class EditorSession:
             raise ValueError("selection references an unknown editor ID")
         if presentation is not None:
             before = replace(before, presentation_json=_presentation(before.projector, self._drawing(presentation)))
+            from .editor_presentation import validate_display_routes
+
+            validate_display_routes(before, before.presentation)
         projector = before.projector
         indexed = {}
         for node_id, sides in changes.items():
@@ -276,6 +292,9 @@ class EditorSession:
 
     def _commit(self, candidate: EditorState) -> EditorState:
         if candidate != self.state:
+            from .editor_presentation import validate_display_routes
+
+            validate_display_routes(candidate, candidate.presentation)
             if candidate.projector is not self.state.projector:
                 from .display_graph import compile_display_graph
 
@@ -287,16 +306,22 @@ class EditorSession:
         return self.state
 
     def presentation_checkpoint(self, presentation: Mapping[str, object], *, base_revision: int,
-                                automatic_layout: bool = False) -> EditorState:
+                                automatic_layout: bool = False, geometry=None) -> EditorState:
         """One presentation transaction; the exact algebra object is untouched."""
         self._check_revision(base_revision)
         if not set(presentation.get("strand_routes", {})) <= set(self.state.strand_ids):
             raise ValueError("route references an unknown editor strand")
         drawing = self._drawing(presentation, automatic_layout=automatic_layout)
         candidate = replace(self.state, presentation_json=_presentation(self.state.projector, drawing))
+        from .editor_presentation import repair_display_routes, validate_display_routes
+
+        validate_display_routes(candidate, drawing)
+        if drawing.get("display_routes"):
+            drawing["display_routes"] = repair_display_routes(candidate, geometry)
+            candidate = replace(candidate, presentation_json=_presentation(self.state.projector, drawing))
         return self._commit(candidate)
 
-    def move(self, changes: Mapping[str, Mapping[str, float]], *, base_revision: int) -> EditorState:
+    def move(self, changes: Mapping[str, Mapping[str, float]], *, base_revision: int, geometry=None) -> EditorState:
         """Update only named survivor positions, without choosing any layout."""
         self._check_revision(base_revision)
         if not isinstance(changes, Mapping):
@@ -306,7 +331,7 @@ class EditorSession:
             if identity not in self.state.node_ids:
                 raise ValueError("movement references an unknown node")
             drawing.setdefault("positions", {})[str(self.state.node_ids.index(identity))] = dict(position)
-        return self.presentation_checkpoint(drawing, base_revision=base_revision)
+        return self.presentation_checkpoint(drawing, base_revision=base_revision, geometry=geometry)
 
     def reconnect(self, changes: Mapping[str, object], *, base_revision: int) -> EditorState:
         from .editor_rewrites import reconnect
@@ -315,7 +340,8 @@ class EditorSession:
         return self._commit(reconnect(self.state, changes))
 
     def reroute(self, changes: Mapping[str, Mapping[str, float]], *, base_revision: int,
-                presentation: Mapping[str, object] | None = None) -> EditorState:
+                presentation: Mapping[str, object] | None = None,
+                display_changes: Mapping[str, Mapping[str, float]] | None = None, geometry=None) -> EditorState:
         """Concrete stable-ID route controls are presentation, never permutations."""
         self._check_revision(base_revision)
         if not isinstance(changes, Mapping):
@@ -334,7 +360,16 @@ class EditorSession:
                 raise ValueError("route levels must be finite and nonnegative")
             routes[identity] = dict(route)
         drawing["strand_routes"] = routes
-        return self.presentation_checkpoint(drawing, base_revision=base_revision)
+        if display_changes is not None:
+            if not isinstance(display_changes, Mapping):
+                raise ValueError("display routing changes must map stable columns to strands")
+            controls = dict(drawing.get("display_routes", {}))
+            for column, route in display_changes.items():
+                if not isinstance(route, Mapping):
+                    raise ValueError("display route controls must be mappings")
+                controls[column] = {**controls.get(column, {}), **route}
+            drawing["display_routes"] = controls
+        return self.presentation_checkpoint(drawing, base_revision=base_revision, geometry=geometry)
 
     def replace_node(self, node_id: str, replacement: Projector, *, base_revision: int,
                      geometry: Mapping[str, float] | None = None) -> EditorState:

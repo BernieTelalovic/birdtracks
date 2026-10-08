@@ -390,6 +390,10 @@ def test_optional_widget_contains_synchronised_graph_and_positions() -> None:
     for section in ("nodes", "connections", "external_inputs", "external_outputs"):
         for item in graph[section]:
             item.pop("editor_id", None)
+    assert graph['display'].pop('column_ids') == [widget.editor_state['node_ids'][column[0]]
+                                                 for column in graph['display']['operator_columns']]
+    for strand in graph['display']['strands']:
+        assert strand.pop('editor_id') in widget.editor_state['strand_ids']
     assert graph == {
         **widget_graph(projector),
         "term_sign": "",
@@ -1371,7 +1375,7 @@ def test_compiled_free_strands_are_flat_across_each_bypassed_sa_column() -> None
         "function redraw()", 1
     )[0]
 
-    assert "String(strand.strand_label)" in drawing
+    assert "displayRouteLevel(column, strand.strand_label)" in drawing
     assert "xForNode(n)>low && xForNode(n)<high" in drawing
     assert "start.x>end.x ? right : left" in drawing
     assert "start.x>end.x ? left : right" in drawing
@@ -1390,10 +1394,10 @@ def test_compiled_free_strands_keep_their_evaluate_drag_handles() -> None:
         "function redraw()", 1
     )[0]
 
-    assert "boundaryLabel: connection.boundary_label" in source
-    assert "Number(connection.boundaryLabel) === Number(strand.strand_label)" in drawing
-    assert "Object.hasOwn(connection.route || {}, String(node.layer))" in drawing
-    assert "drawRouteHandle(handles, liveConnection, node.layer, {" in drawing
+    assert "sharedState && displayStrandPosition(strand, column)" in drawing
+    assert "drawRouteHandle(handles, null, node.layer, {" in drawing
+    assert "strandId: strand.editor_id" in drawing
+    assert '"data-free-strand": display.strandId' in source
     assert "displayX: x" in drawing
     assert "display?.displayX ?? xForLayer(layer)" in source
     assert "function reorderDisplayColumn(" in source
@@ -1482,8 +1486,7 @@ def test_generated_equation_rows_pack_free_lines_around_visible_sa_columns() -> 
         graph = editor.graph
         spacing = graph["geometry"]["level_spacing"]
         top = graph["geometry"]["top_line_level"]
-        for column in graph["display"]["operator_columns"]:
-            exact_layer = str(graph["nodes"][column[0]]["layer"])
+        for display_index, column in enumerate(graph["display"]["operator_columns"]):
             occupied: set[int] = set()
             for node_index in column:
                 node = graph["nodes"][node_index]
@@ -1492,7 +1495,7 @@ def test_generated_equation_rows_pack_free_lines_around_visible_sa_columns() -> 
                     (centre - top) / spacing - (len(node["labels"]) - 1) / 2
                 )
                 occupied.update(range(start, start + len(node["labels"])))
-            free = set(graph["free_levels"][exact_layer].values())
+            free = set(graph["display_free_levels"][str(display_index)].values())
             assert occupied.isdisjoint(free)
             assert occupied | free == set(range(len(graph["boundary_labels"])))
 
@@ -1920,7 +1923,12 @@ def test_saved_configuration_rebuilds_stale_display_routing() -> None:
 
     reopened = configuration.evaluate(detangler=False)._term_editors[0]  # type: ignore[attr-defined]
 
-    assert reopened.graph["display"] == widget_graph(source)["display"]  # type: ignore[attr-defined]
+    display = deepcopy(reopened.graph['display'])  # type: ignore[attr-defined]
+    assert display.pop('column_ids') == [reopened.editor_state['node_ids'][column[0]]
+                                        for column in display['operator_columns']]
+    for strand in display['strands']:
+        assert strand.pop('editor_id') in reopened.editor_state['strand_ids']
+    assert display == widget_graph(source)['display']
 
 
 def test_explicit_canvas_session_creates_and_resumes(tmp_path: Path) -> None:

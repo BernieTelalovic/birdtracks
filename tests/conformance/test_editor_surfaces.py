@@ -177,6 +177,38 @@ def test_detached_inline_editor_cannot_overwrite_a_reused_occurrence(tmp_path):
 
 
 @pytest.mark.parametrize("kind", ["widget", "canvas", "generated", "inline", "parsed", "symbolic"])
+def test_display_corridor_transaction_and_history_roundtrip(kind, tmp_path):
+    child, value, reopen, original = surface(kind, Fraction(-2, 3), tmp_path / "corridor.whiteboard")
+    before = deepcopy(child.editor_state)
+    anchor = before['graph']['display']['column_ids'][0]
+    strand = next(item['editor_id'] for item in before['graph']['external_inputs'] if item['boundary_label'] == 4)
+    drawing = child._editor_session.state.presentation
+    # Swap the free line above A, with the operator shifted down one row in
+    # the SAME transaction, as the existing frontend packing gesture does.
+    drawing['positions']['0']['y'] += before['graph']['geometry']['level_spacing']
+    with patch.object(Projector, 'collapse', side_effect=AssertionError('interactive collapse')):
+        send(child, 'reroute', display_changes={anchor: {strand: 0}}, presentation=drawing)
+    accepted = deepcopy(child.editor_state)
+    assert len(child._editor_session._undo) == 1
+    assert accepted['graph']['display_free_levels']['0']['4'] == 0
+    assert accepted['positions']['1'] == before['positions']['1']
+    assert accepted['node_ids'] == before['node_ids']
+    assert accepted['strand_ids'] == before['strand_ids']
+    assert value().collapse() == original.collapse()
+    send(child, 'save')
+    loaded = reopen()
+    assert loaded.editor_state['display_routes'] == accepted['display_routes']
+    assert loaded.editor_state['graph']['display_free_levels'] == accepted['graph']['display_free_levels']
+    assert loaded.editor_state['positions'] == accepted['positions']
+    send(loaded, 'undo')
+    assert loaded.editor_state['positions'] == before['positions']
+    assert loaded.editor_state['graph']['display_free_levels'] == before['graph']['display_free_levels']
+    send(loaded, 'redo')
+    assert loaded.editor_state['display_routes'] == accepted['display_routes']
+    assert loaded.editor_state['positions'] == accepted['positions']
+
+
+@pytest.mark.parametrize("kind", ["widget", "canvas", "generated", "inline", "parsed", "symbolic"])
 def test_structural_presentation_and_replacement_roundtrip(kind, tmp_path):
     child, value, reopen, original = surface(kind, Fraction(-2, 3), tmp_path / "structural.whiteboard")
     before = deepcopy(child.editor_state)

@@ -67,6 +67,24 @@ derives missing corridors against committed positions; it cannot install a
 fresh default layout into editor state. Full placement reset is an explicit,
 undoable `tidy` command.
 
+Evaluate free-line controls use `presentation.display_routes`: stable column
+anchor node ID → stable input-boundary strand ID → nonnegative integer row.
+A packed display column is NOT an algebra layer, and an output boundary label
+is NOT necessarily the strand's input identity through a permutation. The
+adapter annotates the display projection with these identities; JavaScript
+previews their rows and submits one `reroute` transaction, including any column
+packing positions. Python validates the free-strand/column domain, reserves
+manual rows before defaults, and repairs collisions before commit. Every free
+strand has a handle, including automatically allocated ones.
+
+Structural transfer remaps column anchors by surviving members and strands by
+their explicit IDs. Only invalidated controls are repaired. `free_levels` and
+concrete algebra-layer `strand_routes` remain isolated to Create/legacy hints;
+Evaluate rendering never writes its packed columns back into those namespaces.
+The optional presentation field is carried by the existing editor payload and
+history, so widget configuration, canvas JSON, and whiteboard formats require
+no format-version change. Tidy clears both routing namespaces explicitly.
+
 Display columns express dependencies, not a promise that all their members have
 the same saved x-coordinate. The frontend's geometric routing traverses actual
 occupied box slabs, including staggered operators in endpoint columns, and keeps

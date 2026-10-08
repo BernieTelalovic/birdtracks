@@ -1435,6 +1435,25 @@ function renderCreator({ model, el }) {
   // Python supplies this read-only plan for evaluate mode. Creator cleanup
   // operates on the live graph only and never rewrites compiled display data.
   let displayGraph = template.display || {};
+  // Evaluate corridors use stable display-column/input-strand identities.
+  // Concrete Create routes remain indexed by algebra layers below.
+  let displayRoutes = projectedDisplayRoutes();
+  function projectedDisplayRoutes() {
+    const routes = structuredClone(sharedState?.display_routes || {});
+    for (const [column, anchor] of (displayGraph.column_ids || []).entries()) {
+      routes[anchor] ||= {};
+      for (const strand of displayGraph.strands || []) {
+        const row = template.display_free_levels?.[String(column)]?.[String(strand.strand_label)];
+        if (row !== undefined) routes[anchor][strand.editor_id] = row;
+      }
+    }
+    return routes;
+  }
+  function displayRouteLevel(column, label) {
+    const strand = (displayGraph.strands || []).find(s => Number(s.strand_label) === Number(label));
+    return displayRoutes[displayGraph.column_ids?.[column]]?.[strand?.editor_id]
+      ?? template.display_free_levels?.[String(column)]?.[String(label)];
+  }
   const geometry = template.geometry;
   const spacing = geometry.level_spacing;
   const nodeWidth = geometry.node_width;
@@ -1667,7 +1686,7 @@ function renderCreator({ model, el }) {
   const editorQueue = editorTransport.queue;
 
   function presentationSnapshot(overrides = {}) {
-    return Object.fromEntries(["positions", "free_levels", "boundary_orders", "line_colors", "strand_routes"]
+    return Object.fromEntries(["positions", "free_levels", "boundary_orders", "line_colors", "strand_routes", "display_routes"]
       .map(key => [key, structuredClone(overrides[key] || sharedState?.[key] || model.get(key) || {})]));
   }
 
@@ -1701,6 +1720,7 @@ function renderCreator({ model, el }) {
     undoStack.length = 0;
     template = next.graph;
     displayGraph = template.display || {};
+    displayRoutes = projectedDisplayRoutes();
     compiledDisplayValid = null;
     // Reconcile concrete topology from the accepted envelope, never from
     // frontend trait callbacks or canonical object matching.
@@ -1774,6 +1794,7 @@ function renderCreator({ model, el }) {
     return {
       nodes: structuredClone(nodes),
       connections: structuredClone(connections),
+      displayRoutes: structuredClone(displayRoutes),
       nextLabel,
       coefficientNumerator,
       coefficientDenominator,
@@ -2496,6 +2517,7 @@ function renderCreator({ model, el }) {
     if (usesCompiledDisplay()) {
       return Math.max(
         boundaryLevelCount(),
+        ...Object.values(displayRoutes).flatMap(controls => Object.values(controls).map(row => Number(row)+1)),
         ...nodes
           .filter((node) => node.kind !== "permutation")
           .map((node) => node.level + node.labels.length),
@@ -2806,16 +2828,11 @@ function renderCreator({ model, el }) {
         const node = nodes[barrier.members[0]];
         const column = displayColumn(node.index);
         const x = (barrier.left+barrier.right)/2;
-        const liveConnection = connections.find((connection) =>
+        const legacyConnection = !sharedState && connections.find(connection =>
           Number(connection.boundaryLabel) === Number(strand.strand_label)
-          && Object.hasOwn(connection.route || {}, String(node.layer))
-        );
-        const assigned = liveConnection
-          ? routeLevel(liveConnection, node.layer)
-          : (template.display_free_levels?.[String(column)]
-             || template.free_levels?.[String(node.layer)])?.[
-              String(strand.strand_label)
-            ];
+          && Object.hasOwn(connection.route || {}, String(node.layer)));
+        const assigned = legacyConnection ? routeLevel(legacyConnection, node.layer)
+          : displayRouteLevel(column, strand.strand_label);
         const fraction = (x-start.x)/(end.x-start.x);
         let requestedLevel = Math.round(assigned === undefined
           ? (start.y + (end.y - start.y) * fraction - geometry.top_margin) / spacing
@@ -2833,12 +2850,17 @@ function renderCreator({ model, el }) {
           { x: start.x>end.x ? right : left, y },
           { x: start.x>end.x ? left : right, y },
         );
-        if (liveConnection) {
-          drawRouteHandle(handles, liveConnection, node.layer, {
+        if (sharedState && displayStrandPosition(strand, column)) {
+          drawRouteHandle(handles, null, node.layer, {
             displayX: x,
             displayColumn: column,
             strandLabel: strand.strand_label,
+            strandId: strand.editor_id,
+            level,
           });
+        } else if (legacyConnection) {
+          // shared_editor=False opts out of the Python command boundary.
+          drawRouteHandle(handles, legacyConnection, node.layer, {displayX: x});
         }
       }
       points.push(end);
@@ -3275,7 +3297,6 @@ function renderCreator({ model, el }) {
   ) {
     const nodeIndices = displayGraph.operator_columns[column] || [];
     if (!nodeIndices.length) return;
-    const exactLayer = nodes[nodeIndices[0]].layer;
     const freeLabels = [...new Set(
       (displayGraph.strands || [])
         .filter((strand) => displayStrandPosition(strand, column))
@@ -3286,13 +3307,9 @@ function renderCreator({ model, el }) {
       width: nodes[index].labels.length,
     }));
     for (const label of freeLabels) {
-      const routed = connections.find((connection) =>
-        Number(connection.boundaryLabel) === label
-        && Object.hasOwn(connection.route || {}, String(exactLayer))
-      );
-      if (routed) units.push({
+      units.push({
         kind: "free", value: label,
-        start: routeLevel(routed, exactLayer), width: 1,
+        start: displayRouteLevel(column, label), width: 1,
       });
     }
     units.sort((left, right) => left.start - right.start
@@ -3313,10 +3330,11 @@ function renderCreator({ model, el }) {
     let cursor = 0;
     for (const unit of units) {
       if (unit.kind === "node") nodes[unit.value].level = cursor;
-      else for (const connection of connections) {
-        if (Number(connection.boundaryLabel) === unit.value) {
-          connection.route[String(exactLayer)] = cursor;
-        }
+      else {
+        const strand = displayGraph.strands.find(s => Number(s.strand_label) === unit.value);
+        const anchor = displayGraph.column_ids[column];
+        displayRoutes[anchor] ||= {};
+        displayRoutes[anchor][strand.editor_id] = cursor;
       }
       cursor += unit.width;
     }
@@ -3327,10 +3345,11 @@ function renderCreator({ model, el }) {
 
   function drawRouteHandle(layerGroup, connection, layer, display = null) {
     const x = display?.displayX ?? xForLayer(layer);
+    const currentLevel = display?.level ?? routeLevel(connection, layer);
     const group = svgElement("g", { class: "birdtracks-creator-endpoint" });
     const hitTarget = svgElement("circle", {
       cx: x,
-      cy: yFor(routeLevel(connection, layer)),
+      cy: yFor(currentLevel),
       r: geometry.handle_radius * 2.25,
       fill: "transparent",
       stroke: "none",
@@ -3338,11 +3357,13 @@ function renderCreator({ model, el }) {
       class: "birdtracks-route-handle",
       "data-free-connection": connections.indexOf(connection),
       "data-free-layer": layer,
+      ...(display ? {"data-free-column": display.displayColumn,
+        "data-free-strand": display.strandId, "data-strand-label": display.strandLabel} : {}),
       "aria-label": `Move connection at layer ${layer}`,
     });
     const visible = svgElement("circle", {
       cx: x,
-      cy: yFor(routeLevel(connection, layer)),
+      cy: yFor(currentLevel),
       r: geometry.handle_radius,
       class: "birdtracks-creator-port-visual",
     });
@@ -3354,7 +3375,7 @@ function renderCreator({ model, el }) {
       event.stopPropagation();
       hitTarget.setPointerCapture?.(event.pointerId);
       const before = snapshotEditorState();
-      const originLevel = routeLevel(connection, layer);
+      const originLevel = currentLevel;
       let snappedLevel = originLevel;
       let moved = false;
       const startX = event.clientX;
@@ -3380,6 +3401,7 @@ function renderCreator({ model, el }) {
           // strand never sits underneath the operator waiting for pointerup.
           nodes = structuredClone(before.nodes);
           connections = structuredClone(before.connections);
+          displayRoutes = structuredClone(before.displayRoutes);
           reorderDisplayColumn(
             display.displayColumn, "free", display.strandLabel,
             originLevel, snappedLevel,
@@ -3409,6 +3431,7 @@ function renderCreator({ model, el }) {
         document.removeEventListener("pointerup", finish);
         document.removeEventListener("pointercancel", cancel);
         nodes = before.nodes; connections = before.connections;
+        displayRoutes = before.displayRoutes;
         redraw();
       }
       document.addEventListener("pointermove", move);
@@ -3911,7 +3934,7 @@ function renderCreator({ model, el }) {
         // otherwise upward and downward drags look stationary to the sorter.
         node.level = origin.level;
         const column = usesCompiledDisplay() ? displayColumn(node.index) : -1;
-        if (column >= 0) {
+        if (column >= 0 && displayGraph.column_ids?.[column]) {
           reorderDisplayColumn(
             column, "node", node.index, origin.level, requestedLevel,
           );
@@ -3956,6 +3979,7 @@ function renderCreator({ model, el }) {
       document.removeEventListener("pointerup", finish);
       document.removeEventListener("pointercancel", cancel);
       nodes = before.nodes; connections = before.connections;
+      displayRoutes = before.displayRoutes;
       redraw();
     }
     document.addEventListener("pointermove", move);
@@ -4554,6 +4578,11 @@ function renderCreator({ model, el }) {
       }
     }
     if (sharedState) {
+      if (usesCompiledDisplay()) {
+        requestEditor(action, {presentation: presentationSnapshot({positions, display_routes: displayRoutes}),
+          ...(action === "reroute" ? {display_changes: structuredClone(displayRoutes)} : {})});
+        return;
+      }
       const strandRoutes = Object.fromEntries(connections.filter(c=>c.editorId).map(c=>[c.editorId,c.route || {}]));
       requestEditor(action, {presentation: presentationSnapshot({positions, free_levels: freeLevels, strand_routes:strandRoutes}),
         ...(action === "reroute" ? {changes:Object.fromEntries(connections

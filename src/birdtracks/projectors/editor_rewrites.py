@@ -115,10 +115,12 @@ def transition(before: EditorState, projector: Projector, node_ids: Sequence[str
                    presentation_json=_presentation(projector, presentation),
                    selection=tuple(i for i in before.selection if i in (*node_ids, *strand_ids)),
                    revision=0 if branch else before.revision)
-    from .editor_presentation import rewrite_colors, rewrite_routes
+    from .editor_presentation import rewrite_colors, rewrite_routes, rewrite_display_routes
 
     presentation["line_colors"] = rewrite_colors(before, candidate)
     presentation["strand_routes"] = rewrite_routes(before, candidate, geometry)
+    if "display_routes" in presentation:
+        presentation["display_routes"] = rewrite_display_routes(before, candidate, geometry)
     return replace(candidate, presentation_json=_presentation(projector, presentation))
 
 

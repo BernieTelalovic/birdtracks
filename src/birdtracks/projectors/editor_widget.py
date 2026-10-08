@@ -84,15 +84,16 @@ def attach_editor(editor: Any, outer_factor: Fraction = Fraction(1)) -> None:
             for item in graph[section]:
                 item["editor_id"] = strand_ids[side,item["boundary_label"],NodePort(**item["port"])]
         presentation = state.presentation
-        from .editor_presentation import column_routes
-        from .layout import _node_layers
+        from .editor_presentation import column_routes, display_route_domain
         graph["display_free_levels"] = column_routes(state,graph["geometry"])
-        # Disposable compatibility projection. Explicit concrete controls stay
-        # in the envelope; a render cannot replace the committed presentation.
+        domain = display_route_domain(state)
+        graph["display"]["column_ids"] = list(domain)
+        input_ids = {item["boundary_label"]: item["editor_id"] for item in graph["external_inputs"]}
+        for strand in graph["display"]["strands"]:
+            strand["editor_id"] = input_ids[strand["strand_label"]]
+        # Algebra-layer routes are only the compatibility/Create namespace.
+        # Packed display columns must not overwrite it or alias one another.
         graph["free_levels"] = deepcopy(presentation["free_levels"])
-        node_layers = _node_layers(state.projector)
-        for column,members in enumerate(graph["display"]["operator_columns"]):
-            graph["free_levels"][str(node_layers[members[0]])] = graph["display_free_levels"][str(column)]
         coefficient = state.displayed_coefficient
         if not isinstance(coefficient, Fraction):
             raise ValueError("this canvas slice renders rational prefactors; symbolic state is retained by the model")
@@ -170,15 +171,16 @@ def attach_editor(editor: Any, outer_factor: Fraction = Fraction(1)) -> None:
                     session.redo(base_revision=revision)
             elif action in {"presentation", "save"}:
                 session.presentation_checkpoint(request.get("presentation", session.state.presentation),
-                                                base_revision=revision)
+                                                base_revision=revision, geometry=editor.graph["geometry"])
             elif action == "move":
                 if "presentation" in request:
-                    session.presentation_checkpoint(request["presentation"], base_revision=revision)
+                    session.presentation_checkpoint(request["presentation"], base_revision=revision, geometry=editor.graph["geometry"])
                 else:
-                    session.move(request.get("changes", {}), base_revision=revision)
+                    session.move(request.get("changes", {}), base_revision=revision, geometry=editor.graph["geometry"])
             elif action == "reroute":
                 session.reroute(request.get("changes", {}), base_revision=revision,
-                                presentation=request.get("presentation"))
+                                presentation=request.get("presentation"), display_changes=request.get("display_changes"),
+                                geometry=editor.graph["geometry"])
             elif action == "reconnect":
                 if editor.mode != "create":
                     raise ValueError("connectivity editing requires creation mode")
@@ -216,6 +218,7 @@ def attach_editor(editor: Any, outer_factor: Fraction = Fraction(1)) -> None:
                 drawing["positions"] = default_positions(session.state.projector, editor.graph["geometry"])
                 drawing["free_levels"] = widget_graph(session.state.projector, editor.graph["geometry"])["free_levels"]
                 drawing.pop("strand_routes", None)
+                drawing["display_routes"] = {}
                 session.presentation_checkpoint(drawing, base_revision=revision, automatic_layout=True)
             elif action == "creation":
                 if editor.mode != "create":

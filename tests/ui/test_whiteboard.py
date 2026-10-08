@@ -430,7 +430,7 @@ def test_moved_free_line_survives_click_away_and_lower_row_insert(page):
     }""", {'state': state, 'source': source})
     handle = page.locator('.birdtracks-route-handle').first
     playwright.expect(handle).to_be_attached()
-    before = page.evaluate("structuredClone(childModel.get('free_levels'))")
+    before = page.evaluate("structuredClone(childModel.get('editor_state').graph.display_free_levels)")
     box = handle.bounding_box()
     operator = page.locator('.birdtracks-antisymmetriser').first.bounding_box()
     page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
@@ -438,7 +438,7 @@ def test_moved_free_line_survives_click_away_and_lower_row_insert(page):
     page.mouse.move(box['x'] + box['width'] / 2, operator['y'], steps=5)
     page.mouse.up()
     page.wait_for_function("childModel.get('editor_state').revision>0")
-    moved = page.evaluate("structuredClone(childModel.get('free_levels'))")
+    moved = page.evaluate("structuredClone(childModel.get('editor_state').graph.display_free_levels)")
     assert moved != before
     page.locator('.birdtracks-whiteboard-title').click()
     page.evaluate("""() => model.set('blocks', [...model.get('blocks'),
@@ -446,7 +446,8 @@ def test_moved_free_line_survives_click_away_and_lower_row_insert(page):
     page.locator('[data-block-id="lower"] textarea').fill('xy')
     page.locator('.birdtracks-whiteboard-title').click()
     assert page.evaluate('mounts') == 1
-    assert page.evaluate("childModel.get('free_levels')") == moved
+    assert page.evaluate("childModel.get('editor_state').graph.display_free_levels") == moved
+    assert page.evaluate("Object.keys(childModel.get('editor_state').display_routes).length") > 0
 
 
 def test_unmounted_uncommitted_port_traits_cannot_rewrite_source(page):
