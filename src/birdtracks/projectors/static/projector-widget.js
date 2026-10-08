@@ -295,7 +295,10 @@ function renderYoungCreator({ model, el, visible = false }) {
   termsRow.className = "birdtracks-young-terms";
   host.appendChild(termsRow);
   el.appendChild(host);
-  let expression = structuredClone(model.get("pair_expression"));
+  const usesDocumentPair = () => Boolean(el.closest?.('.birdtracks-whiteboard-embedded-pair')?._birdtracksDocumentPair);
+  let pairCommitted = usesDocumentPair() && model.get('pair_editor_state')?.version
+    ? structuredClone(model.get('pair_editor_state')) : null;
+  let expression = structuredClone(pairCommitted?.value || model.get("pair_expression"));
   let activeTerm = 0;
   let insertionPoint = null;
   const insertionMarker = document.createElement("div");
@@ -339,6 +342,17 @@ function renderYoungCreator({ model, el, visible = false }) {
   function pairCellStyleKey(termIndex, cell) {
     return `${termIndex}:${cell.side}:${cell.row}:${cell.column}`;
   }
+  function pairStyles() {
+    const anchor = el.closest?.('.birdtracks-whiteboard-embedded-pair');
+    return anchor?._birdtracksPendingPairStyles || pairCommitted?.styles || model.get('pair_cell_styles') || {};
+  }
+  function publishPair(value = null, styles = null) {
+    const command = el.closest?.('.birdtracks-whiteboard-embedded-pair')?._birdtracksDocumentPair;
+    if (command) { command(value,styles); return; }
+    if (value) model.set('pair_expression',structuredClone(value));
+    if (styles) model.set('pair_cell_styles',structuredClone(styles));
+    model.save_changes();
+  }
   function paintBox(termIndex, cell) {
     const color = paintbrushColor();
     if (!color) return false;
@@ -348,11 +362,10 @@ function renderYoungCreator({ model, el, visible = false }) {
         && Number(item.dataset.column) === cell.column);
     if (!target) return false;
     target.style.fill = color;
-    const styles = structuredClone(model.get("pair_cell_styles") || {});
+    const styles = structuredClone(pairStyles());
     const key = pairCellStyleKey(termIndex, cell);
     styles[key] = { ...(styles[key] || {}), fill: color };
-    model.set("pair_cell_styles", styles);
-    model.save_changes();
+    publishPair(null, styles);
     whiteboardPaintbrush().record?.(color);
     return true;
   }
@@ -468,8 +481,7 @@ function renderYoungCreator({ model, el, visible = false }) {
     history.push(structuredClone(expression));
     expression = next;
     selected = null;
-    model.set("pair_expression", structuredClone(expression));
-    model.save_changes();
+    publishPair(expression);
     redraw();
   }
   function replaceTerm(next) {
@@ -741,7 +753,7 @@ function renderYoungCreator({ model, el, visible = false }) {
         const rect = svgElement("rect", { x, y, width: box, height: box,
           class: "birdtracks-young-box", "data-row": cell.row, "data-column": cell.column,
           "data-side": cell.side });
-        const cellStyle = (model.get("pair_cell_styles") || {})[
+        const cellStyle = pairStyles()[
           pairCellStyleKey(termIndex, cell)
         ];
         if (cellStyle && typeof cellStyle === "object") {
@@ -959,8 +971,19 @@ function renderYoungCreator({ model, el, visible = false }) {
     }
   }
   const update = () => {
-    const next = model.get("pair_expression");
-    if (JSON.stringify(next) === JSON.stringify(expression)) return;
+    const accepted = model.get('pair_editor_state');
+    const previousStyles = JSON.stringify(pairCommitted?.styles);
+    if (usesDocumentPair() && accepted?.version) {
+      if (pairCommitted && accepted.revision < pairCommitted.revision) return;
+      pairCommitted = structuredClone(accepted);
+    } else pairCommitted = null;
+    const next = pairCommitted?.value || model.get("pair_expression");
+    const pending = el.closest?.('.birdtracks-whiteboard-embedded-pair')?._birdtracksPendingPair;
+    if (pending && JSON.stringify(next) !== JSON.stringify(pending)) return;
+    if (JSON.stringify(next) === JSON.stringify(expression)) {
+      if (JSON.stringify(pairCommitted?.styles) !== previousStyles) redrawGeometry();
+      return;
+    }
     cancelPendingCellClick();
     expression = structuredClone(next);
     activeTerm = Math.max(0, Math.min(activeTerm, expression.terms.length - 1));
@@ -970,7 +993,10 @@ function renderYoungCreator({ model, el, visible = false }) {
     labelEditor.hidden = true;
     redraw();
   };
+  const anchor = el.closest?.('.birdtracks-whiteboard-embedded-pair');
+  if (anchor) anchor._birdtracksAcceptPair = () => { update(); redrawGeometry(); };
   model.on("change:pair_expression", update);
+  model.on('change:pair_editor_state',update);
   // Geometry replies must not replace SVG nodes in the middle of a gesture.
   const redrawGeometry = () => { if (!pointerDown && !drag && editor.hidden && labelEditor.hidden) redraw(); };
   model.on("change:pair_drawing_state", redrawGeometry);
@@ -1018,8 +1044,7 @@ function renderYoungCreator({ model, el, visible = false }) {
         activeTerm = Math.max(0, Math.min(activeTerm, expression.terms.length - 1));
         selected = null;
         editor.hidden = true;
-        model.set("pair_expression", structuredClone(expression));
-        model.save_changes();
+        publishPair(expression);
         redraw();
       } else if (action === "zoom-in" || action === "zoom-out") {
         zoom = Math.max(0.5, Math.min(3, zoom * (action === "zoom-in" ? 1.2 : 1 / 1.2)));
@@ -1029,6 +1054,8 @@ function renderYoungCreator({ model, el, visible = false }) {
     dispose() {
       cancelPendingCellClick();
       model.off("change:pair_expression", update);
+      model.off('change:pair_editor_state',update);
+      if (anchor) delete anchor._birdtracksAcceptPair;
       model.off("change:pair_drawing_state", redrawGeometry);
       model.off("change:pair_cell_styles", redrawGeometry);
     },

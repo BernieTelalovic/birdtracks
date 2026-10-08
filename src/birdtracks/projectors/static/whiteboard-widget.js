@@ -511,6 +511,7 @@ function renderCommandSuggestion(source, target, sourceOffset = 0) {
     target.appendChild(prefixTarget);
   }
   const typed = document.createElement("span");
+  typed.className = "birdtracks-whiteboard-command-prefix";
   typed.textContent = suggestion.typed;
   typed.dataset.sourceStart = String(sourceOffset + suggestion.start);
   typed.dataset.sourceEnd = String(sourceOffset + suggestion.start + suggestion.typed.length);
@@ -703,7 +704,110 @@ async function renderWorkspace({ model, el, host, signal }) {
   };
 }
 
+const documentsByModel = new WeakMap();
+
+function documentTransportFor(model) {
+  if (documentsByModel.has(model)) return documentsByModel.get(model);
+  const transport = {state:structuredClone(model.get('document_state')),queue:[],pending:null,
+    drafts:new Map(),sequence:0,after:[],views:new Set()};
+  transport.send = () => {
+    if (transport.pending || !transport.queue.length) return;
+    transport.pending = transport.queue.shift();
+    model.set('document_request',{...transport.pending,base_revision:transport.state.revision});
+    model.save_changes();
+  };
+  transport.accept = () => {
+    const next = model.get('document_state');
+    if (!next?.version || next.revision < transport.state.revision) {
+      model.set('document_state',structuredClone(transport.state));
+      return;
+    }
+    transport.state = structuredClone(next);
+    for (const view of transport.views) view();
+  };
+  transport.feedback = () => {
+    const feedback = model.get('document_feedback'), pending = transport.pending;
+    if (!pending || feedback?.request_id !== pending.request_id) return;
+    transport.pending = null;
+    if (feedback.error?.startsWith('stale document command')) {
+      if (feedback.state && feedback.state.revision >= transport.state.revision)
+        transport.state = structuredClone(feedback.state);
+      transport.queue.unshift(pending);
+    } else if (pending.action === 'source'
+        && !transport.queue.some(c=>c.action==='source' && c.block_id===pending.block_id)) {
+      transport.drafts.delete(pending.block_id);
+    }
+    for (const view of transport.views) view(pending,feedback);
+    transport.send();
+    if (!transport.pending && !transport.queue.length)
+      for (const callback of transport.after.splice(0)) callback();
+  };
+  // Transport lives with the model, including periods with no mounted view.
+  model.on('change:document_state',transport.accept);
+  model.on('change:document_feedback',transport.feedback);
+  documentsByModel.set(model,transport);
+  return transport;
+}
+
 function renderWhiteboard({ model, el, host, signal }) {
+  const sharedDocument = model.get("document_state")?.version === 1;
+  const documentTransport = sharedDocument ? documentTransportFor(model) : null;
+  function applyDocumentPatch(blocks, command) {
+    if (command.action === "source") {
+      const existing = blocks.find(b=>b.id===command.block_id) || {id:command.block_id,source:""};
+      const draft = documentTransport.drafts.get(command.block_id);
+      // Pending text is a display draft, never a frontend algebraic commit.
+      const updated = {...existing, source:command.source,
+        source_edit:{...(existing.source_edit || {}),
+          ...(draft ? {error:draft.error} : {})}};
+      return blocks.some(b=>b.id===command.block_id)
+        ? blocks.map(b=>b.id===command.block_id ? updated : b) : [...blocks,updated];
+    }
+    if (command.action !== "blocks") return blocks;
+    const byId = new Map(blocks.map(b=>[b.id,{...b}]));
+    for (const change of command.changes) {
+      const block = {...(byId.get(change.id) || {id:change.id}), ...change.fields};
+      for (const field of change.remove) delete block[field];
+      byId.set(change.id,block);
+    }
+    return command.order.map(id=>byId.get(id));
+  }
+  function documentBlocks() {
+    if (!sharedDocument) return model.get("blocks") || [];
+    let blocks = structuredClone(documentTransport.state.blocks);
+    for (const command of [documentTransport.pending, ...documentTransport.queue]) {
+      if (command) blocks = applyDocumentPatch(blocks,command);
+    }
+    return blocks;
+  }
+  function sendDocumentCommand() {
+    documentTransport?.send();
+  }
+  function requestDocument(action, data) {
+    const request_id = `document:${model.model_id || "view"}:${Date.now()}:${++documentTransport.sequence}`;
+    documentTransport.queue.push({action,...structuredClone(data),request_id});
+    sendDocumentCommand();
+  }
+  function afterDocumentDrain(callback) {
+    if (!sharedDocument || !documentTransport.pending && !documentTransport.queue.length) { callback(); return; }
+    documentTransport.after.push(callback);
+  }
+  function writeBlocks(blocks) {
+    if (!sharedDocument) { model.set("blocks", blocks); return; }
+    const previous = new Map(documentBlocks().map(b=>[b.id,b]));
+    const changes = [];
+    for (const block of blocks) {
+      const old = previous.get(block.id) || {};
+      const fields = Object.fromEntries(Object.entries(block).filter(([key,value]) =>
+        key !== "source_edit" && JSON.stringify(value) !== JSON.stringify(old[key])));
+      const remove = Object.keys(old).filter(key=>key !== "source_edit" && !(key in block));
+      if (Object.keys(fields).length || remove.length) changes.push({id:block.id,fields,remove});
+    }
+    const order = blocks.map(b=>b.id);
+    if (!changes.length && JSON.stringify(order) === JSON.stringify([...previous.keys()])) return;
+    requestDocument("blocks",{changes,order});
+    renderBlocks();
+  }
   let activeEditorId = null;
   let pendingFocusBlockId = null;
   let pendingFocusAtEnd = false;
@@ -720,6 +824,7 @@ function renderWhiteboard({ model, el, host, signal }) {
   const embeddedAnchors = new Map();
   const root = document.createElement("section");
   root.className = "birdtracks-whiteboard-section";
+  root.classList.toggle("shared-document", sharedDocument);
   root.classList.add("paintbrush-active");
   const paintbrushState = {
     active: true,
@@ -1010,6 +1115,7 @@ function renderWhiteboard({ model, el, host, signal }) {
         const snapshot = child.get("save_snapshot");
         if (snapshot) snapshots.projectors[id] = structuredClone(snapshot);
       } else if (id.includes(":pair:")) {
+        if (sharedDocument) continue;
         const expression = child.get("pair_expression");
         if (expression) snapshots.pairs[id] = structuredClone(expression);
         snapshots.pairStyles[id] = structuredClone(child.get("pair_cell_styles") || {});
@@ -1019,7 +1125,7 @@ function renderWhiteboard({ model, el, host, signal }) {
         snapshots.backendColors[id] = structuredClone(child.get("line_colors") || {});
       }
     }
-    const blocks = (model.get("blocks") || []).map((block) => {
+    const blocks = documentBlocks().map((block) => {
       const updated = {...block};
       for (const [field, pattern] of [
         ["projector_snapshots", /\\birdtracks\b/g],
@@ -1069,23 +1175,27 @@ function renderWhiteboard({ model, el, host, signal }) {
       }
       return updated;
     });
-    model.set("blocks", blocks);
+    writeBlocks(blocks);
     model.save_changes();
   }
 
   function requestSave() {
     captureState();
-    model.set("save_request", Number(model.get("save_request") || 0) + 1);
-    model.save_changes();
+    afterDocumentDrain(() => {
+      model.set("save_request", Number(model.get("save_request") || 0) + 1);
+      model.save_changes();
+    });
   }
 
   function requestExport() {
     captureState();
     // Ensure an unchanged document still produces a model change and a fresh
     // download on every click.
-    model.set("export_content", "");
-    model.set("export_request", Number(model.get("export_request") || 0) + 1);
-    model.save_changes();
+    afterDocumentDrain(() => {
+      model.set("export_content", "");
+      model.set("export_request", Number(model.get("export_request") || 0) + 1);
+      model.save_changes();
+    });
   }
 
   saveButton.addEventListener("click", requestSave);
@@ -1264,7 +1374,7 @@ function renderWhiteboard({ model, el, host, signal }) {
     pendingCalculationViewport = {
       action: "evaluate",
       anchorId,
-      knownBlockIds: new Set((model.get("blocks") || []).map((item) => item.id)),
+      knownBlockIds: new Set(documentBlocks().map((item) => item.id)),
       scroller,
       scrollTop: scroller.scrollTop,
     };
@@ -1278,7 +1388,7 @@ function renderWhiteboard({ model, el, host, signal }) {
 
   function renderBlocks() {
     if (locallyUpdatingBlockId !== null) return;
-    const currentBlocks = model.get("blocks") || [];
+    const currentBlocks = documentBlocks();
     const cancelledResult = currentBlocks.find((block) => (
       Object.prototype.hasOwnProperty.call(block, "calculation_step")
       && cancelledCalculationGroups.has(connectionGroup(block))
@@ -1291,26 +1401,26 @@ function renderWhiteboard({ model, el, host, signal }) {
         && !Object.prototype.hasOwnProperty.call(block, "calculation_step")
       ));
       pendingRestoreBlockId = source?.id || null;
-      model.set("blocks", restoreCalculationGroup(currentBlocks, group));
+      writeBlocks(restoreCalculationGroup(currentBlocks, group));
       model.save_changes();
       return;
     }
     const displayBlocks = ensureTrailingBlank(currentBlocks);
-    const activeBlock = (model.get('blocks') || []).find(item => item.id === activeEditorId);
-    if (activeEditorId !== null && activeBlock && !activeBlock.read_only) {
+    const activeBlock = documentBlocks().find(item => item.id === activeEditorId);
+    if (!sharedDocument && activeEditorId !== null && activeBlock && !activeBlock.read_only) {
       for (const editor of list.querySelectorAll(".birdtracks-whiteboard-source")) {
-        const current = (model.get("blocks") || [])
+        const current = documentBlocks()
           .find((item) => item.id === editor.dataset.blockId);
         if (current) editor.disabled = Boolean(current.read_only);
       }
       return;
     }
-    activeEditorId = null;
+    if (!sharedDocument) activeEditorId = null;
     const renderScroller = scrollingViewport(list);
     const renderScrollTop = renderScroller.scrollTop;
     const focusedElement = document.activeElement;
     const focusedId = focusedElement?.closest?.('.birdtracks-whiteboard-block')?.dataset.blockId;
-    const oldBlock = (model.get('blocks') || []).find(item => item.id === focusedId);
+    const oldBlock = documentBlocks().find(item => item.id === focusedId);
     const existing = new Map([...list.children].map((row) => [row.dataset.blockId, row]));
     const retainedIds = new Set(displayBlocks.map((block) => block.id));
     for (const [id, row] of existing) {
@@ -1320,7 +1430,9 @@ function renderWhiteboard({ model, el, host, signal }) {
     }
     for (const [index, block] of displayBlocks.entries()) {
       let row = existing.get(block.id);
-      if (!row || row._birdtracksDisposed
+      if (sharedDocument && row && !row._birdtracksDisposed) {
+        row._birdtracksApplyBlock?.(block);
+      } else if (!row || row._birdtracksDisposed
           || row._birdtracksRenderKey !== blockRenderKey(block)) {
         row?.querySelector(".birdtracks-whiteboard-rendered")?._birdtracksCleanupBlock?.();
         row?.remove();
@@ -1478,7 +1590,7 @@ function renderWhiteboard({ model, el, host, signal }) {
     pendingRevealScroller = null;
     pendingRevealScrollTop = null;
     pendingRestoreBlockId = block.id;
-    model.set("blocks", restoreCalculationGroup(model.get("blocks") || [], group));
+    writeBlocks(restoreCalculationGroup(documentBlocks(), group));
     model.save_changes();
   }
 
@@ -1532,7 +1644,7 @@ function renderWhiteboard({ model, el, host, signal }) {
   }
 
   function alignContinuationBlocks() {
-    const blocks = model.get("blocks") || [];
+    const blocks = documentBlocks();
     const wrappers = [...list.querySelectorAll(".birdtracks-whiteboard-block")];
     for (let index = 0; index < blocks.length; index += 1) {
       const wrapper = wrappers[index];
@@ -1762,7 +1874,11 @@ function renderWhiteboard({ model, el, host, signal }) {
     caret.hidden = true;
     let caretPoint = null;
     let sourceMarkers = [];
-    let lastValidSource = "";
+    let lastRenderedSource = "";
+    const parseStatus = document.createElement("span");
+    parseStatus.className = "birdtracks-whiteboard-parse-status";
+    parseStatus.setAttribute("role", "status");
+    parseStatus.hidden = true;
     let activeFraction = null;
     let caretNavigationDirection = 0;
     let disposed = false;
@@ -1796,6 +1912,7 @@ function renderWhiteboard({ model, el, host, signal }) {
             const snapshot = child.get("editor_state")?.version === 1 ? null : child.get("save_snapshot");
             if (snapshot) snapshots.projectors[id] = structuredClone(snapshot);
           } else if (id.startsWith(`${item.id}:pair:`)) {
+            if (sharedDocument) continue;
             const expression = child.get("pair_expression");
             if (expression) snapshots.pairs[id] = structuredClone(expression);
           } else if (id.startsWith(`${item.id}:backend:`)) {
@@ -1846,13 +1963,13 @@ function renderWhiteboard({ model, el, host, signal }) {
     }
 
     wrapper._birdtracksCommitEmbeddedState = () => {
-      const currentBlocks = model.get("blocks") || [];
+      const currentBlocks = documentBlocks();
       const snapshots = saveEmbeddedState(currentBlocks.filter((item) => item.id === block.id));
       const blocks = storeEmbeddedSnapshots(currentBlocks, snapshots);
       if (blocks.every((item, index) => item === currentBlocks[index])) return;
       locallyUpdatingBlockId = block.id;
       try {
-        model.set("blocks", blocks);
+        writeBlocks(blocks);
         model.save_changes();
       } finally {
         locallyUpdatingBlockId = null;
@@ -1860,6 +1977,10 @@ function renderWhiteboard({ model, el, host, signal }) {
     };
 
     function requestCalculation(action) {
+      if (sharedDocument && (documentTransport.pending || documentTransport.queue.length)) {
+        afterDocumentDrain(()=>requestCalculation(action));
+        return;
+      }
       if (action === "evaluate" && !calculationPending.hidden) return;
       if (action === "evaluate") cancelledCalculationGroups.delete(connectionGroup(block));
       if (action === "evaluate") {
@@ -1883,7 +2004,7 @@ function renderWhiteboard({ model, el, host, signal }) {
       }
       const snapshots = {};
       if (action === "evaluate") {
-        const blocks = model.get("blocks") || [];
+        const blocks = documentBlocks();
         const selected = blocks.find((item) => item.id === block.id) || block;
         for (const item of blocks) {
           for (const [occurrence, snapshot] of Object.entries(
@@ -1899,7 +2020,7 @@ function renderWhiteboard({ model, el, host, signal }) {
         // earlier lines were committed when Enter created the following row.
         Object.assign(snapshots, saved.projectors);
       } else {
-        const blocks = model.get("blocks") || [];
+        const blocks = documentBlocks();
         const group = connectionGroup(block);
         const restored = blocks.find((item) => (
           connectionGroup(item) === group
@@ -2020,7 +2141,7 @@ function renderWhiteboard({ model, el, host, signal }) {
     }
 
     function backendMarkers(source) {
-      const currentBlock = (model.get("blocks") || [])
+      const currentBlock = documentBlocks()
         .find((item) => item.id === block.id) || block;
       const placeholders = [...source.matchAll(/R/g)].map((match) => match.index);
       return (currentBlock.backend_terms || [])
@@ -2168,7 +2289,20 @@ function renderWhiteboard({ model, el, host, signal }) {
       svg.setAttribute("viewBox", `0 0 ${available} ${wrappedHeight}`);
     }
 
+    function preserveNestedFocus() {
+      const focused = sharedDocument && rendered.contains(document.activeElement) ? document.activeElement : null;
+      const selection = focused && typeof focused.selectionStart === 'number'
+        ? [focused.selectionStart,focused.selectionEnd,focused.selectionDirection] : null;
+      if (focused) queueMicrotask(() => {
+        if (!focused.isConnected || disposed) return;
+        if (document.activeElement !== document.body && document.activeElement !== focused) return;
+        focused.focus({preventScroll:true});
+        if (selection) focused.setSelectionRange(...selection);
+      });
+    }
+
     function renderSource(source, editingIndex = null) {
+      preserveNestedFocus();
       // Replacing wide embedded content does not reliably reset an overflow
       // container's scroll position.  A stale scroll offset feeds directly
       // into continuation alignment and can produce enormous left padding.
@@ -2228,6 +2362,14 @@ function renderWhiteboard({ model, el, host, signal }) {
       const activeIds = new Set(
         markers.map((marker, index) => marker.id || embeddedKey(index)),
       );
+      if (sharedDocument) {
+        // A partially typed marker can hide its editor without deleting the
+        // Python-owned occurrence or its mounted frontend/caret state.
+        for (const id of [...(model.get('embedded_projector_ids') || []),
+          ...(model.get('embedded_pair_ids') || []), ...(model.get('backend_projector_ids') || [])]) {
+          activeIds.add(id);
+        }
+      }
       for (const [id, anchor] of embeddedAnchors) {
         if (!id.startsWith(`${block.id}:`) || activeIds.has(id)) continue;
         anchor?._birdtracksCleanup?.();
@@ -2398,7 +2540,17 @@ function renderWhiteboard({ model, el, host, signal }) {
           || rendered.querySelector(".birdtracks-whiteboard-fraction-source")) {
         return false;
       }
+      const rawIndex = editor.selectionDirection === 'backward'
+        ? editor.selectionStart : editor.selectionEnd;
+      if ([...rendered.querySelectorAll(
+        '.birdtracks-whiteboard-draft-text, .birdtracks-whiteboard-command-prefix',
+      )].some(element => direction < 0
+        ? Number(element.dataset.sourceStart) < rawIndex && rawIndex <= Number(element.dataset.sourceEnd)
+        : Number(element.dataset.sourceStart) <= rawIndex && rawIndex < Number(element.dataset.sourceEnd))) return false;
       const symbols = [...rendered.querySelectorAll("[data-source-start]")]
+        .filter(element => !element.matches(
+          '.birdtracks-whiteboard-draft-text, .birdtracks-whiteboard-command-prefix',
+        ))
         .filter((element) => !element.parentElement?.closest(
           "[data-source-start]",
         ))
@@ -2675,6 +2827,14 @@ function renderWhiteboard({ model, el, host, signal }) {
           if (disposed) return;
           if (anchor._birdtracksProjectorReference !== reference) continue;
           embeddedModels.set(anchor.dataset.projectorId, childModel);
+          if (sharedDocument && anchor.classList.contains('birdtracks-whiteboard-embedded-pair')) {
+            anchor._birdtracksDocumentPair = (value, styles = null) => {
+              if (value) anchor._birdtracksPendingPair = structuredClone(value);
+              if (styles) anchor._birdtracksPendingPairStyles = structuredClone(styles);
+              requestDocument('pair', {occurrence_id: anchor.dataset.projectorId,
+                ...(value ? {value} : {}), ...(styles ? {styles} : {})});
+            };
+          }
           updateEmbeddedModesForCaret();
           const marker = sourceMarkers.find((item, markerIndex) => (
             (item.id || embeddedKey(markerIndex)) === anchor.dataset.projectorId
@@ -2772,7 +2932,7 @@ function renderWhiteboard({ model, el, host, signal }) {
     }
 
     function updateEmbeddedModesForCaret() {
-      const current = (model.get("blocks") || []).find((item) => item.id === block.id) || block;
+      const current = documentBlocks().find((item) => item.id === block.id) || block;
       for (const [id, childModel] of embeddedModels) {
         if (!id.startsWith(`${block.id}:`)) continue;
         const mode = !current.read_only && id.startsWith(`${block.id}:projector:`)
@@ -2785,8 +2945,69 @@ function renderWhiteboard({ model, el, host, signal }) {
     }
     rendered._birdtracksMountEmbeddedProjectors = mountEmbeddedProjectors;
 
+    function clearParseError() {
+      wrapper.classList.remove("draft-error");
+      parseStatus.hidden = true;
+      editor.removeAttribute("aria-invalid");
+      rendered.classList.remove("error");
+    }
+
+    wrapper._birdtracksApplyBlock = next => {
+      if (disposed) return;
+      const selection = [editor.selectionStart, editor.selectionEnd, editor.selectionDirection];
+      const changed = editor.value !== (next.source || "");
+      const previous = block;
+      block = next;
+      wrapper.classList.toggle('continuation',isContinuationSource(next.source || ''));
+      wrapper._birdtracksRenderKey = blockRenderKey(next);
+      editor.disabled = Boolean(next.read_only);
+      wrapper.classList.toggle("calculation-read-only", Boolean(next.read_only));
+      if (changed) {
+        const before = editor.value, after = next.source || "";
+        let prefix = 0, suffix = 0;
+        while (prefix < Math.min(before.length,after.length) && before[prefix] === after[prefix]) prefix++;
+        while (suffix < Math.min(before.length,after.length)-prefix
+            && before[before.length-1-suffix] === after[after.length-1-suffix]) suffix++;
+        const mapIndex = index => index <= prefix ? index
+          : index >= before.length-suffix ? index+after.length-before.length
+          : prefix+Math.min(index-prefix,after.length-prefix-suffix);
+        editor.value = after;
+        editor.setSelectionRange(mapIndex(selection[0]),mapIndex(selection[1]),selection[2]);
+      }
+      if (next.source_edit?.error) {
+        renderInvalidSource(editor.value, new Error(next.source_edit.error));
+      } else if (changed || previous.calculation_svg !== next.calculation_svg
+          || JSON.stringify(previous.backend_terms) !== JSON.stringify(next.backend_terms)) {
+        try { renderSource(editor.value, document.activeElement === editor ? editor.selectionStart : null);
+          lastRenderedSource = editor.value; clearParseError(); }
+        catch (error) { renderInvalidSource(editor.value,error); }
+      }
+      if (document.activeElement === editor && !changed) editor.setSelectionRange(...selection);
+    };
+
     function updateSource(source, editingIndex = null) {
-      const currentBlocks = model.get("blocks") || [];
+      if (sharedDocument) {
+        wrapper.classList.toggle('continuation',isContinuationSource(source));
+        let error = "";
+        try {
+          renderSource(source, editingIndex);
+          lastRenderedSource = source;
+          clearParseError();
+        } catch (failure) {
+          error = failure.message;
+          renderInvalidSource(source, failure);
+        }
+        const current = documentBlocks().find(b=>b.id===block.id);
+        if (current?.source !== source || !current?.source_edit) {
+          documentTransport.drafts.set(block.id, {source,error});
+          requestDocument("source",{block_id:block.id,source});
+        }
+        wrapper._birdtracksRenderKey = blockRenderKey({...block,source});
+        rendered.hidden = false;
+        scheduleContinuationAlignment();
+        return;
+      }
+      const currentBlocks = documentBlocks();
       const blockIndex = currentBlocks.findIndex((item) => item.id === block.id);
       const previous = blockIndex > 0 ? currentBlocks[blockIndex - 1] : null;
       const lineId = isContinuationSource(source) && previous
@@ -2827,7 +3048,7 @@ function renderWhiteboard({ model, el, host, signal }) {
       );
       locallyUpdatingBlockId = block.id;
       try {
-        model.set("blocks", blocks);
+        writeBlocks(blocks);
         model.save_changes();
       } finally {
         locallyUpdatingBlockId = null;
@@ -2837,7 +3058,7 @@ function renderWhiteboard({ model, el, host, signal }) {
       try {
         renderSource(source, editingIndex);
         scheduleContinuationAlignment();
-        lastValidSource = source;
+        lastRenderedSource = source;
         rendered.classList.remove("error");
       } catch (error) {
         renderInvalidSource(source, error);
@@ -2846,6 +3067,22 @@ function renderWhiteboard({ model, el, host, signal }) {
     }
 
     function renderInvalidSource(source, error) {
+      preserveNestedFocus();
+      if (sharedDocument) {
+        wrapper.classList.add("draft-error");
+        parseStatus.hidden = false;
+        parseStatus.textContent = `Draft: ${error.message}`;
+        parseStatus.title = error.message;
+        editor.setAttribute("aria-invalid", "true");
+        // Completion and trailing operators retain the existing in-place
+        // geometry. Other invalid notation is editable raw text on that same
+        // surface; Python retains the last valid value, not a second preview.
+        if (projectorCommandSuggestion(source)
+            || /(?:[+*/=^-]|\\(?:oplus|otimes|times|def))\s*$/.test(source)) {
+          try { renderSource(source, document.activeElement === editor ? editor.selectionStart : null); return; }
+          catch (_) { /* Use the raw source surface below. */ }
+        }
+      }
       rendered.scrollLeft = 0;
       rendered.replaceChildren();
       const markers = [
@@ -2857,23 +3094,28 @@ function renderWhiteboard({ model, el, host, signal }) {
       editor.style.zIndex = markers.length ? "0" : "2";
       const invalid = document.createElement("span");
       invalid.className = "birdtracks-whiteboard-invalid-source";
-      invalid.dataset.sourceStart = "0";
-      invalid.dataset.sourceEnd = String(source.length);
       invalid.title = error.message;
       invalid.setAttribute("aria-label", `${source}: ${error.message}`);
+      function appendDraftText(start, end) {
+        const text = document.createElement('span');
+        text.className = 'birdtracks-whiteboard-draft-text';
+        text.dataset.sourceStart = String(start);
+        text.dataset.sourceEnd = String(end);
+        text.textContent = source.slice(start,end);
+        invalid.appendChild(text);
+      }
       let position = 0;
       markers.forEach((marker, index) => {
         const visibleStart = markerDisplayStart(marker);
         if (visibleStart > position) {
-          invalid.appendChild(document.createTextNode(source.slice(position, visibleStart)));
+          appendDraftText(position,visibleStart);
         }
         invalid.appendChild(embeddedMarkerAnchor(marker, index));
         position = marker.end;
       });
       if (position < source.length) {
-        invalid.appendChild(document.createTextNode(source.slice(position)));
+        appendDraftText(position,source.length);
       }
-      if (!markers.length) invalid.textContent = source;
       rendered.appendChild(invalid);
       sourceMarkers = markers;
       mountEmbeddedProjectors();
@@ -2884,7 +3126,7 @@ function renderWhiteboard({ model, el, host, signal }) {
       if (event.key !== "Enter") return;
       event.preventDefault();
       event.stopPropagation();
-      const currentBlocks = model.get("blocks") || [];
+      const currentBlocks = documentBlocks();
       const blockIndex = currentBlocks.findIndex((item) => item.id === block.id);
       if (blockIndex < 0) return;
       const start = editor.selectionStart;
@@ -2915,7 +3157,7 @@ function renderWhiteboard({ model, el, host, signal }) {
       // before pressing Enter.
       const snapshots = saveEmbeddedState(currentBlocks);
       blocks = storeEmbeddedSnapshots(blocks, snapshots);
-      model.set("blocks", blocks);
+      writeBlocks(blocks);
       model.save_changes();
       focusBlock(newId, 0, false, true);
     }
@@ -2937,7 +3179,7 @@ function renderWhiteboard({ model, el, host, signal }) {
     function mergeWithPreviousBlock(event) {
       if (event.key !== "Backspace") return;
       if (editor.selectionStart !== 0 || editor.selectionEnd !== 0) return;
-      const currentBlocks = model.get("blocks") || [];
+      const currentBlocks = documentBlocks();
       const blockIndex = currentBlocks.findIndex((item) => item.id === block.id);
       if (blockIndex < 0) {
         if (editor.value || !currentBlocks.length) return;
@@ -2957,7 +3199,7 @@ function renderWhiteboard({ model, el, host, signal }) {
         event.preventDefault();
         event.stopPropagation();
         activeEditorId = null;
-        model.set("blocks", remaining);
+        writeBlocks(remaining);
         model.save_changes();
         focusBlock(destination.id, 0, destination === previous);
         return;
@@ -2980,7 +3222,7 @@ function renderWhiteboard({ model, el, host, signal }) {
       event.preventDefault();
       event.stopPropagation();
       activeEditorId = null;
-      model.set("blocks", merged);
+      writeBlocks(merged);
       model.save_changes();
       focusBlock(previous.id, 0, true);
     }
@@ -3008,14 +3250,14 @@ function renderWhiteboard({ model, el, host, signal }) {
       activeEditorId = block.id;
       editor.hidden = false;
       rendered.hidden = false;
-      rendered.classList.remove("error");
+      if (!sharedDocument) rendered.classList.remove("error");
       wrapper.classList.add("editing");
       try {
         // Keep the typeset fraction available until pointerup maps the click
         // to its numerator or denominator. Keyboard/programmatic focus can
         // still reveal the source immediately.
         if (caretPoint === null) renderEditingSelection();
-        lastValidSource = editor.value;
+        if (!wrapper.classList.contains("draft-error")) lastRenderedSource = editor.value;
       } catch (error) {
         renderInvalidSource(editor.value, error);
         rendered.classList.add("error");
@@ -3118,10 +3360,14 @@ function renderWhiteboard({ model, el, host, signal }) {
       });
     });
     function renderEditingSelection() {
+      if (sharedDocument && wrapper.classList.contains("draft-error")) {
+        renderInvalidSource(editor.value, new Error(parseStatus.title));
+        return;
+      }
       // Moving through ordinary text does not change its presentation. Keep
       // live widgets attached: detaching them can blur their controls mid-gesture.
       const index = editor.selectionStart;
-      if (editor.value === lastValidSource && !activeFraction
+      if (editor.value === lastRenderedSource && !activeFraction
           && !fractionRangeAt(editor.value, index)
           && !(index > 0 && fractionRangeAt(editor.value, index - 1))) return;
       renderSource(editor.value, index);
@@ -3158,13 +3404,13 @@ function renderWhiteboard({ model, el, host, signal }) {
       box.style.fill = color;
       const cellKey = cell.dataset.cell;
       if (cellKey) {
-        const blocks = (model.get("blocks") || []).map((item) => {
+        const blocks = documentBlocks().map((item) => {
           if (item.id !== block.id) return item;
           const styles = structuredClone(item.calculation_cell_styles || {});
           styles[cellKey] = { ...(styles[cellKey] || {}), fill: color };
           return { ...item, calculation_cell_styles: styles };
         });
-        model.set("blocks", blocks);
+        writeBlocks(blocks);
         model.save_changes();
       }
       state.record?.(color);
@@ -3210,13 +3456,13 @@ function renderWhiteboard({ model, el, host, signal }) {
         // whiteboard reaches a checkpoint. Persist them before inserting the
         // new row, because the blocks update below remounts every child.
         wrapper._birdtracksCommitEmbeddedState?.();
-        const blocks = [...(model.get('blocks') || [])];
+        const blocks = [...documentBlocks()];
         const related = blocks.map((item, index) => ({item, index}))
           .filter(({item}) => item.calculation_group === block.calculation_group);
         const index = event.ctrlKey ? related[0].index : related.at(-1).index + 1;
         const id = nextBlockId(blocks);
         blocks.splice(index, 0, {id, source: '', line_id: id});
-        model.set('blocks', blocks);
+        writeBlocks(blocks);
         model.save_changes();
         focusBlock(id, 0, false, true);
         return;
@@ -3236,12 +3482,14 @@ function renderWhiteboard({ model, el, host, signal }) {
         editor.focus();
       }
     });
-    wrapper.append(editor, rendered, calculationPending, caret);
+    wrapper.append(editor, rendered, parseStatus, calculationPending, caret);
     list.appendChild(wrapper);
     editorBasePaddingTop = parseFloat(getComputedStyle(editor).paddingTop) || 0;
     try {
-      renderSource(editor.value);
-      lastValidSource = editor.value;
+      const source = editor.value;
+      renderSource(source);
+      lastRenderedSource = source;
+      if (block.source_edit?.error) renderInvalidSource(editor.value, new Error(block.source_edit.error));
       // Keep the transparent textarea over ordinary rendered text. The
       // browser can then place its native caret exactly where the user clicks,
       // while the MathML below remains the visible representation.
@@ -3250,7 +3498,7 @@ function renderWhiteboard({ model, el, host, signal }) {
       renderInvalidSource(editor.value, error);
       rendered.classList.add("error");
     }
-    if (!block._trailing_blank && !editor.value && (model.get("blocks") || []).length === 1) {
+    if (!block._trailing_blank && !editor.value && documentBlocks().length === 1) {
       editor.autofocus = true;
       requestAnimationFrame(() => {
         if (!editor.isConnected || editor.value || title.matches(":focus")) return;
@@ -3260,7 +3508,36 @@ function renderWhiteboard({ model, el, host, signal }) {
     }
   }
 
-  model.on("change:blocks", renderBlocks);
+  function documentChanged(pending = null, feedback = null) {
+    if (!pending) { renderBlocks(); return; }
+    if (pending.action === 'pair' && !documentTransport.queue.some(c=>c.action==='pair' && c.occurrence_id===pending.occurrence_id)) {
+      const anchor = embeddedAnchors.get(pending.occurrence_id);
+      if (anchor) {
+        delete anchor._birdtracksPendingPair;
+        delete anchor._birdtracksPendingPairStyles;
+        anchor._birdtracksAcceptPair?.();
+      }
+    }
+    if (feedback.error) {
+      if (!feedback.error.startsWith("stale document command")) {
+        const row = [...list.children].find(r=>r.dataset.blockId===pending.block_id);
+        row?.querySelector('.birdtracks-whiteboard-parse-status')?.setAttribute('title',feedback.error);
+      }
+    }
+    renderBlocks();
+  }
+  function activateInline(event) {
+    if (!sharedDocument) return;
+    const anchor = event.target.closest?.('.birdtracks-whiteboard-embedded-projector');
+    for (const item of root.querySelectorAll('.birdtracks-whiteboard-embedded-projector')) {
+      item.classList.toggle('inline-active', item === anchor);
+    }
+  }
+  document.addEventListener('pointerdown',activateInline,true);
+  document.addEventListener('focusin',activateInline,true);
+  documentTransport?.views.add(documentChanged);
+  const blocksChanged = () => { if (!sharedDocument) renderBlocks(); };
+  model.on("change:blocks", blocksChanged);
   const refreshEmbeddedProjectors = () => {
     for (const renderedBlock of list.querySelectorAll(
       ".birdtracks-whiteboard-rendered",
@@ -3276,6 +3553,11 @@ function renderWhiteboard({ model, el, host, signal }) {
   model.on("change:embedded_pairs", refreshEmbeddedProjectors);
 
   renderBlocks();
+  if (sharedDocument) {
+    documentTransport.accept();
+    documentTransport.feedback();
+    sendDocumentCommand();
+  }
   return () => {
     for (const renderedBlock of list.querySelectorAll(
       ".birdtracks-whiteboard-rendered",
@@ -3290,7 +3572,10 @@ function renderWhiteboard({ model, el, host, signal }) {
     document.removeEventListener("scroll", queueToolbarPositionUpdate, true);
     view.removeEventListener("resize", queueToolbarPositionUpdate);
     if (toolbarFrame !== null) view.cancelAnimationFrame(toolbarFrame);
-    model.off("change:blocks", renderBlocks);
+    model.off("change:blocks", blocksChanged);
+    documentTransport?.views.delete(documentChanged);
+    document.removeEventListener('pointerdown',activateInline,true);
+    document.removeEventListener('focusin',activateInline,true);
     model.off("change:embedded_projector_ids", refreshEmbeddedProjectors);
     model.off("change:embedded_projectors", refreshEmbeddedProjectors);
     model.off("change:backend_projector_ids", refreshEmbeddedProjectors);

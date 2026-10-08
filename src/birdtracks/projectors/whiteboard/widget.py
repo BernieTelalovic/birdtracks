@@ -268,6 +268,9 @@ def whiteboard_section_widget(
 
         widget_role = traitlets.Unicode("whiteboard").tag(sync=True)
         blocks = traitlets.List(trait=traitlets.Dict()).tag(sync=True)
+        document_state = traitlets.Dict().tag(sync=True)
+        document_request = traitlets.Dict().tag(sync=True)
+        document_feedback = traitlets.Dict().tag(sync=True)
         title = traitlets.Unicode().tag(sync=True)
         embedded_projector_ids = traitlets.List(
             trait=traitlets.Unicode()
@@ -351,6 +354,67 @@ def whiteboard_section_widget(
     )
     widget.layout.width = "100%"
     widget.debug = debug
+    from .document import DocumentSession
+
+    document = DocumentSession(widget.blocks)
+    widget._document_session = document
+    seen = set()
+    publishing = False
+
+    def publish_document(change=None):
+        nonlocal publishing
+        if publishing:
+            return
+        publishing = True
+        try:
+            document.reconcile(widget.blocks)
+            with widget.hold_trait_notifications():
+                widget.blocks = document.blocks
+                widget.document_state = document.payload()
+        finally:
+            publishing = False
+
+    def document_request(change):
+        request = change['new']
+        identity = request.get('request_id')
+        try:
+            if not isinstance(identity, str) or not identity:
+                raise ValueError('document command requires a request ID')
+            if identity in seen:
+                widget.document_feedback = {'request_id': identity, 'revision': document.revision}
+                return
+            document.check_revision(request.get('base_revision'))
+            action = request.get('action')
+            if action == 'source':
+                widget.blocks = document.edit_source(request.get('block_id'), request.get('source'),
+                                                     base_revision=document.revision)
+            elif action == 'blocks':
+                widget.blocks = document.patch_blocks(request['changes'], request['order'], base_revision=document.revision)
+            elif action == 'pair':
+                from ...young_diagrams import PairExpression
+
+                editor = document.occurrences.get(request.get('occurrence_id'))
+                if editor is None or not hasattr(editor, 'pair_expression') or editor.read_only and 'value' in request:
+                    raise ValueError('pair command references an inactive or read-only occurrence')
+                value = PairExpression.from_state(request.get('value', editor.pair_expression)).state()
+                styles = deepcopy(request.get('styles', editor.pair_cell_styles))
+                if not isinstance(styles, dict):
+                    raise ValueError('pair styles must be a mapping')
+                with editor.hold_trait_notifications():
+                    editor.pair_expression = value
+                    editor.pair_cell_styles = styles
+            else:
+                raise ValueError('unknown document command')
+            publish_document()
+            seen.add(identity)
+            widget.document_feedback = {'request_id': identity, 'revision': document.revision}
+        except (KeyError, TypeError, ValueError) as exc:
+            widget.document_feedback = {'request_id': identity, 'revision': document.revision,
+                                        'error': str(exc), 'state': document.payload()}
+
+    widget.observe(publish_document, names='blocks')
+    widget.observe(document_request, names='document_request')
+    publish_document()
     return widget
 
 
@@ -375,6 +439,7 @@ def _blank_pair_widget() -> object:
         pair_expression = traitlets.Dict().tag(sync=True)
         pair_drawing_state = traitlets.Dict().tag(sync=True)
         pair_cell_styles = traitlets.Dict().tag(sync=True)
+        pair_editor_state = traitlets.Dict().tag(sync=True)
         read_only = traitlets.Bool(False).tag(sync=True)
 
         @traitlets.default("pair_expression")
@@ -732,6 +797,7 @@ def whiteboard(
     ) -> None:
         del change
         nonlocal stores
+        committed_blocks = widget._document_session.committed_blocks
         explicit = dict(zip(
             widget.embedded_projector_ids,
             widget.embedded_projectors,
@@ -739,7 +805,7 @@ def whiteboard(
         ))
         pair_assignment_names = {
             match.group("name")
-            for block in widget.blocks
+            for block in committed_blocks
             if _PAIR_MARKER.search(str(block.get("source") or ""))
             and (match := re.match(
                 r"^\s*(?P<name>\S+?)\s*(?:\\def\b|:=)",
@@ -748,7 +814,7 @@ def whiteboard(
         }
         try:
             pair_assignment_names.update(
-                pair_definitions(widget.blocks, explicit, {}).keys()
+                pair_definitions(committed_blocks, explicit, {}).keys()
             )
         except (TypeError, ValueError, LookupError, NotImplementedError):
             pass
@@ -759,7 +825,7 @@ def whiteboard(
         # A simplified definition is represented by a generated equality line
         # in the same calculation group.  Use its exact value when rebuilding
         # the environment so later references see the newest state.
-        for block in widget.blocks:
+        for block in committed_blocks:
             source = str(block.get("source") or "")
             assignment = re.match(r"^\s*(?P<name>\S+?)\s*(?:\\def\b|:=)", source)
             if not assignment:
@@ -768,7 +834,7 @@ def whiteboard(
                 continue
             group = str(block.get("calculation_group") or block.get("line_id") or "")
             candidates = [
-                item for item in widget.blocks
+                item for item in committed_blocks
                 if group
                 and str(item.get("calculation_group") or "") == group
                 and "calculation_step" in item
@@ -784,7 +850,7 @@ def whiteboard(
             except (KeyError, TypeError, ValueError):
                 continue
         projector_blocks = [
-            block for block in widget.blocks
+            block for block in committed_blocks
             if not (
                 (assignment := re.match(
                     r"^\s*(?P<name>\S+?)\s*(?:\\def\b|:=)",
@@ -1010,6 +1076,10 @@ def whiteboard(
                 discard_backend_editor(key)
         widget.backend_projector_ids = requested
         widget.backend_projectors = [backend_embedded[key] for key in requested]
+        widget._document_session.occurrences.update(backend_embedded)
+        for key in tuple(widget._document_session.occurrences):
+            if ':backend:' in key and key not in backend_embedded:
+                del widget._document_session.occurrences[key]
 
         updated_blocks = []
         for block in widget.blocks:
@@ -1033,7 +1103,7 @@ def whiteboard(
             widget.embedded_pairs,
             strict=False,
         ))
-        values = pair_definitions(widget.blocks, explicit, {})
+        values = pair_definitions(widget._document_session.committed_blocks, explicit, {})
         diagrams = EvaluationEnvironment(diagram_backend)
         for name, value in values.items():
             diagrams.define(name, value)
@@ -1100,15 +1170,20 @@ def whiteboard(
                 if str(block.get("id") or "") == block_id:
                     if change["new"]["revision"] != change["old"]["revision"]:
                         copy.pop("editor_rewrite_redo", None)
-                    source = str(block.get("source") or "")
+                    draft = copy.get('source_edit', {})
+                    source = str(draft.get('committed_source', block.get("source") or ""))
                     markers = list(_PROJECTOR_MARKER.finditer(source))
                     index = int(occurrence)
                     if index >= len(markers):
                         return
                     start = markers[index].start()
-                    copy["source"], editor._whiteboard_source_value = project_inline_occurrence(
+                    projected_source, editor._whiteboard_source_value = project_inline_occurrence(
                         source, start, current, previous, editor._whiteboard_source_value,
                     )
+                    if draft.get('error'):
+                        copy['source_edit'] = {**draft, 'committed_source': projected_source}
+                    else:
+                        copy['source'] = projected_source
                     snapshot = editor.configuration.state()
                     snapshot["source_value"] = projector_codec.encode(editor._whiteboard_source_value)
                     snapshots = copy.setdefault("projector_snapshots", {})
@@ -1159,7 +1234,7 @@ def whiteboard(
         )
 
         requested: list[str] = []
-        for block in widget.blocks:
+        for block in widget._document_session.committed_blocks:
             block_id = str(block.get("id", ""))
             source = str(block.get("source", ""))
             occurrence = 0
@@ -1255,6 +1330,10 @@ def whiteboard(
                 del embedded[key]
         widget.embedded_projector_ids = requested
         widget.embedded_projectors = [embedded[key] for key in requested]
+        widget._document_session.occurrences.update(embedded)
+        for key in tuple(widget._document_session.occurrences):
+            if ':projector:' in key and key not in embedded:
+                del widget._document_session.occurrences[key]
         sync_backend_calculation()
 
     def sync_embedded_pairs(
@@ -1264,7 +1343,7 @@ def whiteboard(
         from ...young_diagrams import PairExpression
 
         requested: list[str] = []
-        for block in widget.blocks:
+        for block in widget._document_session.committed_blocks:
             block_id = str(block.get("id", ""))
             source = str(block.get("source", ""))
             occurrence = 0
@@ -1356,6 +1435,7 @@ def whiteboard(
                         if listener is not None:
                             editor.observe(listener, names="pair_expression")
                 embedded_pairs[key].read_only = bool(block.get("read_only"))
+                publish_pair_state(embedded_pairs[key])
                 occurrence += 1
                 position = match.end()
 
@@ -1371,7 +1451,16 @@ def whiteboard(
             del embedded_pairs[key]
         widget.embedded_pair_ids = requested
         widget.embedded_pairs = [embedded_pairs[key] for key in requested]
+        widget._document_session.occurrences.update(embedded_pairs)
+        for key in tuple(widget._document_session.occurrences):
+            if ':pair:' in key and key not in embedded_pairs:
+                del widget._document_session.occurrences[key]
         sync_pair_definitions()
+
+    def publish_pair_state(editor):
+        editor.pair_editor_state = {'version':1,'revision':widget._document_session.revision,
+                                   'value':deepcopy(editor.pair_expression),
+                                   'styles':deepcopy(editor.pair_cell_styles)}
 
     def on_pair_changed(key: str, change: dict[str, object]) -> None:
         expression = change.get("new")
@@ -1393,6 +1482,8 @@ def whiteboard(
         sync_pair_definitions()
         if resolved is not None:
             persist()
+        if key in embedded_pairs:
+            publish_pair_state(embedded_pairs[key])
 
     def on_pair_styles_changed(key: str, change: dict[str, object]) -> None:
         styles = change.get("new")
@@ -1424,6 +1515,8 @@ def whiteboard(
             widget.blocks = updated
         if resolved is not None:
             persist()
+        if key in embedded_pairs:
+            publish_pair_state(embedded_pairs[key])
 
     widget.observe(sync_embedded_projectors, names="blocks")
     widget.observe(sync_embedded_pairs, names="blocks")
