@@ -9,6 +9,7 @@ from typing import Mapping
 from ...pair_evaluation import evaluate
 from ...young_diagrams import PairExpression, PairTerm
 from ...symbolic import SymbolicCoefficient, as_symbolic, parse_symbolic
+from .source_translation import algebra_command_spacing
 
 
 _PAIR_MARKER = re.compile(r"\\pair\b(?!\s*\{)")
@@ -40,7 +41,7 @@ def pair_expression_from_blocks(
     marker_expressions: list[PairExpression] = []
     sources: list[str] = []
     for block in blocks:
-        source = str(block.get("source") or "")
+        source = algebra_command_spacing(str(block.get("source") or ""))
         if source.lstrip().startswith("&"):
             source = source.lstrip()[1:]
         occurrence = 0

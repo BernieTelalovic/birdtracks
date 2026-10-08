@@ -824,7 +824,8 @@ def test_shift_enter_waits_for_a_newer_calculation_step(page):
     assert result["y"] + result["height"] <= 792
 
 
-def test_workspace_renders_switchable_document_tabs_and_new_tab(page):
+@pytest.mark.parametrize('scrolled',[False,True])
+def test_workspace_renders_switchable_document_tabs_and_new_tab(page,scrolled):
     page.evaluate("""async () => {
       cleanup();
       const makeModel = values => {
@@ -868,6 +869,19 @@ def test_workspace_renders_switchable_document_tabs_and_new_tab(page):
     page.get_by_role("button", name="Two", exact=True).click()
     playwright.expect(page.locator(".birdtracks-whiteboard-title")).to_have_value("Two")
     assert page.evaluate("workspaceModel.get('active_index')") == 1
+    if scrolled:
+        page.locator('.birdtracks-whiteboard-blocks').evaluate("e=>e.style.minHeight='2000px'")
+        page.evaluate('window.scrollTo(0,600)')
+        page.wait_for_function("Math.abs(document.querySelector('.birdtracks-whiteboard-heading').getBoundingClientRect().top)<2")
+        title=page.get_by_role('textbox',name='Whiteboard session name')
+        box=title.bounding_box()
+        page.mouse.click(box['x']+box['width']/2,box['y']+box['height']/2)
+        playwright.expect(title).to_be_focused()
+        page.keyboard.press('Control+a')
+        page.keyboard.type('Renamed tab')
+        page.keyboard.press('Tab')
+        assert page.evaluate("workspaceDocuments['doc-2'].get('title')")=='Renamed tab'
+        assert page.evaluate('window.scrollY')==pytest.approx(600,abs=1)
     page.locator("textarea").first.focus()
     page.keyboard.press("Shift+Enter")
     request = page.evaluate(

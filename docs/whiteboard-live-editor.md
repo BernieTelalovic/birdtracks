@@ -48,6 +48,24 @@ want to keep it. In an ordinary notebook, use the existing `whiteboard(path)` AP
    remains the explicit calculation action. Export a complete expression and
    check the existing LaTeX/birdtracks.sty workflow.
 
+For the compact-command/menu regressions, also check:
+
+- Scroll down, click the active tab's name, rename it, then Save without returning
+  to the document top. Transparent source overlays must not intercept the menu,
+  and menu clicks must not activate a text row underneath.
+- Use `B\def\pair\oplus 2_3\pair`, add boxes to both pairs, then evaluate
+  `B\otimes B`. Compact notation must use the pair backend after save/reload.
+  Command spacing exists only in the Python parsing view, not in saved source.
+  Adjacent prefactors and explicit `\times` still multiply once; rational and
+  negative projector prefactors retain exact values. No algebra rule changed.
+- Add and remove pair boxes repeatedly without clicking outside/back into the
+  tool. Delete, Backspace, and right-click deletion retain term focus and active
+  controls; Backspace must not remove the surrounding `\pair` source marker.
+- After evaluating an already completed scalar line, scroll back to the middle
+  and press Enter to insert a row. The caret and viewport stay at the insertion,
+  including after delayed replies. An earlier automatic calculation-follow
+  target cannot redirect this manual edit; the calculation itself is unchanged.
+
 ## Verification
 
 Focused tests are in `tests/unit/test_whiteboard_document.py` and
@@ -73,3 +91,17 @@ Focused verification:
   unavailable Torch checks; there are no failures.
 - `git diff --check` and Python compilation checks passed. No separate lint or
   type-check suite is configured in `pyproject.toml`.
+
+Follow-up focused checks for compact commands, prefactor preservation, source
+ownership, and scrolled menu interactions: **143 passed** (12.19 s). Existing
+frontend/pair checks before generalizing the adapter: **177 passed** (85.12 s).
+
+Final follow-up frontend suite: **267 passed** (189.80 s). The running Voilà
+interface was also checked for repeated pair additions/deletions, Backspace
+source isolation, retained pair focus, Enter after a completed calculation,
+and renaming while scrolled. Its screenshot was visually inspected. The user
+whiteboard was inspected/evaluated in memory only and was not changed.
+
+Final follow-up complete configured suite: **1,287 passed, 8 skipped**
+(666.90 s), with no failures. The skips remain three unbuilt optional Cython
+checks and five unavailable Torch checks. `git diff --check` also passed.

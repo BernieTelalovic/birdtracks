@@ -118,6 +118,99 @@ def settled(page):
     page.wait_for_function("model.get('document_feedback')?.request_id===model.get('document_request')?.request_id")
 
 
+def test_scrolled_toolbar_name_retains_pointer_focus_and_commits_rename(live_document):
+    page,board,calls,path=live_document
+    board.blocks=[{'id':f'line-{i}','source':f'x_{i}'} for i in range(40)]
+    page.evaluate('reply=>applyReply(reply)',{'board':board.get_state(),'children':{}})
+    page.evaluate('window.scrollTo(0,500)')
+    page.wait_for_function("document.querySelector('.birdtracks-whiteboard-heading').getBoundingClientRect().top>=-1")
+    title=page.get_by_role('textbox',name='Whiteboard session name')
+    before=page.evaluate('window.scrollY')
+    box=title.bounding_box()
+    page.mouse.click(box['x']+box['width']/2,box['y']+box['height']/2)
+    assert page.evaluate('window.scrollY')==pytest.approx(before,abs=1),'title click scrolled'
+    playwright.expect(title).to_be_focused()
+    assert not page.locator('.birdtracks-whiteboard-block.editing').count()
+    title.press('Control+a')
+    assert page.evaluate('window.scrollY')==pytest.approx(before,abs=1),'title selection scrolled'
+    title.press_sequentially('Renamed while scrolled')
+    assert page.evaluate('window.scrollY')==pytest.approx(before,abs=1),'title typing scrolled'
+    page.get_by_role('button',name='Save',exact=True).click()
+    assert board.title=='Renamed while scrolled'
+    assert page.evaluate('window.scrollY')==pytest.approx(before,abs=1)
+
+
+@pytest.mark.parametrize('generated',[False,True])
+@pytest.mark.parametrize('stale_calculation_viewport',[False,True])
+def test_enter_between_rows_keeps_viewport_and_new_row_focus(live_document,generated,stale_calculation_viewport):
+    page,board,calls,path=live_document
+    blocks=[{'id':f'text-{i}','source':'xy'} for i in range(1,41)]
+    if generated:
+        blocks[14].update(source='= x',read_only=True,calculation_group='g',calculation_step=1)
+    if stale_calculation_viewport:
+        blocks[-1].update(source='= 1',read_only=True,calculation_group='scalar',calculation_step=1,
+                          calculation_scalar=True)
+    board.blocks=blocks
+    page.evaluate('reply=>applyReply(reply)',{'board':board.get_state(),'children':{}})
+    if stale_calculation_viewport:
+        completed=page.locator('[data-block-id="text-40"] .birdtracks-whiteboard-rendered')
+        completed.evaluate("e=>{e.scrollIntoView({block:'end'});e.focus({preventScroll:true});}")
+        completed.press('Shift+Enter')
+        page.wait_for_function("model.get('calculation_feedback')?.action==='completed'")
+    target=page.locator('[data-block-id="text-15"] '+('.birdtracks-whiteboard-rendered' if generated else 'textarea'))
+    target.evaluate("e=>{e.scrollIntoView({block:'center'});e.focus({preventScroll:true});}")
+    if not generated:
+        target.press('Home')
+    before=page.evaluate('window.scrollY')
+    page.evaluate('window.delayNext=180')
+    target.press('Enter')
+    inserted=page.locator('[data-block-id="text-41"] textarea')
+    playwright.expect(inserted).to_be_focused()
+    assert page.evaluate('window.scrollY')==pytest.approx(before,abs=1),'Enter jumped immediately'
+    settled(page)
+    playwright.expect(inserted).to_be_focused()
+    assert page.evaluate('window.scrollY')==pytest.approx(before,abs=1),'acknowledgement jumped'
+    assert not inserted.evaluate('e=>e.closest("[data-block-id]").classList.contains("trailing-blank")')
+    inserted.press_sequentially('inserted')
+    settled(page)
+    assert next(b for b in board.blocks if b['id']=='text-41')['source'].startswith('inserted')
+
+
+@pytest.mark.parametrize('live_document',['pair'],indirect=True)
+@pytest.mark.parametrize('delete',['Delete','Backspace','contextmenu'])
+def test_repeated_pair_box_edits_keep_focus_and_active_controls(live_document,delete):
+    page,board,calls,path=live_document
+    page.wait_for_selector('.birdtracks-young-term')
+    anchor=page.locator('.birdtracks-whiteboard-embedded-pair')
+    child=board.embedded_pairs[0]
+    source=page.locator('[data-block-id="line"] textarea')
+    source.focus()
+    source.press('End')
+    anchor.click(position={'x':2,'y':2})
+    assert anchor.evaluate('e=>e.classList.contains("inline-active")'),page.evaluate('document.activeElement.outerHTML.slice(0,200)')
+    for column in (0,1):
+        anchor.locator(f'[data-grid-column="{column}"][data-grid-row="0"]').first.click()
+        settled(page)
+        assert anchor.evaluate('e=>e.contains(document.activeElement)')
+        assert anchor.evaluate('e=>e.classList.contains("inline-active")')
+    assert anchor.locator('.birdtracks-young-box').count()==2
+    box=anchor.locator('.birdtracks-young-box[data-column="1"]')
+    if delete=='contextmenu':
+        box.click(button='right')
+    else:
+        box.click()
+        page.keyboard.press(delete)
+    settled(page)
+    assert anchor.locator('.birdtracks-young-box').count()==1
+    assert anchor.evaluate('e=>e.contains(document.activeElement)')
+    assert anchor.evaluate('e=>e.classList.contains("inline-active")')
+    anchor.locator('[data-grid-column="1"][data-grid-row="0"]').first.click()
+    settled(page)
+    assert anchor.locator('.birdtracks-young-box').count()==2
+    assert board.embedded_pairs[0] is child
+    assert source.input_value()==r'B\def \pair'
+
+
 def test_typing_uses_one_surface_and_preserves_last_valid_value_while_saving_draft(live_document):
     page,board,calls,path=live_document
     editor=page.locator('[data-block-id="line"] textarea')

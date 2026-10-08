@@ -581,6 +581,7 @@ function renderYoungCreator({ model, el, visible = false }) {
   }
 
   function redraw() {
+    const focusedTerm = termsRow.contains(document.activeElement);
     insertionMarker.hidden = true;
     termsRow.replaceChildren();
     if (!expression.terms.length) {
@@ -628,6 +629,11 @@ function renderYoungCreator({ model, el, visible = false }) {
       const index = ++termIndex;
       renderTerm(expression.terms[index], index);
     });
+    if (focusedTerm) {
+      const target = termsRow.querySelector(`[data-term-index="${activeTerm}"]`)
+        || el.closest('.birdtracks-whiteboard-embedded-pair');
+      target?.focus({preventScroll:true});
+    }
     function renderTerm(term, termIndex) {
       const leftColumns = (term.barred[0] || 0) + 1;
       const rightColumns = (term.unbarred[0] || 0) + 1;
@@ -831,6 +837,7 @@ function renderYoungCreator({ model, el, visible = false }) {
         if (activeTerm !== termIndex) { editor.hidden = true; labelEditor.hidden = true; }
         activeTerm = termIndex;
         activeGroupId = model.get("group_id");
+        svg.focus({preventScroll:true});
         for (const panel of termsRow.querySelectorAll("svg")) {
           panel.classList.toggle("selected", panel === svg);
         }
@@ -961,9 +968,12 @@ function renderYoungCreator({ model, el, visible = false }) {
         openLabelEditor(source);
       });
       svg.addEventListener("keydown", (event) => {
-        if (event.ctrlKey && event.key === "Enter") { event.preventDefault(); openEditor(); }
+        if (event.ctrlKey && event.key === "Enter") {
+          event.preventDefault(); event.stopPropagation(); openEditor();
+        }
         if ((event.key === "Delete" || event.key === "Backspace") && selected) {
           event.preventDefault();
+          event.stopPropagation();
           replaceTerm(changeYoungCell(term, selected, null));
         }
       });

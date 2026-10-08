@@ -18,6 +18,7 @@ from ..projector_sum import ProjectorSum
 from ...symbolic import SymbolicCoefficient, as_symbolic
 from .engine import EvaluationEnvironment
 from .projector_backend import projector_backend
+from .source_translation import algebra_command_spacing
 
 
 _ASSIGNMENT = re.compile(r"^\s*(?P<name>\S+?)\s*(?P<operator>\\def\b|:=)")
@@ -81,7 +82,7 @@ def evaluate_projector_expression(
     assignment = _ASSIGNMENT.match(source_parts[0]) if source_parts else None
     if assignment:
         source_parts[0] = source_parts[0][assignment.end():]
-    source = " ".join(source_parts)
+    source = algebra_command_spacing(" ".join(source_parts))
     return _ExpressionParser(source, projector_values, environment).parse()
 
 

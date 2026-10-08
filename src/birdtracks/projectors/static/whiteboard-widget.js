@@ -1263,7 +1263,12 @@ function renderWhiteboard({ model, el, host, signal }) {
       item.classList.toggle("topology-editing", item === anchor);
     }
     if (anchor && root.contains(anchor)
-        && !event.target.closest("input, textarea, button")) anchor.focus({preventScroll: true});
+        && !event.target.closest("input, textarea, button")) {
+      // Blurring source can reattach this anchor. Do not let the browser's
+      // subsequent native focus action select the rendered row underneath.
+      event.preventDefault();
+      anchor.focus({preventScroll: true});
+    }
   };
   const calculationShortcut = (event) => {
     if (!event.shiftKey || !["Enter", "Backspace"].includes(event.key)) return;
@@ -1295,6 +1300,9 @@ function renderWhiteboard({ model, el, host, signal }) {
   document.addEventListener("pointerdown", closeColorPanel, true);
   const focusNearestBlock = (event) => {
     if (event.button !== 0) return;
+    // The translated toolbar/dialog can overlap the document's hit area.
+    // Those controls are not clicks on blank whiteboard paper.
+    if (heading.contains(event.target) || exportDialog.contains(event.target)) return;
     const clickedBlock = event.target.closest?.(".birdtracks-whiteboard-block");
     if (clickedBlock && event.target !== clickedBlock) return;
     if (!clickedBlock) {
@@ -1600,6 +1608,16 @@ function renderWhiteboard({ model, el, host, signal }) {
     return [...blocks, {id, source: "", line_id: id, _trailing_blank: true}];
   }
 
+  function clearCalculationFollowForInsertion() {
+    // A manual insertion supersedes an older calculation's viewport intent,
+    // including a completed calculation which produced no new result row.
+    // This cancels only automatic navigation, not the Python calculation.
+    pendingCalculationViewport = null;
+    pendingRevealBlockId = null;
+    pendingRevealScroller = null;
+    pendingRevealScrollTop = null;
+  }
+
   function alignmentAnchorIndex(source) {
     const candidates = [source.indexOf("="), source.indexOf("&")]
       .filter((index) => index >= 0);
@@ -1723,6 +1741,9 @@ function renderWhiteboard({ model, el, host, signal }) {
 
   function keepBlockInView(block, scroller = scrollingViewport(block)) {
     if (!block) return;
+    // A scroll followed immediately by Enter can precede the toolbar's RAF.
+    // Measure against its current viewport position, not an old transform.
+    updateToolbarPosition();
     const rect = block.getBoundingClientRect();
     const top = heading.getBoundingClientRect().bottom + 8;
     const viewportBottom = scroller === document.scrollingElement
@@ -3129,6 +3150,7 @@ function renderWhiteboard({ model, el, host, signal }) {
       const currentBlocks = documentBlocks();
       const blockIndex = currentBlocks.findIndex((item) => item.id === block.id);
       if (blockIndex < 0) return;
+      clearCalculationFollowForInsertion();
       const start = editor.selectionStart;
       const end = editor.selectionEnd;
       const before = editor.value.slice(0, start);
@@ -3420,7 +3442,12 @@ function renderWhiteboard({ model, el, host, signal }) {
     }
     rendered.addEventListener("click", (event) => {
       if (paintPairBox(event)) return;
-      if (event.target.closest?.(".birdtracks-whiteboard-embedded-projector")) return;
+      // A box edit redraws its SVG before the click reaches this handler.
+      // The detached target has lost its ancestors; the original event path
+      // still identifies the embedded editor and must not activate source.
+      if (event.composedPath().some(node => node.classList?.contains(
+        'birdtracks-whiteboard-embedded-projector',
+      ))) return;
       if (block.read_only) {
         rendered.focus({preventScroll: true});
         return;
@@ -3462,6 +3489,7 @@ function renderWhiteboard({ model, el, host, signal }) {
         const index = event.ctrlKey ? related[0].index : related.at(-1).index + 1;
         const id = nextBlockId(blocks);
         blocks.splice(index, 0, {id, source: '', line_id: id});
+        clearCalculationFollowForInsertion();
         writeBlocks(blocks);
         model.save_changes();
         focusBlock(id, 0, false, true);

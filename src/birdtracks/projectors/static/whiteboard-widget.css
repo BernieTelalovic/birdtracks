@@ -25,7 +25,8 @@
 
 .birdtracks-whiteboard-toolbar {
   position: relative;
-  z-index: 2;
+  /* Stay above transparent source overlays (2) and their custom caret (3). */
+  z-index: 5;
   background: var(--birdtracks-background, #fff);
 }
 

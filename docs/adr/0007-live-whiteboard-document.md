@@ -14,6 +14,11 @@ occurrences, not a duplicate algebraic value. Diagram values remain in their
 Source parsing checks notation completeness without evaluation, simplification,
 or collapse. Incomplete source updates the draft and error only; committed
 notation, definitions, diagram/pair values, and saved presentation remain valid.
+`source_translation.py` supplies an idempotent, token-aware command-spacing view
+to both Python algebra parsers. Compact TeX such as `B\def\pair` keeps command
+boundaries through marker substitution. Original notation and offsets, text/font
+groups, and compound symbol names remain unchanged. This adapter does not own or
+apply prefactors; existing coefficient translation/multiplication remains exact.
 Coefficient translation still belongs to `result_projection.py`. A diagram edit
 during an incomplete draft updates the committed source and occurrence snapshot
 without replacing the draft. Neither source rendering nor activation computes
@@ -51,6 +56,14 @@ fraction editing, and explicit Shift-Enter evaluation retain their established
 behavior. Clicking an embedded editor activates its contextual controls;
 leaving hides them without discarding edits. Paper background and typography
 are inherited, without additional window framing.
+
+Pair redraws restore focused terms without stealing focus from external forms.
+Embedded click routing uses the original event path because a box edit can
+detach its SVG target before bubbling; consumed pair keys do not edit source.
+Manual row insertion cancels older automatic calculation-follow viewport
+targets, not calculations, and uses current toolbar geometry for visibility.
+The scrolled toolbar stays above transparent source overlays and is excluded
+from blank-paper hit testing.
 
 ## Persistence and scope
 
