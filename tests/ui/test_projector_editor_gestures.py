@@ -25,6 +25,11 @@ def connected_canvas(tmp_path, request):
             "trailing": [Antisymmetriser((1, 2, 3)), permutation],
             "interior": [Antisymmetriser((1, 2, 3)), permutation, Symmetriser((3, 4))],
             "pure": [permutation],
+            "layers": [Symmetriser((1,2)),Antisymmetriser((2,3,4)),Symmetriser((1,2)),
+                       PermutationNode(Permutation.identity(),support=(2,)),
+                       PermutationNode(Permutation.from_cycle(2,3),support=(2,3,4)),
+                       Antisymmetriser((3,4)),
+                       PermutationNode(Permutation.identity(),support=(2,)),Symmetriser((1,2))],
             "misaligned": [Symmetriser((1,2)),Antisymmetriser((3,4)),
                            PermutationNode(Permutation.from_cycle(2,3),support=(2,3,4)),
                            Antisymmetriser((3,4)),Symmetriser((1,2))],
@@ -154,6 +159,46 @@ def move_hit(page, selector, dy, *, cancel=False):
     if cancel:
         page.evaluate("document.dispatchEvent(new PointerEvent('pointercancel',{bubbles:true}))")
     page.mouse.up()
+
+
+@pytest.mark.parametrize("connected_canvas", ["layers"], indirect=True)
+def test_layer_bands_are_straight_and_crossings_stay_in_connectors(connected_canvas):
+    page, canvas, child, requests, original = connected_canvas
+    initial = deepcopy(child.editor_state)
+    geometry = initial["graph"]["geometry"]
+    columns = initial["graph"]["display"]["operator_columns"]
+    assert columns == [[0], [1], [2], [5, 7]]
+    xs = [initial["positions"][str(group[0])]["x"] for group in columns]
+    assert all(b-a == pytest.approx(geometry["node_width"]+geometry["step"]) for a,b in zip(xs,xs[1:]))
+    assert initial["graph"]["display"]["corridor_widths"] == [geometry["step"]] * 5
+
+    def assert_straight_layers():
+        assert page.locator('.birdtracks-node rect').count() == 5
+        assert not page.evaluate("""() => {
+          const bands=[...document.querySelectorAll('.birdtracks-node rect')].map(r=>({
+            left:Number(r.getAttribute('x'))+0.04,
+            right:Number(r.getAttribute('x'))+Number(r.getAttribute('width'))-0.04}));
+          const bends=[];
+          for(const path of document.querySelectorAll('.birdtracks-display-strand')){
+            const length=path.getTotalLength();
+            for(let d=0.02;d<length-0.02;d+=0.02){
+              const a=path.getPointAtLength(d-0.01), b=path.getPointAtLength(d+0.01);
+              if(bands.some(band=>a.x>band.left&&a.x<band.right&&b.x>band.left&&b.x<band.right)
+                 && Math.abs(a.y-b.y)>0.001){bends.push(path.dataset.lineKey);break;}
+            }
+          }
+          return bends;
+        }""")
+
+    assert_straight_layers()
+    for node, side, a, b in ((5,"input",3,4),(5,"output",3,4),(1,"input",2,3),(1,"output",2,3)):
+        revision = child.editor_state["revision"]
+        drag(page,side,a,b,node=node)
+        page.wait_for_function("r=>model.get('editor_state').revision>r",arg=revision)
+        assert child.editor_state["positions"] == initial["positions"]
+        assert_straight_layers()
+        assert canvas.current_projector_sum.collapse() == original.collapse()
+    page.screenshot(path='/tmp/birdtracks-layer-connectors.png')
 
 
 @pytest.mark.parametrize("connected_canvas", ["misaligned", "misaligned-fractional"], indirect=True)

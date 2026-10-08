@@ -75,7 +75,7 @@ def edge_key(edge: Edge, node_ids: Sequence[str]) -> tuple[object, ...]:
 def transition(before: EditorState, projector: Projector, node_ids: Sequence[str], *,
                port_map: Mapping[tuple[str, NodePort], NodePort] | None = None, branch: bool = False,
                geometry: Mapping[str, float] | None = None, strand_ids: Sequence[str] | None = None) -> EditorState:
-    """Transfer explicit survivors; place only introduced nodes near the edit.
+    """Transfer survivors and manual anchors; place changed automatic columns.
 
     port_map maps removed old ports to replacement boundary ports. It is known
     by the splice, never inferred by matching equal/canonicalized operators.
@@ -102,6 +102,14 @@ def transition(before: EditorState, projector: Projector, node_ids: Sequence[str
     from .editor_presentation import replacement_positions
 
     presentation["positions"] = replacement_positions(before,projector,node_ids,geometry)
+    old_automatic = before.presentation.get("automatic_positions", {})
+    old_positions = before.presentation.get("positions", {})
+    old_indices = {identity: i for i, identity in enumerate(before.node_ids)}
+    presentation["automatic_positions"] = {
+        str(i): presentation["positions"][str(i)] for i, identity in enumerate(node_ids)
+        if identity not in old_indices or (str(old_indices[identity]) in old_automatic
+            and old_automatic[str(old_indices[identity])] == old_positions.get(str(old_indices[identity])))
+    }
     candidate = replace(before, projector=projector, node_ids=tuple(node_ids), strand_ids=strand_ids,
                    term_id=uuid4().hex if branch else before.term_id,
                    presentation_json=_presentation(projector, presentation),
@@ -202,7 +210,7 @@ def replace_subgraph(before: EditorState, node_ids: Sequence[str], replacement: 
 
 def recursive_branches(before: EditorState, node_id: str, *, side: str = "input", edge: str = "bottom",
                        geometry: Mapping[str, float] | None = None) -> tuple[EditorState, ...]:
-    """Two normalized recursion branches, before any collection or detangling."""
+    """Two normalized, locally absorbed branches; no collection or detangling."""
     from .simplification import _recursive_node_expansion_terms
     if node_id not in before.node_ids:
         raise ValueError("expansion references an unknown node")
@@ -234,8 +242,36 @@ def recursive_branches(before: EditorState, node_id: str, *, side: str = "input"
                     candidate = boundary.get(boundary_label)
                 if candidate is not None and index <= candidate.node < index + count:
                     ports[side_name, old_port] = candidate
-        result.append(transition(before, unit * coefficient, ids, port_map=ports, branch=True, geometry=geometry))
+        branch = transition(before, unit * coefficient, ids, port_map=ports, branch=True, geometry=geometry)
+        result.append(absorb_nested(branch, geometry=geometry))
     return tuple(result)
+
+
+def absorb_nested(before: EditorState, *, geometry: Mapping[str, float] | None = None) -> EditorState:
+    """Bounded normalized P Q = P rewrites, with explicit survivor provenance.
+
+    Each step removes one node. No collapse, detangling, or sum collection is
+    involved; ordered scalar compensation stays in the algebra identity.
+    """
+    from birdtracks.settings import simplification_rule_enabled
+    from .identities import _nested_same_type_absorption_index, _remove_operator
+
+    if not simplification_rule_enabled("same_type_nested_absorption"):
+        return before
+    state = before
+    while (index := _nested_same_type_absorption_index(state.projector)) is not None:
+        p = state.projector
+        def shifted(port):
+            return NodePort(port.node - (port.node > index), port.label)
+        ports = {}
+        for connection in p.connections:
+            if connection.source.node == index:
+                ports["input", NodePort(index, connection.source.label)] = shifted(connection.target)
+            if connection.target.node == index:
+                ports["output", NodePort(index, connection.target.label)] = shifted(connection.source)
+        ids = (*state.node_ids[:index], *state.node_ids[index + 1:])
+        state = transition(state, _remove_operator(p, index), ids, port_map=ports, geometry=geometry)
+    return state
 
 
 def calculate_full_expansion(before: EditorState, node_id: str, *, geometry=None) -> tuple[EditorState, ...]:

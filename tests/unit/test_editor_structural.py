@@ -13,12 +13,13 @@ from birdtracks.projectors.editor_rewrites import edges, recursive_branches, rep
 from birdtracks.projectors.layout import widget_graph, default_positions
 
 
-def session(p):
+def session(p, *, automatic=False):
     graph = widget_graph(p)
     return EditorSession(EditorState.create(p, {
         "positions": default_positions(p), "free_levels": graph["free_levels"],
         "boundary_orders": {"input": sorted(p.support), "output": sorted(p.support)},
         "line_colors": {},
+        **({"automatic_positions": default_positions(p)} if automatic else {}),
     }))
 
 
@@ -185,3 +186,141 @@ def test_inline_translation_retains_rational_replacement_scalars(ratio):
         _configured_projector = body
     value = evaluate_projector_expression([{'id':'line','source':updated}],{'line:projector:0':Occurrence()},EvaluationEnvironment(projector_backend))
     assert value.collapse() == (p*ratio*Fraction(-2,3)).collapse()
+
+
+@pytest.mark.parametrize("coefficient", [Fraction(1), Fraction(-2, 3), Fraction(5, 7)])
+@pytest.mark.parametrize("side", ["input", "output"])
+def test_expansion_absorbs_nested_operators_in_python_with_exact_orientation(coefficient, side):
+    from birdtracks.projectors.simplification import _recursive_node_expansion_terms
+    from birdtracks.projectors.identities import SAME_TYPE_NESTED_ABSORPTION
+
+    p = Projector([Symmetriser((1, 2)), Antisymmetriser((2, 3, 4)),
+                   Symmetriser((1, 2)), Antisymmetriser((2, 3, 4)), Symmetriser((1, 2))],
+                  coefficient=coefficient)
+    s = session(p, automatic=True)
+    s.reorder({s.state.node_ids[3]: {side: (2, 4, 3)}}, base_revision=0)
+    before = s.state
+    raw = _recursive_node_expansion_terms(before.projector, 3, side="input", edge="top")
+    with patch.object(Projector, "collapse", side_effect=AssertionError("interactive collapse")), \
+         patch.object(Antisymmetriser, "collapse", side_effect=AssertionError("factorial expansion")):
+        branches = s.expand(before.node_ids[3], base_revision=before.revision,
+                            side="input", edge="top", geometry=widget_graph(p)["geometry"])
+    for branch, (unit, scalar) in zip(branches, raw, strict=True):
+        assert branch.projector.collapse() == (unit * scalar).collapse()
+        assert SAME_TYPE_NESTED_ABSORPTION.apply(branch.projector) is None
+        assert len(branch.node_ids) < len(unit.nodes)
+        assert before.node_ids[1] in branch.node_ids  # Keep the larger A's ID.
+        assert branch.outer_factor == before.outer_factor
+    assert ProjectorSum(b.projector * b.outer_factor for b in branches).collapse() == before.projector.collapse()
+    assert s.state is before
+
+
+def test_automatic_columns_close_vacated_slots_and_keep_free_line_rows():
+    from birdtracks.projectors.display_graph import compile_display_graph
+
+    p = Projector([Symmetriser((1, 2)), Antisymmetriser((2, 3, 4)),
+                   Symmetriser((1, 2)), Antisymmetriser((2, 3, 4)), Symmetriser((1, 2))])
+    s = session(p, automatic=True)
+    geometry = widget_graph(p)["geometry"]
+    branches = s.expand(s.state.node_ids[3], base_revision=0, edge="top", geometry=geometry)
+    for branch in branches:
+        positions = branch.presentation["positions"]
+        columns = compile_display_graph(branch.projector).operator_columns
+        xs = []
+        for members in columns:
+            assert len({positions[str(i)]["x"] for i in members}) == 1
+            xs.append(positions[str(members[0])]["x"])
+        assert all(b - a == pytest.approx(geometry["node_width"] + geometry["step"])
+                   for a, b in zip(xs, xs[1:]))
+        for identity in set(branch.node_ids) & set(s.state.node_ids):
+            old = s.state.node_ids.index(identity)
+            new = branch.node_ids.index(identity)
+            assert positions[str(new)]["y"] == s.state.presentation["positions"][str(old)]["y"]
+        loaded = EditorState.decode(json.loads(json.dumps(branch.payload())))
+        assert loaded == branch
+        assert loaded.presentation["automatic_positions"] == branch.presentation["automatic_positions"]
+
+
+def test_manual_anchor_survives_expansion_and_automatic_ownership_undo_reload():
+    p = Projector([Symmetriser((1, 2)), Antisymmetriser((2, 3, 4)),
+                   Symmetriser((1, 2)), Antisymmetriser((2, 3, 4)), Symmetriser((1, 2))])
+    s = session(p, automatic=True)
+    before = s.state
+    pin = before.node_ids[-1]
+    position = {"x": 20, "y": before.presentation["positions"]["4"]["y"]}
+    s.move({pin: position}, base_revision=0)
+    assert "4" not in s.state.presentation["automatic_positions"]
+    loaded = EditorSession.decode(json.loads(json.dumps(s.payload())))
+    branches = loaded.expand(before.node_ids[3], base_revision=1, edge="top", geometry=widget_graph(p)["geometry"])
+    branch = next(b for b in branches if pin in b.node_ids)
+    assert branch.presentation["positions"][str(branch.node_ids.index(pin))] == position
+    assert str(branch.node_ids.index(pin)) not in branch.presentation["automatic_positions"]
+    loaded.undo(base_revision=1)
+    assert loaded.state == before
+    loaded.redo(base_revision=2)
+    assert loaded.state == s.state
+
+
+def test_absorption_obeys_rule_switch_and_does_not_collect_occurrences(monkeypatch):
+    from birdtracks.settings import SIMPLIFICATION_RULES
+    from birdtracks.projectors.editor_rewrites import absorb_nested
+
+    p = Projector([Antisymmetriser((1, 2, 3)), Antisymmetriser((2, 3))])
+    before = session(p).state
+    monkeypatch.setitem(SIMPLIFICATION_RULES, "same_type_nested_absorption", False)
+    assert absorb_nested(before) is before
+    monkeypatch.setitem(SIMPLIFICATION_RULES, "same_type_nested_absorption", True)
+    after = absorb_nested(before)
+    assert len(after.projector.nodes) == 1
+    assert after.term_id == before.term_id
+    assert after.node_ids == before.node_ids[:1]
+    assert after.projector.collapse() == before.projector.collapse()
+
+
+@pytest.mark.parametrize("kind", [Antisymmetriser, Symmetriser])
+@pytest.mark.parametrize("sides", [("input",), ("output",), ("input", "output")])
+def test_absorption_keeps_outer_factor_and_compensates_removed_orientation_once(kind, sides):
+    from dataclasses import replace
+    from birdtracks.projectors.editor_rewrites import absorb_nested
+
+    p = Projector([kind((1, 2, 3)), kind((2, 3))], coefficient=Fraction(-3, 5))
+    s = session(p, automatic=True)
+    s.reorder({s.state.node_ids[1]: {side: (3, 2) for side in sides}}, base_revision=0)
+    before = replace(s.state, outer_factor=Fraction(-5, 7))
+    with patch.object(Projector, "collapse", side_effect=AssertionError("interactive collapse")):
+        after = absorb_nested(before, geometry=widget_graph(p)["geometry"])
+    assert after.outer_factor == before.outer_factor
+    assert after.node_ids == before.node_ids[:1]
+    assert after.term_id == before.term_id
+    assert after.projector.port_orders[0] == before.projector.port_orders[0]
+    assert after.projector.collapse() == before.projector.collapse()
+    assert (after.projector * after.outer_factor).collapse() == (p * before.outer_factor).collapse()
+
+
+def test_sparse_presentation_remains_valid_for_shared_absorption():
+    from birdtracks.projectors.editor_rewrites import absorb_nested
+
+    p = Projector([Antisymmetriser((1, 2, 3)), Antisymmetriser((2, 3))])
+    before = EditorState.create(p, {})
+    after = absorb_nested(before)
+    assert len(after.projector.nodes) == 1
+    assert after.projector.collapse() == p.collapse()
+
+
+def test_manual_vertical_placement_does_not_create_overlaps_during_compaction():
+    p = Projector([Symmetriser((1, 2)), Antisymmetriser((2, 3, 4)), Symmetriser((1, 2))])
+    s = session(p, automatic=True)
+    pin = s.state.node_ids[2]
+    position = {**s.state.presentation["positions"]["2"], "y": 4}
+    s.move({pin: position}, base_revision=0)
+    geometry = widget_graph(p)["geometry"]
+    for branch in s.expand(s.state.node_ids[1], base_revision=1, edge="top", geometry=geometry):
+        visible = [(i, branch.presentation["positions"][str(i)]) for i,n in enumerate(branch.projector.nodes)
+                   if isinstance(n, (Antisymmetriser, Symmetriser))]
+        for a, (i, first) in enumerate(visible):
+            for j, second in visible[a+1:]:
+                heights = (len(branch.projector.nodes[i].support)+len(branch.projector.nodes[j].support)-2) / 2
+                heights = heights*geometry["level_spacing"] + 2*geometry["operator_padding"]
+                assert abs(first["x"]-second["x"]) >= geometry["node_width"] or abs(first["y"]-second["y"]) >= heights
+        if pin in branch.node_ids:
+            assert branch.presentation["positions"][str(branch.node_ids.index(pin))] == position

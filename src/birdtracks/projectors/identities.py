@@ -274,6 +274,14 @@ def _absorb_nested_same_type_operator(
     their local integer names.  Permutation-only nodes may occur along those
     strands; they remain in the graph after the absorbed node is removed.
     """
+    remove_index = _nested_same_type_absorption_index(projector)
+    if remove_index is None:
+        return None
+    return ProjectorSum((_remove_operator(projector, remove_index),))
+
+
+def _nested_same_type_absorption_index(projector: Projector) -> int | None:
+    """Return deterministic removal provenance for the nested P Q = P rule."""
     next_port = {
         connection.source: connection.target
         for connection in projector.connections
@@ -323,7 +331,7 @@ def _absorb_nested_same_type_operator(
         return None
 
     _rank, remove_index = min(candidates)
-    return ProjectorSum((_remove_operator(projector, remove_index),))
+    return remove_index
 
 
 def _remove_operator(projector: Projector, remove_index: int) -> Projector:

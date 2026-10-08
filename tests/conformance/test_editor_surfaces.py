@@ -197,6 +197,7 @@ def test_structural_presentation_and_replacement_roundtrip(kind, tmp_path):
     assert loaded.editor_state["strand_ids"] == accepted["strand_ids"]
     assert loaded.editor_state["strand_routes"] == accepted["strand_routes"]
     assert loaded.editor_state["positions"] == accepted["positions"]
+    assert loaded.editor_state["automatic_positions"] == accepted["automatic_positions"]
     send(loaded, "undo")
     assert loaded.editor_state["node_ids"] == drawing["node_ids"]
     assert loaded.editor_state["positions"] == drawing["positions"]
@@ -205,9 +206,37 @@ def test_structural_presentation_and_replacement_roundtrip(kind, tmp_path):
 
 
 @pytest.mark.parametrize("kind", ["widget", "canvas", "generated", "inline", "parsed", "symbolic"])
+def test_tidy_is_one_undoable_reset_of_automatic_placement(kind, tmp_path):
+    child, value, reopen, original = surface(kind, Fraction(-2, 3), tmp_path / "tidy.whiteboard")
+    identity = child.editor_state["node_ids"][0]
+    send(child, "move", changes={identity: {"x": 30, "y": 20}})
+    pinned = deepcopy(child.editor_state)
+    assert "0" not in pinned["automatic_positions"]
+    history = len(child._editor_session._undo)
+    send(child, "tidy")
+    automatic = deepcopy(child.editor_state)
+    assert len(child._editor_session._undo) == history + 1
+    assert automatic["automatic_positions"] == automatic["positions"]
+    assert value().collapse() == original.collapse()
+    send(child, "save")
+    loaded = reopen()
+    assert loaded.editor_state["automatic_positions"] == automatic["automatic_positions"]
+    send(loaded, "undo")
+    assert loaded.editor_state["positions"] == pinned["positions"]
+    assert loaded.editor_state["automatic_positions"] == pinned["automatic_positions"]
+    send(loaded, "redo")
+    assert loaded.editor_state["automatic_positions"] == automatic["automatic_positions"]
+
+
+@pytest.mark.parametrize("kind", ["widget", "canvas", "generated", "inline", "parsed", "symbolic"])
 def test_recursive_command_avoids_solver_and_preserves_survivors(kind, tmp_path):
     child, value, reopen, original = surface(kind, Fraction(-2, 3), tmp_path / "branches.whiteboard")
     first, survivor = child.editor_state["node_ids"]
+    # Automatic columns may compact around the rewrite. Manual placement is
+    # the authoritative invariant across every interface and persisted format.
+    manual = {**child.editor_state["positions"]["1"]}
+    manual["y"] += 0.25
+    send(child, "move", changes={survivor: manual})
     position = deepcopy(child.editor_state["positions"]["1"])
     with patch.object(Projector, "collapse", side_effect=AssertionError("interactive collapse")), \
          patch.object(Antisymmetriser, "collapse", side_effect=AssertionError("factorial expansion")):

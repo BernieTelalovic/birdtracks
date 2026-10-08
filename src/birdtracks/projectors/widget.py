@@ -1543,6 +1543,11 @@ def projector_widget(
         term_leading=bool(graph.get("term_leading", True)),
     )
     editor._source_projector = projector
+    editor._initial_automatic_positions = (
+        deepcopy(saved_state.get("automatic_positions", {})) if saved_state is not None else
+        {i: deepcopy(position) for i, position in initial_positions.items()
+         if i not in {str(index) for index in positions or {}}}
+    )
     if saved_state is not None and saved_state.get("source_value"):
         from .whiteboard.projector_codec import projector_codec
 

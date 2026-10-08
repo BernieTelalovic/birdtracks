@@ -11,7 +11,7 @@ from .projector import Projector
 
 def replacement_positions(before: EditorState, projector: Projector, node_ids: Sequence[str],
                           geometry: Mapping[str, float] | None = None) -> dict[str, dict[str, float]]:
-    """Place introduced objects only; reserve visible box and corridor widths.
+    """Place new objects locally and close changed automatic-column gaps.
 
     A new operator may share a dependency column with a surviving disjoint
     operator. Reuse that column's actual x instead of squeezing it around the
@@ -77,6 +77,68 @@ def replacement_positions(before: EditorState, projector: Projector, node_ids: S
                          if candidate >= float(geometry.get("left_boundary",0))+width/2+gap and clear(candidate)),
                         key=lambda candidate:(abs(candidate-x),candidate))
         positions[str(i)] = {"x":x,"y":y}
+    return _compact_automatic_columns(before, projector, node_ids, positions, geometry)
+
+
+def _compact_automatic_columns(before: EditorState, projector: Projector, node_ids: Sequence[str],
+                               positions: dict[str, dict[str, float]], geometry: Mapping[str, float]) -> dict[str, dict[str, float]]:
+    """Close only changed automatic columns; manual anchors and y stay fixed.
+
+    Automatic placement is explicit persisted metadata, not an inference from
+    algebraic equality. Unknown/legacy coordinates are conservatively pinned.
+    """
+    old_indices = {identity: i for i, identity in enumerate(before.node_ids)}
+    automatic = before.presentation.get("automatic_positions", {})
+    old_positions = before.presentation.get("positions", {})
+    old_columns = compile_display_graph(before.projector).operator_columns
+    columns = compile_display_graph(projector).operator_columns
+    if (any(str(i) not in old_positions for members in old_columns for i in members)
+            or any(str(i) not in positions for members in columns for i in members)):
+        return positions
+    old_xs = [max(old_positions[str(i)]["x"] for i in members) for members in old_columns]
+    if any(right <= left for left, right in zip(old_xs, old_xs[1:])):
+        # Manually staggered/reversed columns are not a request to Tidy. Keep
+        # that drawing and the collision-aware local placement intact.
+        return positions
+    old_members = {before.node_ids[i]: (column, frozenset(before.node_ids[j] for j in members))
+                   for column, members in enumerate(old_columns) for i in members}
+    width = float(geometry.get("node_width", geometry.get("operator_width", 1)))
+    gap = float(geometry.get("step", 1))
+    previous = float(geometry.get("left_boundary", 0)) - width / 2
+    def is_automatic(i: int) -> bool:
+        identity = node_ids[i]
+        return (identity not in old_indices or
+                str(old_indices[identity]) in automatic and
+                automatic[str(old_indices[identity])] == old_positions.get(str(old_indices[identity])))
+    for column, members in enumerate(columns):
+        identities = frozenset(node_ids[i] for i in members)
+        changed = any(old_members.get(node_ids[i]) != (column, identities) for i in members)
+        movable = [i for i in members if is_automatic(i)]
+        pinned = [i for i in members if i not in movable]
+        if changed and movable:
+            x = min(positions[str(i)]["x"] for i in pinned) if pinned else previous + width + gap
+            # Logical disjointness does not imply physical separation after a
+            # manual vertical move. Do not undo the collision-aware placement.
+            padding = float(geometry.get("operator_padding", 0.45))
+            spacing = float(geometry.get("level_spacing", 1))
+            def height(i):
+                return (len(projector.nodes[i].support) - 1) * spacing / 2 + padding
+            if any(abs(x - (x if j in movable else positions[str(j)]["x"])) < width
+                   and abs(positions[str(i)]["y"] - positions[str(j)]["y"]) < height(i) + height(j)
+                   for i in movable for j in members if i != j):
+                previous = max(positions[str(i)]["x"] for i in members)
+                continue
+            # Do not force standard spacing through an existing manual anchor.
+            # The local placement above already fitted boxes between pins.
+            right_pin = next(((c, min(positions[str(i)]["x"] for i in group if not is_automatic(i)))
+                              for c, group in enumerate(columns) if c > column
+                              and any(not is_automatic(i) for i in group)), None)
+            if not pinned and right_pin is not None and right_pin[1] < x + (right_pin[0] - column) * (width + gap):
+                previous = max(positions[str(i)]["x"] for i in members)
+                continue
+            for i in movable:
+                positions[str(i)] = {**positions[str(i)], "x": x}
+        previous = max(positions[str(i)]["x"] for i in members)
     return positions
 
 

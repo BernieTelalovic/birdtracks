@@ -148,3 +148,57 @@ The full run recorded 1,138 passed, the same pre-existing Young-layer fixture
 failure, and eight optional-dependency skips in 372.62 seconds. The saved term
 and a fresh expansion were additionally checked with real output-port drags;
 their exact values remained equal and the whiteboard file checksum was unchanged.
+
+## Layer/connector layout and bounded absorption
+
+Rendering now follows the layered projector in `latex/birdtracks.sty`. S/A boxes
+and straight free lines occupy operator layers; all crossings occupy connectors
+between layers. An attached permutation adds neither a column nor width.
+Only a standalone permutation uses a wider connector. Recursive expansion
+removes redundant nested S/A operators in Python using the existing normalized
+absorption rule, without full collapse or term collection.
+
+Use this small synthetic diagram in a notebook to check the two independently:
+
+```python
+from pathlib import Path
+from tempfile import mkdtemp
+from birdtracks import Antisymmetriser, Projector, ProjectorSum, Symmetriser
+from birdtracks.projectors.widget import projector_sum_widget
+
+p = Projector([Symmetriser((1, 2)), Antisymmetriser((2, 3, 4)),
+               Symmetriser((1, 2)), Antisymmetriser((2, 3, 4)), Symmetriser((1, 2))])
+path = Path(mkdtemp(prefix="birdtracks-connectors-")) / "layers.canvas.json"
+canvas = projector_sum_widget(ProjectorSum((p,)), session=path, detangler=False)
+display(canvas)
+```
+
+Click the top recursion triangle of the rightmost three-line A. Both descendants
+should lose their leftmost newly introduced two-line A through absorption into
+the surviving large A. In the first branch the redundant final S also disappears;
+in the second, one two-line A remains alongside the final S. The branch factors
+are `1/3` and `-2/3`. Automatically placed columns close vacated gaps, with
+crossings confined to connectors and straight free strands across box layers.
+Swap input and output ports of the remaining A and check the live sign preview,
+undo/redo, and unchanged layer geometry. Save and reopen using
+`ProjectorCanvasSession.load(path).open(detangler=False)`.
+
+Repeat after manually moving a surviving operator: its coordinates must remain
+fixed through expansion and reload. Explicit Tidy (available in the structural
+demo) resets automatic placement in one undoable action. Older saved coordinates
+without automatic-placement metadata remain conservatively manual; regenerate
+the source diagram or explicitly tidy before expanding to check automatic gap
+closure. Existing result rows are not silently rewritten.
+
+Verification (2026-10-08): the full configured run passed 1,156 tests, with
+eight optional-dependency skips, in 392.23 seconds. After the final sparse-state
+and manual-collision guards were added, the final broad recheck passed 1,163
+tests with the same eight skips and one deselection in 193.34 seconds. Only
+`test_whiteboard_full_expansion_collects_equal_permutations` was excluded from
+that recheck; it had passed in the full run. All 1,164 tests therefore passed
+across the two runs. The skips are three unbuilt optional Cython checks and
+five missing-Torch checks, not failures. The focused final model/layout/shared
+surface run passed 226 tests; nine focused Chromium interaction checks passed,
+including straight layer bands, connector-only crossings, and manual movement.
+The full/broad runs also exercised every shipped frontend test. `git diff
+--check` passed; no separate lint/type-check suite is configured.

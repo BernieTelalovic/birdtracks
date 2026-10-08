@@ -68,6 +68,33 @@ requested by the author; no fallback compensation branch is retained.
 
 Display columns follow traced operator dependencies, not local port labels.
 The detangler scores complete column interfaces, separate from algebra layers.
+Rendering follows the composable `projector` structure in
+`latex/birdtracks.sty`: each operator column contains vertically stacked S/A
+boxes and straight free lines. Permutations belong only to the connectors
+between those columns (including boundary connectors), never to additional
+operator columns. Attached connectors use the configured `step` width,
+independent of crossing complexity. Only an entirely permutation-valued
+diagram receives a wider standalone connector.
+
+Presentation keeps an `automatic_positions` baseline alongside committed
+positions. A manual coordinate change removes that object from automatic
+placement; restoring its coordinates does not silently unpin it. Structural
+transitions remap this metadata by stable survivor IDs, place new objects
+locally, and compact changed automatic columns to close vacated slots. They
+preserve survivor y positions, manual anchors, and unchanged columns. Manually
+reversed/staggered horizontal layouts are not implicitly tidied. Unknown older
+placement is conservatively manual. Explicit Tidy restores automatic placement
+and route defaults in one undoable, persisted transaction.
+
+Recursive expansion applies the existing normalized same-type nested absorption
+identity in Python before publishing each branch. Its matcher exposes the
+removed index as provenance; the editor carries survivor IDs, drawing metadata,
+and exact outer factors through the bypass. Each absorption removes one node,
+so processing is bounded by graph size and never calls full collapse, factorial
+expansion, detangling, or sum collection. Absorbed S/A nodes are removed from
+the algebra, not merely hidden by rendering. The existing rule-enable setting
+is respected. Small exact-collapse comparisons remain test oracles only.
+
 Result-line formatting lives in `whiteboard/result_projection.py`, separate
 from document synchronization and algebraic simplification. A result-line port
 transaction preserves ordered occurrences and never collects them.

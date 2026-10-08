@@ -1281,7 +1281,7 @@ def test_evaluate_display_uses_only_sa_columns_for_horizontal_geometry() -> None
         with_permutation_layers["geometry"]["right_boundary"]
         - without_permutation_layers["geometry"]["right_boundary"]
     )
-    assert 0 < width_growth <= 0.2 * with_permutation_layers["geometry"]["step"]
+    assert width_growth == 0
 
 
 def test_compiled_evaluate_renderer_aligns_sa_columns_and_hides_permutation_nodes() -> None:

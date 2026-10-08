@@ -25,8 +25,10 @@ def attach_editor(editor: Any, outer_factor: Fraction = Fraction(1)) -> None:
     if saved:
         session = EditorSession.decode(saved)
     else:
+        drawing = {key: deepcopy(getattr(editor, key)) for key in _PRESENTATION}
+        drawing["automatic_positions"] = deepcopy(getattr(editor, "_initial_automatic_positions", {}))
         session = EditorSession(EditorState.create(
-            editor.projector, {key: deepcopy(getattr(editor, key)) for key in _PRESENTATION},
+            editor.projector, drawing,
             outer_factor=outer_factor,
         ))
         # Materialize the initial drawing in Python with one relative compensation.
@@ -212,7 +214,7 @@ def attach_editor(editor: Any, outer_factor: Fraction = Fraction(1)) -> None:
                 drawing["positions"] = default_positions(session.state.projector, editor.graph["geometry"])
                 drawing["free_levels"] = widget_graph(session.state.projector, editor.graph["geometry"])["free_levels"]
                 drawing.pop("strand_routes", None)
-                session.presentation_checkpoint(drawing, base_revision=revision)
+                session.presentation_checkpoint(drawing, base_revision=revision, automatic_layout=True)
             elif action == "creation":
                 if editor.mode != "create":
                     raise ValueError("connectivity drafts require creation mode")

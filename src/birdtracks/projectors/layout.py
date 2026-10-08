@@ -192,21 +192,10 @@ def _compiled_display_state(
         geometry["right_boundary"] = float(geometry["left_boundary"]) + corridor_width
     else:
         corridor_width = None
-        complexities = display.corridor_complexities
-        corridor_widths = [
-            float(geometry["step"])
-            * (1.0 + 0.2 * min(1.0, complexity / 6.0))
-            for complexity in complexities
-        ]
-        # The boundary-to-operator transitions are permutations too.  Their
-        # own traced complexity is often zero, which used to overwrite the
-        # visual widening selected for a dense interior corridor and made the
-        # first/last crossings look squeezed.  Give both edge transitions the
-        # widest effective corridor used by this display graph.
-        if corridor_widths:
-            widest_corridor = max(corridor_widths)
-            corridor_widths[0] = widest_corridor
-            corridor_widths[-1] = widest_corridor
+        # Like the layered LaTeX projector: a permutation occupies the
+        # connector already separating operator/free-line columns. Only a
+        # standalone permutation receives a wider footprint.
+        corridor_widths = [float(geometry["step"])] * (len(display.operator_columns) + 1)
         geometry["right_boundary"] = (
             float(geometry["left_boundary"])
             + len(display.operator_columns) * float(geometry["operator_width"])

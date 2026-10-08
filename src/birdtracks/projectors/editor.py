@@ -49,9 +49,9 @@ def _factor(value: Mapping[str, object]) -> Factor:
 def _presentation(projector: Projector, value: Mapping[str, object]) -> str:
     data = dict(value)
     if any(not isinstance(data.get(key, {}), Mapping)
-           for key in ("positions", "free_levels", "boundary_orders", "line_colors")):
+           for key in ("positions", "automatic_positions", "free_levels", "boundary_orders", "line_colors")):
         raise ValueError("drawing fields must be mappings")
-    for index, position in data.get("positions", {}).items():
+    for index, position in (*data.get("positions", {}).items(), *data.get("automatic_positions", {}).items()):
         if not 0 <= int(index) < len(projector.nodes):
             raise ValueError("position references an unknown node")
         if not isinstance(position, Mapping) or set(position) != {"x", "y"} or any(
@@ -228,6 +228,21 @@ class EditorSession:
         if revision != self.state.revision:
             raise ValueError("stale editor command; use the current revision")
 
+    def _drawing(self, presentation: Mapping[str, object], *, automatic_layout: bool = False) -> dict[str, object]:
+        drawing = dict(presentation)
+        # Clients propose coordinates, not ownership of automatic placement.
+        automatic = self.state.presentation.get("automatic_positions", {})
+        if automatic_layout:
+            drawing["automatic_positions"] = dict(drawing.get("positions", {}))
+        elif "automatic_positions" in self.state.presentation:
+            drawing["automatic_positions"] = {
+                i: position for i, position in automatic.items()
+                if drawing.get("positions", {}).get(i) == position
+            }
+        else:
+            drawing.pop("automatic_positions", None)
+        return drawing
+
     def reorder(
         self, changes: Mapping[str, Mapping[str, Sequence[int]]], *,
         base_revision: int, presentation: Mapping[str, object] | None = None,
@@ -241,7 +256,7 @@ class EditorSession:
         if selection is not None and not set(selection) <= {before.term_id, *before.node_ids, *before.strand_ids}:
             raise ValueError("selection references an unknown editor ID")
         if presentation is not None:
-            before = replace(before, presentation_json=_presentation(before.projector, presentation))
+            before = replace(before, presentation_json=_presentation(before.projector, self._drawing(presentation)))
         projector = before.projector
         indexed = {}
         for node_id, sides in changes.items():
@@ -271,12 +286,14 @@ class EditorSession:
             self.state = replace(candidate, revision=self.state.revision + 1)
         return self.state
 
-    def presentation_checkpoint(self, presentation: Mapping[str, object], *, base_revision: int) -> EditorState:
+    def presentation_checkpoint(self, presentation: Mapping[str, object], *, base_revision: int,
+                                automatic_layout: bool = False) -> EditorState:
         """One presentation transaction; the exact algebra object is untouched."""
         self._check_revision(base_revision)
         if not set(presentation.get("strand_routes", {})) <= set(self.state.strand_ids):
             raise ValueError("route references an unknown editor strand")
-        candidate = replace(self.state, presentation_json=_presentation(self.state.projector, presentation))
+        drawing = self._drawing(presentation, automatic_layout=automatic_layout)
+        candidate = replace(self.state, presentation_json=_presentation(self.state.projector, drawing))
         return self._commit(candidate)
 
     def move(self, changes: Mapping[str, Mapping[str, float]], *, base_revision: int) -> EditorState:
